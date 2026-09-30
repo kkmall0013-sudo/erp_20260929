@@ -1,0 +1,160 @@
+# 🏛️ ERP 系統全端重構專案：Phase 11 商業級報表模組總綱 (Prisma 憲法全卷版 - 旗艦定版)
+
+**文件定位**：本文件為 Phase 11 (Enterprise Reporting Engine) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：打造具備「單一事實來源 (SSoT)」的企業級財務與營運報表。徹底根除記憶體崩潰與資料不一致的技術債，導入「雙軌匯出與區網 Queue」、「三階段利潤引擎」、「月結快照防禦」。本模組不發明新防線，100% 繼承並呼叫《新_最高憲法 0-7 章》之 DLP 防洩密、機敏薪資阻斷與冷熱庫快照鐵律。
+
+---
+
+## 壹、 業務需求與跨角色實務情境 (BRD)
+
+### 1. 三階段專案利潤引擎 (BvA Costing Engine)
+針對專案損益表，實施內部人力成本的漸進式攤提：
+* **階段一（直接毛利）**：僅計算外部發包與材料成本，呈現最真實的合約現金毛利。
+* **階段二（模擬淨利）**：讀取系統全域「標準日薪參數」，依據工務打卡天數動態疊加人力成本（對前端隱藏日薪參數），提供老闆即時的營運淨利參考。
+* **階段三（真實淨利）**：年底啟動分攤引擎，將實際發放之薪資依據「在職員工之真實出勤紀錄」實體切轉分錄至各專案分類帳，還原最終財報淨利。
+
+### 2. WIP 在建工程與保留款精算
+* **保留款雙軌分離**：為防止跨期退款導致報表崩潰，WIP 報表強制將保留款拆分為 `[累計已扣留]`、`[累計已退還]` 與 `[目前剩餘卡款]` 三獨立欄位。結案退回時透過 Phase 7 付款單直接沖銷 AP，報表剩餘卡款即完美歸零。
+
+### 3. BvA 變更單天花板與「特批紅字烙印」
+* **變更單天花板 (Pending CO)**：專案預算天花板嚴格遵循「已核准」之變更單。
+* **越權特批放行**：當超支時，基層操作一律 Hard Stop 鎖死。僅高階主管具備 `canOverride` 特權可強制放行，但報表與戰情室將永久掛上**「⚠️ 特批放行 - 欠缺變更單」**之紅色警告，直到完成補簽程序拉高天花板為止。
+
+### 4. 財報稽核防線：活數據與月結快照雙軌 (憲法視角對齊)
+* 全面廢除舊版 Boolean 設計，導入憲法標準的 `viewMode` 下拉選單：
+  * **TAX_VIEW (稅務快照視角)**：嚴格綁定 Phase 7 的 `postingDate` (入帳日)，確保報表與當初報稅/結帳瞬間的死數據 100% 吻合，應對會計師查帳。
+  * **MANAGEMENT_VIEW (現場管理視角)**：穿透月結防線，依據 `documentDate` (發生日) 撈取包含「事後遲交補登」的單據，還原最真實的現場營運成本。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 11.1：防洩密 (DLP) 嚴格扣減與機敏薪資阻斷 (繼承 Rule 2.3 & 2.5)
+* **[每日閥值攔截]**：任何人（包含高管）透過 Phase 11 請求匯出 Excel，系統必須先預估筆數，並嚴格扣減 Rule 2.3 之 `dailyExportLimit` 閥值。若超額，API 當場回傳 `403` 阻斷排程，嚴防內鬼大包裝下載。
+* **[數位浮水印]**：所有產出之實體 Excel，必須於 Metadata 或隱藏 Sheet 中靜默寫入下載者 `userId` 與時間戳記。
+* **[機敏薪資阻斷]**：當 Session 狀態為 `代理人 (Delegate)` 時，底層 API 強制觸發 Rule 2.5，代理人無法調閱階段二、三之真實薪資成本報表。
+
+### Rule 11.2：雙軌匯出與 VIP 老闆霸王通道 (繼承 Rule 6.3)
+* **[常規非同步排程]**：一般查詢強制轉入伺服器背景 Queue (如 Redis)。產出實體 Excel 後存入 Vault 金庫，並推播 24 小時限時下載連結，保護 OLTP 效能。
+* **[VIP 同步串流特權]**：具備 `SuperAdmin` 權限者，介面解鎖 `[⚡ 強行即時下載 (VIP)]`。發動後，100% 繞過 Redis Queue，直接啟動 Node.js 記憶體串流 (Stream) 進行同步活數據運算與瞬間下載。
+
+### Rule 11.3：髒標記智慧快照與金庫歸檔 (繼承 Rule 1.1 & 6.6)
+* **[算過免算]**：導入 `isDirty` 髒標記機制。已產出過實體報表的專案，永遠讀取 Phase 6 之 `ReportSnapshot`，不重複耗費算力。
+* **[Vault 金庫對齊]**：所有報表產生後，實體檔案強制存入 Phase 9 之 Vault (保險箱)，並寫入 `vaultFileId`，嚴禁生成無法納管的幽靈檔案。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約 (Prisma Schema Models)
+
+~~~prisma
+// ==========================================
+// Module: Phase 11 - Enterprise Reporting Engine (憲法對齊旗艦版)
+// ⚠️ 嚴守 RULE-0.1(旗艦UUID), RULE-1.1(Vault金庫), RULE-6.6(快照)
+// ==========================================
+
+enum ReportType {
+  BVA_PROJECT       // 專案損益對照
+  WIP_VALUATION     // 在建工程估驗
+  AR_AP_AGING       // 帳齡分析
+  TAX_SUMMARY       // 稅務進銷項
+  ANNUAL_MASTER     // 年度集團總表
+}
+
+enum JobStatus { PENDING, PROCESSING, COMPLETED, FAILED }
+enum ViewMode { MANAGEMENT_VIEW, TAX_VIEW }
+
+/// 報表背景排程與 Vault 檔案對應表 (支撐 Rule 11.2 & Vault 權限)
+model ReportJobTask {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestedBy     String       @db.Uuid // 強制綁定觸發者，防越權漏洞與扣減 DLP 額度
+  
+  reportType      ReportType
+  viewMode        ViewMode     @default(MANAGEMENT_VIEW) // 憲法雙軌視角對齊
+  parameters      Json         // 查詢參數 (如 { projectId: "...", year: 2026 })
+  
+  status          JobStatus    @default(PENDING)
+  progress        Int          @default(0) // 0-100%
+  
+  // 💥 實體檔案映射 (強制綁定 Phase 9 Vault)
+  vaultFileId     String?      @unique @db.Uuid 
+  
+  expiresAt       DateTime?    // 24 小時限時銷毀機制
+  errorMessage    String?      @db.Text
+
+  createdAt       DateTime     @default(now())
+  completedAt     DateTime?
+
+  @@index([requestedBy, status])
+  @@map("report_job_tasks")
+}
+
+/// 自動快照智慧髒標記 (支撐 Rule 11.3，解決冷庫歷史查詢問題)
+model ProjectReportSnapshot {
+  projectId       String       @id @db.Uuid
+  reportType      ReportType
+  
+  isDirty         Boolean      @default(true) // 有變動即設為 true，等待午夜排程重算
+  lastGeneratedAt DateTime?
+  
+  // 💥 實體檔案映射 (強制綁定 Phase 9 Vault)
+  vaultFileId     String?      @unique @db.Uuid 
+  
+  updatedAt       DateTime     @updatedAt
+
+  @@map("project_report_snapshots")
+}
+~~~
+
+---
+
+## 肆、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+~~~typescript
+import { z } from "zod";
+
+// 報表排程請求防護與 DLP 攔截
+export const ReportJobRequestSchema = z.object({
+  reportType: z.enum(["BVA_PROJECT", "WIP_VALUATION", "AR_AP_AGING", "TAX_SUMMARY", "ANNUAL_MASTER"]),
+  
+  // 💥 對齊憲法 Rule 7.1：拔除布林值，統一採用 Enum
+  viewMode: z.enum(["MANAGEMENT_VIEW", "TAX_VIEW"]).default("MANAGEMENT_VIEW"),
+  
+  // 💥 老闆霸王條款 (Rule 6.3)
+  isVipBypass: z.boolean().default(false),
+  
+  filters: z.object({
+    projectId: z.string().uuid().optional(),
+    companyId: z.string().uuid().optional(),
+    year: z.number().int().min(2000).max(2100).optional(),
+  })
+}).superRefine(async (data, ctx) => {
+  
+  // 1. DLP 防洩密額度攔截 (Rule 2.3)
+  const estimatedRows = await estimateReportRows(data);
+  if (estimatedRows > currentUser.dailyExportLimit) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `DLP 阻斷：報表預估筆數 (${estimatedRows}) 超過您的單日匯出上限 (${currentUser.dailyExportLimit})。`,
+      path: ["reportType"]
+    });
+  }
+
+  // 2. VIP 霸王條款檢核
+  if (data.isVipBypass && currentUser.role !== "SUPERADMIN") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "權限異常：僅有 SuperAdmin 可啟動 VIP 即時串流產出通道。",
+      path: ["isVipBypass"]
+    });
+  }
+});
+~~~
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (高階主管與防呆)
+
+1. **報表匯出不卡頓 (Asynchronous UX)**：點擊「匯出集團報表」後，畫面絕不轉圈圈卡死。按鈕立即變成 `[ ⚙️ 報表生成中 (排隊第 2 位) ]`，使用者可繼續操作其他模組。完成後，右上角鈴鐺彈出綠色推播：`「2026年度總表已就緒，點此下載 (24小時內有效)」`。
+2. **老闆專屬閃電圖示 (VIP UX)**：當系統偵測登入者為大老闆時，匯出按鈕旁會亮起金色閃電圖示 `[⚡ 即時產出 Excel]`。點擊後，系統無縫啟動串流下載，零等待時間。
+3. **越權特批的紅字追殺 (Pending CO Red-Tag)**：在 BvA 專案損益表中，只要有因為「無變更單而強制放行」的成本，該筆明細整行背景標示淡紅色，且在總表最上方固定顯示一塊醒目的 `[ 🚨 待補簽變更單成本：$1,500,000 ]`，讓老闆一目瞭然潛在風險。
+4. **稅務與管理視角一鍵切換**：報表工具列右上角設置一個大型切換開關：`[ 🔒 稅務結帳視角 (防篡改) ] <----> [ 📊 現場管理視角 (含補登) ]`。切換時，畫面數據與 Zod API 即時對齊重新渲染，讓開會對帳時不再因為「發票遲交」而吵架。

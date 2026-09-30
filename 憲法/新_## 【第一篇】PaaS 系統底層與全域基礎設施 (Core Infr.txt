@@ -1,0 +1,115 @@
+## 【第一篇】PaaS 系統底層與全域基礎設施 (Core Infrastructure & Basis)
+
+> **【架構師聲明】**
+> 本篇章為系統的「PaaS 平台層」。舉凡檔案上傳、系統參數、報表產出與操作審計，全系統所有模組（Phase 2~11）必須強制呼叫本篇章定義之共用服務 (Service) 與 API，嚴禁各模組自行土炮實作上傳或報表匯出邏輯，以維持單一事實來源 (SSoT)。
+
+### 🛡️ RULE-1.1：Vault 雙軌無紙化附件、實體 NAS 路由與圖檔大屠殺防禦
+1. **雙軌制 (Vault vs Workspace)**：
+   * **Vault (金庫)**：用於存放「不可變更之定稿憑證」（如發票 PDF、已簽名合約）。
+   * **Workspace (工作區)**：用於存放「會持續異動的過程檔案」（如 CAD 圖檔路徑）。
+2. **NAS 複合路由分片與人類本位自動搬移**：
+   實體檔案落地 NAS 時，嚴禁全部倒進同一個大資料夾。系統底層的 `UploaderService` 必須依據 `targetTable` 實作動態路由：
+   * **專案類檔案**：路由至 `/vault/projects/{專案代號_專案名稱}/...`，確保單一專案所有附件集中，便於整包備份。為維護人類直覺與檔案存取連續性，若 ERP 中專案名稱或代號變更，底層強制觸發背景任務自動前往 NAS 重新命名實體資料夾，並同步更新資料庫中所有附件的 `nasPath`，確保路徑不斷鏈（選項 B）。
+   * **財務類檔案**：路由至 `/vault/finance/{YYYY-MM}/{發票號碼}/...`。
+3. **檔案指紋去重與 Magic Byte 實體穿透防毒**：
+   檔案上傳前必須計算 SHA-256 Hash，重複檔案僅新增 `FileLink` 關聯，不重複佔用 NAS 實體空間。同時，上傳閘門強制引入「二進制標頭 (Magic Bytes) 穿透檢測」，嚴禁僅依賴副檔名判定。若偵測為偽裝之執行檔、腳本或惡意文件，當場攔截銷毀並觸發警報，徹底封殺勒索病毒。
+4. **自動壓縮與轉檔引擎 (Image Optimization Engine)**：
+   除了合約、發票等 PDF 憑證必須完整保留原始高解析度畫質外，其餘工地現場回報、進料點收的 JPEG/PNG 照片，上傳時底層強制執行壓縮（降低至 75% 畫質）並轉換為次世代輕量化 WebP 格式，阻斷高畫質現場照片塞爆 NAS 的空間容量大屠殺。
+5. **彈性冷宮清理機制 (Flexible Trash Retention)**：
+   資料庫執行軟刪除時，實體檔案同步移入 `/_trash`（冷宮）。由全域參數 `TRASH_RETENTION_DAYS`（預設為 90 天）控制午夜自動排程物理銷毀。若參數設為 `0` 則永久不自動清除。系統後台必須保留「清空資源回收桶」的手動核彈特權按鈕，供主管隨時一鍵強制釋放實體空間。
+
+### 🛡️ RULE-1.2：審計日誌與非對稱雙軌密鑰防禦 (Dual-Key Auditing)
+1. **獨立 Schema 與四年滾動分區**：Log 強制存放於獨立的 `audit_schema`，嚴禁混雜於業務資料表。資料庫常駐「當前年度 + 過去 3 年（共 4 年）」的按年滾動分區。每年元旦自動將最舊一年分區打包為 SQL Dump 移至 NAS 冷儲存後，執行 `DROP TABLE`，維持主庫輕量。
+2. **高階行為雜湊加密與機敏遮蔽 (Log Masking & Anti-Tamper)**：涉及財務、薪資、合約底價等變更軌跡，寫入 Log 時前端與一般 SQL 查詢強制將敏感變更欄位遮蔽為 `***`，防範 IT 人員或外包維護工程師直視。底層自動使用系統「公共金鑰 (Public Key)」進行非對稱強加密，將變更前與變更後明細寫入 `encryptedPayload` 欄位，且該金鑰不可逆，具備防篡改鎖。
+3. **密碼二驗解密機制 (照妖鏡機制/選項 A)**：當擁有最高查帳權限者（如老闆）需要還原真相時，在畫面上點擊被遮蔽的 `***` 軌跡，系統強制跳出二次驗證視窗，要求輸入「老闆專屬獨立二次安全密碼」。驗證通過後，後端方調用私密金鑰解密，於前端畫面暫時高亮還原真實變更軌跡。
+
+### 🛡️ RULE-1.3：全域參數時空快照、型別強制與重算警報
+1. **有效日期管理 (Effective Dating)**：全域參數表具備 `validFrom` 與 `validTo`。新增同名參數時，系統自動截斷舊參數之 `validTo`，維持單一時間點之唯一有效值。
+2. **胖手指型別強制防禦 (Type-Casting Engine)**：參數表結構強制引入 `valueType` 欄位（列舉：NUMBER, STRING, BOOLEAN）。前端 UI 與後端 Zod 攔截器強制依此型別進行輸入限制與嚴格轉換，若型別不符（如數字型參數誤輸入中文字）強制報錯，禁止寫入核心參數庫，防止引發全站算術崩潰。
+3. **回溯重算提示警報 (Retrospective Alert / 選項 B)**：當會計調整參數且 `validFrom` 追溯至過去時間（例如月中發文追溯至月初生效）時，系統底層自動揪出該回溯區間內已過帳、採用舊參數快照鎖死的單據清單。系統不擅自改動舊帳，而是跳出警報清單，提示受影響範圍，由主管特批是否執行「紅字回滾並依新參數重算」。
+4. **報表快照即時強制重算 (isDirty Re-evaluation / 選項 A)**：戰情室與營運報表採用 `SysReportSnapshot` 模型。當日間交易單據發生異動導致快照標記為 `isDirty = true` 時，若主管於日間查詢該報表，系統**放棄使用昨夜之陳舊快照**，強制於背景啟動即時重算（前端顯示適度等待），確保老闆看到的數據永遠是包含最新交易的絕對真實值。
+
+---
+
+### 💻 附錄：第一篇核心契約範本
+
+    // ==========================================
+    // Prisma Schema: 非對稱雙軌密鑰日誌與快照模型 (RULE-1.2, 1.3)
+    // ==========================================
+    model AuditLog {
+      id               String   @id @default(uuid()) @db.Uuid
+      tableName        String
+      recordId         String   @db.Uuid
+      action           String   // CREATE, UPDATE, DELETE, VIEW
+      maskedPayload    Json?    // 遮蔽版內容 (如 {"salary": "***"})
+      encryptedPayload String?  @db.Text // 老闆透過密碼二驗解密的加密保險箱
+      performedBy      String   @db.Uuid
+      createdAt        DateTime @default(now())
+
+      @@map("audit_logs")
+    }
+
+    model SysReportSnapshot {
+      id              String   @id @default(uuid()) @db.Uuid
+      reportType      String   // 例如: 'BVA_PROJECT', 'AR_AGING'
+      periodYear      Int
+      periodMonth     Int
+      dimension       String   // 例如: 'PROJECT_A', 'GROUP_ALL'
+      isDirty         Boolean  @default(false) // 異動髒標記，日間遇髒強制重算
+      lastGeneratedAt DateTime?
+      vaultFileId     String?  @unique @db.Uuid // 歷史留存策略，外掛加密 Excel
+      requestedBy     String?  @db.Uuid
+      createdAt       DateTime @default(now())
+      updatedAt       DateTime @updatedAt
+
+      @@unique([periodYear, periodMonth, dimension])
+      @@map("sys_report_snapshots")
+    }
+
+    model SystemConfig {
+      id          String   @id @default(uuid())
+      configKey   String
+      valueType   String   // NUMBER, STRING, BOOLEAN
+      configValue String
+      validFrom   DateTime
+      validTo     DateTime
+
+      @@index([configKey, validFrom, validTo])
+      @@map("system_configs")
+    }
+
+    // ==========================================
+    // Zod Schema: 上傳攔截與全域參數型別強制 (RULE-1.1, 1.3)
+    // ==========================================
+    import { z } from "zod";
+
+    export const FileUploadMetaSchema = z.object({
+      originalName: z.string().trim().min(1, "檔名不可為空"),
+      mimeType: z.string(),
+      sizeBytes: z.number().max(52428800, "單一檔案上限 50MB"),
+      targetTable: z.enum(["Project", "AP_Bill", "PurchaseOrder", "Quotation"]),
+      targetId: z.string().uuid(),
+    }).superRefine((data, ctx) => {
+      // 影像壓縮判定與轉 WebP 標記，合約 PDF 除外
+      const isImage = data.mimeType.startsWith('image/');
+      if (isImage && data.mimeType !== 'image/webp') {
+        (data as any).requiresWebpCompression = true;
+      }
+    });
+
+    export const SystemConfigSchema = z.object({
+      configKey: z.string().min(1),
+      valueType: z.enum(["NUMBER", "STRING", "BOOLEAN"]),
+      configValue: z.string(),
+    }).superRefine((data, ctx) => {
+      if (data.valueType === "NUMBER") {
+        const parsed = Number(data.configValue);
+        if (isNaN(parsed)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "胖手指防禦：此參數型別為數字，嚴禁輸入非數字字元",
+            path: ["configValue"],
+          });
+        }
+      }
+    });

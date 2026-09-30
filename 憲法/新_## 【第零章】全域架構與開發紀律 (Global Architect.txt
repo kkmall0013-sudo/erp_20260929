@@ -1,0 +1,189 @@
+## 【第零章】全域架構與開發紀律 (Global Architecture & Core Disciplines - Prisma 旗艦定版)
+
+> **【架構師最高聲明】**
+> 本章節定義之全域規則為系統之「基本法」，優先權高於後續所有業務模組 (Phase 1~11)。任何開發者或 AI Agent 在產出 TypeScript、Prisma Schema、Zod 驗證、Next.js API 或背景排程時，必須強制引用本章定義之邏輯與防禦機制，絕對不得自行擴充、忽略或變更。違反此憲法產出之程式碼，一律視為無效技術債並強制重寫。
+
+---
+
+### 🛡️ RULE-0.1：術語與物理命名公約 (Naming Conventions)
+為避免技術債與跨部門溝通成本，系統中所有變數、資料表與路由必須嚴格遵守以下命名公約：
+1. **資料表 (PostgreSQL)**：`snake_case` 複數名詞（例：`sales_quotations`）。
+2. **Prisma Model (ORM)**：`PascalCase` 單數名詞（例：`Quotation`，資料表以 `@@map("sales_quotations")` 映射）。
+3. **REST API 路由**：`kebab-case` 複數名詞（例：`/api/sales-quotations`）。
+4. **列舉 (Enum)**：`UPPER_SNAKE_CASE`（例：`PENDING_APPROVAL`）。
+5. **布林值 (Boolean)**：強制以 `is` 或 `has` 開頭（例：`isDeleted`）。
+6. **日期時間 (DateTime)**：系統操作時間以 `At` 結尾（`createdAt`）；帳務憑證日期以 `Date` 結尾（`invoiceDate`）。
+
+### 🛡️ RULE-0.2：全面軟刪除與關聯阻斷限制 (Soft Delete & Restrict Cascade)
+1. **全域軟刪除**：禁止物理刪除資料。Prisma 必須具備 `isDeleted Boolean @default(false)`。所有查詢 (包含 `include`) 強制掛載 `where: { isDeleted: false }`。
+2. **連鎖阻斷鐵律 (Restrict Delete)**：嚴禁連鎖軟刪除 (Cascade Soft-Delete)。任何主檔（專案、廠商）若底下存在交易子單據，API 必須強制回傳 `409 Conflict` 阻斷刪除。合法路徑僅能將狀態降級為停用（`status: INACTIVE`）或封存（`ARCHIVED`）。
+
+### 🛡️ RULE-0.3：海關防呆驗證與空值洗滌機制 (Data Sanitization)
+1. **空值洗滌器**：Zod 基礎 Schema 必須配置強制轉換洗滌器（`StringCleanSchema`）。針對所有字串輸入，必須攔截純空格與 `""` (空字串)，強制 `transform` 為 `null`，徹底消滅 DB 中的髒資料。
+
+### 🛡️ RULE-0.4：高併發三維鎖定與效能物理限制 (3D Concurrency Locks)
+1. **ID 索引防護**：全域主鍵 (Primary Key) 放棄純亂數 UUIDv4，**強制採用 `UUIDv7`**，確保資料庫寫入之時間順序性，防止 B-Tree 索引碎片化。
+2. **連線池限制**：Serverless API 嚴禁直連資料庫，強制導入 `PgBouncer` 或 `Prisma Accelerate` 進行連線池排隊調度。
+3. **三維鎖定網**：
+   * 日常表單更新：使用 **樂觀鎖 (Optimistic Lock)** (`version Int`)。
+   * 高頻叫料與防連點：在 Next.js / API 閘道層使用 **Redis 分佈式鎖** 柔性攔截。
+   * 財務實體過帳：於交易當下動態啟用 **悲觀鎖 (SELECT FOR UPDATE)**，防堵算帳死鎖。
+
+### 🛡️ RULE-0.5：多公司聯集權限鎖與全域欄位級審計 (PBAC & Audit Log)
+1. **多公司聯集權限**：取消死板的單一租戶切換。使用者 Session 封裝允許之公司陣列（`allowedCompanyIds`）。所有 Prisma 查詢底層強制聯集過濾（`where: { companyId: { in: allowedCompanyIds } }`），實現一人無痛兼管多公司帳務。
+2. **欄位級審計日誌**：發生高敏感操作（如：修改銀行帳戶、越權放行）時，Prisma 巢狀交易必須將變更前（Before JSON）與變更後（After JSON）寫入全域 `audit_logs` 表，否則不予 Commit。
+
+### 🛡️ RULE-0.6：數值精度、零除防禦與 Snapshot 快照固化 (Decimal.js)
+1. **金流精度鐵律**：全系統金額欄位採用 `@db.Decimal(15, 2)`。TypeScript 全域**禁用原生 `number` 運算**，強制導入 `decimal.js`。分母在運算前必檢查大於零。
+2. **參數快照 (Snapshotting)**：單據過帳 (Posted) 當下，必須將當時的稅率或印花稅參數實體寫死存入單據（如 `postedTaxRate`）。嚴禁在顯示舊單據時動態 JOIN 全域參數表。
+
+### 🛡️ RULE-0.7：N+1 查詢效能禁令與巢狀寫入 (Eager Loading & Bulk Replace)
+1. **預加載鐵律**：查詢多層關聯資料時，強制使用 Prisma 的 `include: { ... }` 或新版 `relationLoadStrategy` 進行預加載，嚴禁在任何迴圈（`map`、`forEach`）內發起非同步資料庫查詢。
+2. **整批替換策略 (Bulk Replace)**：針對一對多子表單（明細表）的 PATCH 巢狀更新，禁止逐一比對子表單項。必須在同一個 Prisma 交易內，使用 `deleteMany` (清除該主單之舊明細) 與 `create` (寫入新明細)，配合樂觀鎖控制，確保異動的原子性與數據一致性。
+
+### 🛡️ RULE-0.8：冷熱資料異庫物理分離與快照鐵律 (Active/Cold DB Partitions)
+1. **雙 Prisma 實例路由**：系統在 PaaS 底層同時初始化兩個 Prisma Client 實例：`prisma` 指向熱庫（Active DB，存放進行中或活躍單據）；`prismaCold` 指向冷庫（Archive DB，存放歷史封存單據）。由 Next.js 網關依據日期區間自動調度查詢。
+2. **解除冷庫外鍵約束**：當單據被排程物理搬移至冷庫時，**冷庫內之關聯鍵強制解除資料庫級外鍵 (FK) 約束**，降級為純字串 (UUID)。冷庫單據之渲染 100% 依賴過帳時寫入的實體文字快照（如 `counterpartyNameSnapshot`）。這確保了熱庫主檔可自由演進，冷庫歷史帳務時空永遠凍結。
+
+### 🛡️ RULE-0.9：全域非負數與減項隔離鐵律 (OLTP Non-Negative Boundary)
+1. **輸入端與儲存端禁用負數**：線上交易系統 (OLTP) 之資料庫寫入與常規單據明細，只要涉及 `quantity`、`unitPrice`、`lineAmount` 的 Zod 驗證，底層一律標配 `.min(0)`，嚴防手滑導致的財務崩潰。嚴禁實體負庫存。
+2. **反向單據與減項隔離**：追減工程、進貨退回、折讓、保留款等扣減行為，**在資料庫中一律以正數儲存**。必須透過「單據類型 (Document Type)」或「隔離的減項明細表/屬性欄位」處理。
+3. **顏色防呆與報表聚合**：前端 UI 在填寫追減或減項單據時，強制渲染為**粉紅色/警示紅**。後端計價引擎 (CPQ) 於報表輸出端 (OLAP) 放行負數，允許以紅字或財務括號 `(100,000)` 呈現。
+
+### 🛡️ RULE-0.10：全域台灣時區本位與優雅維護模式 (Timezone Lock & Rewrite)
+1. **台灣時區鎖死**：全系統之伺服器、資料庫、背景排程一律強制鎖死 **台灣時區 (Asia/Taipei, UTC+8)**。系統操作時間以 UTC 落地但強制 API 校滌；財務日期（如 `invoiceDate`）在 DB 層一律使用純字串 `String (YYYY-MM-DD)` 儲存，阻斷時區轉換災難。
+2. **Edge 網關級維護模式**：管理員開啟 `MAINTENANCE_MODE` 時，Next.js Edge Middleware 會在最頂端進行柔性攔截。禁止回傳 503 錯誤碼，改用 `Rewrite` (路由內部重寫) 渲染專業的「系統保養中」畫面，確保數據遷移時阻斷寫入。
+
+### 🛡️ RULE-0.11：舊系統髒資料大匯入通道與環境沙盒 (Legacy Import & Fencing)
+1. **髒資料相容通道**：針對舊系統資料匯入，Zod 驗證開闢通道。當 API 帶入 `isLegacyImport: true` 時，放行非致命欄位留空（如無統編），但資料庫強制打上 `isLegacy = true` 標籤，未來 UI 強制跳出橘色警示逼迫補齊。
+2. **測試環境沙盒化**：所有對外行為（如寄送請款 Email、串接電子發票），必須檢查 `process.env.APP_ENV === 'production'`。若為測試機，強制將收件人變更為開發團隊，杜絕污染真實客戶。
+
+### 🛡️ RULE-0.12：72 小時 NAS 孤兒檔案大屠殺排程 (NAS Garbage Collection)
+1. **檔案與表單非同步雙軌**：檔案先上傳至 NAS 的 `_temp`（暫存資料夾），待表單「確認送出」時，Prisma 交易才將檔案物理移動至 `_vault`（正式金庫）並建立 `FileLink`。
+2. **大屠殺背景排程**：每週定時啟動 Worker，自動物理刪除 `_temp` 資料夾內建立超過 72 小時、且無資料庫關聯的「廢棄草稿照片」，完美防範 NAS 硬碟塞爆。
+
+---
+
+## 貳、 第零章 Prisma & Zod 標準實作範本 (The Golden Code Templates)
+
+### 1. Zod 全域防呆與非負數強型別標準
+
+```typescript
+import { z } from "zod";
+
+/**
+ * RULE-0.3: 海關防呆空值洗滌器
+ */
+export const StringCleanSchema = z
+  .string()
+  .trim()
+  .transform((val) => (val === "" ? null : val));
+
+/**
+ * RULE-0.9: 全域常規數值防禦強型別標準 (嚴防負數)
+ */
+export const QuantitySchema = z.number().min(0, "數量不可為負數");
+export const UnitPriceSchema = z.number().min(0, "單價不可為負數");
+export const AmountSchema = z.number().min(0, "金額不可為負數");
+
+/**
+ * RULE-0.10: 財務帳務日期強型別標準 (鎖死純字串)
+ */
+export const AccountingDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "日期格式必須為 YYYY-MM-DD");
+
+### 2. Prisma 核心系統參數與交易單據基底模型
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ========================================================================
+// 💡 Phase 0: 系統全域參數表 (System Configuration)
+// ========================================================================
+model SystemConfig {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid // RULE-0.4: 未來全面套用 UUIDv7
+  configKey   String   @unique
+  configValue String   
+  valueType   String   // 'STRING' | 'NUMBER' | 'BOOLEAN' | 'JSON'
+  
+  validFrom   DateTime 
+  validTo     DateTime 
+  
+  isDeleted   Boolean  @default(false) // RULE-0.2: 全面軟刪除
+  version     Int      @default(1)     // RULE-0.4: 樂觀鎖控制
+  
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([configKey, validFrom, validTo])
+  @@map("system_configs")
+}
+
+// ========================================================================
+// 💡 全域高敏感欄位級審計日誌表 (RULE-0.5)
+// ========================================================================
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   
+  userName    String   
+  action      String   // 操作動作: 'UPDATE_BANK_ACCOUNT' | 'OVERRIDE_TOLERANCE'
+  targetTable String   
+  targetId    String   
+  
+  beforeJson  Json?    // 變更前快照 (Before Snapshot)
+  afterJson   Json?    // 變更後快照 (After Snapshot)
+  
+  ipAddress   String?
+  createdAt   DateTime @default(now()) 
+
+  @@index([targetTable, targetId])
+  @@map("audit_logs")
+}
+
+// ========================================================================
+// 💡 示範：交易單據 Model (如 PurchaseOrder) 必須標配之防禦欄位
+// ========================================================================
+model ExamplePurchaseOrder {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  poNumber           String   @unique
+  companyId          String   @db.Uuid // RULE-0.5: 多公司聯集權限鎖
+  projectId          String   @db.Uuid // 於熱庫具備 FK，歸檔至冷庫時解除約束
+  vendorId           String   @db.Uuid
+
+  // 財務核心金額欄位 (RULE-0.6: 強制精度)
+  netAmount          Decimal  @db.Decimal(15, 2)
+  taxAmount          Decimal  @db.Decimal(15, 2)
+  totalAmount        Decimal  @db.Decimal(15, 2)
+
+  // 隔離的減項專屬欄位 (RULE-0.9: 金額存正數，由公式減除)
+  discountAmount     Decimal  @db.Decimal(15, 2) @default(0.00)
+  retentionDeductionAmount Decimal @db.Decimal(15, 2) @default(0.00)
+
+  // RULE-0.6 & 0.8: 參數與主檔歷史時空快照固化
+  postedTaxRate      Decimal? @db.Decimal(15, 4)
+  counterpartyNameSnapshot   String?
+  counterpartyTaxIdSnapshot  String?
+  projectNameSnapshot        String?
+
+  // 憲法標配防禦三件套
+  status             String   @default("DRAFT") // 'DRAFT' | 'POSTED' | 'VOIDED'
+  isDeleted          Boolean  @default(false)   // RULE-0.2: 軟刪除
+  version            Int      @default(1)       // RULE-0.4: 樂觀鎖
+
+  createdBy          String?
+  updatedBy          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([companyId, isDeleted, status])
+  @@map("example_purchase_orders")
+}

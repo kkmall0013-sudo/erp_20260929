@@ -1,0 +1,309 @@
+# 🏛️ ERP 系統全端重構專案：Phase 7 財務會計與金流模組總綱 (Prisma 旗艦版)
+
+**文件定位**：本文件為 Phase 7 (Accounting & Cash Flow) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：徹底屏棄死板的教科書會計，導入「實務彈性（老闆口袋、發票本位拆單、暫押對帳解耦）」與「強硬內控（品項錢包鎖、全紅迴轉單、四柱沖銷）」的混合型全端架構。在確保前線工務與出納極速上手的同時，提供可直接對接外帳的金融級資料血緣追蹤，並強硬落實全域零負數與幽靈小數洗滌。
+
+---
+
+## 壹、 業務需求與跨角色實務情境 (BRD)
+
+### 1. 資金雙軌制與定額零用金 (Imprest System)
+* **虛擬銀行帳戶 (老闆代墊專戶)**：系統支援在公司銀行帳戶主表中建立「老闆口袋」虛擬帳戶。允許期初注入定額資金（如 500,000 元），日常工務或零星材料採購之支出扣款，比照一般真實銀行扣款流程，年底或定期由公司實體帳戶匯款進行「定額撥補」。
+* **外帳無痛拋轉**：此虛擬專戶之期初開帳與期末撥補，系統底層直接映射至會計科目「股東往來 (負債)」，外帳會計師可直接導出明細分類帳申報，完全免除公私不分的爛帳認知障礙。
+
+### 2. 核心金額凍結與支票對帳狀態解耦 (Core Freeze & State Decoupling)
+* **金額與入帳日鎖死**：付款單一旦過帳核准（`POSTED`），所有涉及財務金額與會計科目的欄位（實付、手續費、折讓、入帳日）啟動新憲法實體凍結機制，一塊錢都不准修改，確保歷史申報穩定。
+* **狀態流轉解耦**：開票、收票僅代表「預計變動金流」。支票開立時，狀態為 `ISSUED`（此時真實餘額不扣減）。系統允許在主表凍結的狀態下，單獨流轉支票明細（`CheckDetail`）的狀態機（`ISSUED` ➡️ `CLEARED`），直到出納依據實體存摺扣款日確認兌現，才算真正完結並發送實體餘額扣減。
+
+### 3. 發票本位拆單流與多公司開票支付 (Invoice-Based Splitting)
+* **進貨統一，月底拆單**：現場進貨收料（Phase 10）時不分公司統一簽收。月底對帳時，若下包商依據集團合約協議，開立不同抬頭的多張發票（如 A 公司發票 60 萬、B 公司發票 43 萬），系統強制引導會計依據「發票本位」建立兩張獨立的估驗請款單（`ProgressBilling`），各自綁定其 `companyId`（法人歸屬）。
+* **多帳戶精準出金**：這兩張單據審核過帳後，會自動在 Phase 7 產生兩筆獨立的應付帳款（AP），出納可分別打開 A 公司與 B 公司的付款視窗，選取各自的實體銀行專戶開立支票支付，確保各案場法人成本與毛利精準、外帳絕對合規。
+
+### 4. 廠商特化品項錢包與預付款防重複扣款 (Vendor Item Wallet)
+* **品項級別小錢包**：廢除總額直接扣抵。系統建立「廠商特化品項錢包」，精準記錄廠商預購料件（如 C 型鋼）的「批次單價、預購數量與剩餘未拉貨數量」，完美支持同廠商、同品項、不同單價的多商品預購實務。
+* **源頭攔截無重複**：月底廠商送對帳單請款時，系統自動掃描該品項錢包，並於 Phase 5 採購或 Phase 6 估驗中自動以「正數金額、減項標記（DEDUCTION）」優先扣除。Phase 7 付款出納端收到的已是「扣除完預購品項後的乾淨 AP 淨額」，出納僅需純粹出金，徹底從源頭消滅預付款被重複扣兩次的財務災難。
+
+### 5. 營造業特化：代扣款粉紅防呆與專案利潤還原
+* **粉紅減項防呆**：當工地幫下包商代墊便當費或粗工費時，會計於付款明細建立代扣款，欄位強制切換為 `itemType = DEDUCTION`。畫面上會計一樣打正數（符合憲法），但整行網格強制渲染為「粉紅色」防呆，系統重算總額時自動執行減法。
+* **成本血緣還原**：系統強制要求該減項必須勾稽指派當初工地主任墊付的專案費用單據（`offsetExpenseId`）。沖銷過帳時，底層自動將該專案的代墊成本「沖抵/歸零」，確保案場真實毛利不因代墊行為而虛增。
+
+### 6. 零星雜支報銷純實報實銷 (EXP Petty Cash)
+* **移除過度設計**：未經過採購單與估驗流程的工地零星庶務支出（如買飲料、加油），歸類為純粹實報實銷（`PaymentSourceType.EXP`）。取消雜支報銷的減項剔除功能，財務審核多少就報多少，提供前線主任最直覺、最極速的報銷體驗。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 7.1：雙日期系統與歷史補單包容 (Dual-Date Guard)
+* 所有金流與應付憑證單據，強制拆分為 `documentDate` (單據發生日/發票真實日) 與 `postingDate` (會計承認入帳日)。系統的「期末關帳 (Period-Closing)」機制僅鎖定 `postingDate`，絕對允許會計補登過去已發生但延遲收到的單據，保護已申報之歷史營業稅軌跡不被竄改。
+
+### Rule 7.2：發票本位容差覆寫與稅務進位平帳
+* 財務結算金額以實體發票為唯一真理。單據除系統自動計算稅額外，必須提供「發票實際稅額 (手動輸入)」欄位。系統存檔時僅檢核 `|系統計算總額 - 手動輸入總額| <= ±5 元`（受全域參數 `FIN_TAX_TOLERANCE` 控制）。容差範圍內直接放行，並自動劃入進位調整科目，解決 1 元之差鎖死存檔的問題。
+
+### Rule 7.3：四柱沖銷與跨行匯費內外扣公式 (Four-Column Balancing)
+* 付款明細 (`PaymentLineItem`) 必須執行鋼鐵借貸樂觀驗證。為防止跨行轉帳費導致四柱不平，明細表強制標配 `isFeeAbsorbedByCompany`（公司吸收開關）：
+  * **外加模式 (公司吸收 = true)**：`實付金額 + 銀行手續費 + 尾數折讓 = 應付總額期望值`。
+  * **內扣模式 (公司吸收 = false)**：`實付金額 + 尾數折讓 = 應付總額期望值` (此時手續費由實付金額中內扣，手續費欄位僅做備忘快照)。
+* 借貸不平衡時，強制將核准按鈕鎖死 (Disabled)，嚴防懸帳發生。
+
+### Rule 7.4：全域全紅紅字迴轉單 (REVERSAL Document)
+* 凡狀態為 `POSTED` (已核准) 的單據強制鎖死，嚴禁物理刪除 (`DELETE`)。若發生退匯或支票跳票（`BOUNCED`），出納點擊支票作廢時，系統自動將整張付款單轉向紅字沖銷，自動建立一張 `isReversal = true` 的迴轉單。
+* **憲法相容實作**：會計在迴轉單畫面上**一律輸入正數（符合 RULE-0.5 零負數鐵律）**，但整張單據 UI 背景強制渲染為**「警告全紅色」**。後端 Zod 驗證器 `.min(0)` 綠燈放行，但在拋轉到外帳總分類帳（GL）時，底層架構自動將「借貸方向對調」，完美迴轉帳務且保留神聖審計軌跡！源頭估驗單自動釋放還原為「待付款」狀態。
+
+### Rule 7.5：雙重控制鎖之出金過帳攔截 (Dual-Control Lock)
+* 聯動 Phase 3 廠商主檔之強硬內控。一旦廠商的銀行帳戶遭到異動，該廠商在資料庫會被立刻打上 `PAYMENT_LOCKED` 狀態。
+* 遵循「草稿先行」精神，系統允許出納正常建立付款單 **草稿 (`DRAFT`)** 並計算代扣款。但建單當下 UI 必須跳出巨型黃色警告，且最關鍵的 **`[核准過帳並產生匯款檔]` 按鈕強制反灰死鎖**。直到高權限主管在 Phase 3 審查並核准帳戶更正訊息後，此處付款按鈕才會亮起放行。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約
+
+~~~prisma
+// ==========================================
+// Module: Phase 7 - Accounting & Cash Flow (旗艦定版)
+// ⚠️ 嚴守 RULE-0.1(旗艦UUID), RULE-0.5(零負數), RULE-0.7(多公司)
+// ==========================================
+
+enum PaymentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  POSTED
+  VOIDED
+}
+
+enum CheckStatus {
+  ISSUED     // 已開票 / 未兌現 (不影響真實餘額)
+  CLEARED    // 已兌現 (依實體存摺扣款日正式扣減)
+  BOUNCED    // 退票
+  VOIDED     // 作廢
+}
+
+enum PaymentSourceType {
+  PO         // 採購進貨單
+  SUB        // 下包估驗計價單
+  EXP        // 雜支報銷 (純實報實銷)
+}
+
+enum ItemType {
+  STANDARD   // 常規加項
+  DEDUCTION  // 現場代扣減項 (存正數，UI粉紅流)
+}
+
+/// 預付款／預收款共用台帳 (供應商預付及業主預收共用餘額來源)
+model PrepaymentLedger {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId         String          @db.Uuid
+  partnerId         String          @db.Uuid
+  advanceDirection  String          // SUPPLIER_PREPAYMENT | CUSTOMER_ADVANCE
+  sourceDocumentType String         // 原始付款、收款或合約類型
+  sourceDocumentId  String          @db.Uuid
+  transactionDate   DateTime
+  itemId            String?         @db.Uuid // 供應商預購料件；業主預收款為空
+  unitPrice         Decimal?        @db.Decimal(15, 4) // 區分不同預購價格批次
+  originalQty       Decimal?        @db.Decimal(15, 4)
+  remainingQty      Decimal?        @db.Decimal(15, 4)
+  originalAmount    Decimal         @db.Decimal(15, 2)
+  appliedAmount     Decimal         @default(0) @db.Decimal(15, 2)
+  balanceAmount     Decimal         @db.Decimal(15, 2)
+  currency          String          @default("TWD")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([companyId, partnerId, advanceDirection])
+  @@map("fin_prepayment_ledgers")
+}
+
+/// 保留款共用事件台帳 (應收及應付共用欄位，依 direction 區分)
+model RetentionLedger {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId                String   @db.Uuid
+  direction                String   // AR | AP
+  contractId               String   @db.Uuid
+  sourceDocumentType       String
+  sourceDocumentId         String   @db.Uuid
+  retentionDeductionAmount Decimal  @default(0) @db.Decimal(15, 2)
+  retentionReleaseAmount   Decimal  @default(0) @db.Decimal(15, 2)
+  balanceAmount            Decimal  @db.Decimal(15, 2)
+  transactionDate          DateTime
+  currency                 String   @default("TWD")
+  createdAt                DateTime @default(now())
+
+  @@index([companyId, contractId, direction])
+  @@map("fin_retention_ledgers")
+}
+
+/// 資金收支主表 (四柱沖銷與雙日期核心)
+model PaymentRecord {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid // RULE-0.1
+  companyId         String          @db.Uuid // RULE-0.7: 強制併入集團法人歸屬
+  currency          String          @default("TWD") // RULE-0.5: 標配幣別快照
+  paymentNo         String          @unique // 付款單號
+  bankAccountId     String          @db.Uuid // 關聯至公司銀行帳戶 (支援老闆代墊專戶)
+  partnerId         String?         @db.Uuid // 合作廠商 ID
+  customVendorName  String?         // 零星廠商手打名稱
+
+  // 全全紅紅字迴轉單標記 (Rule 7.4)
+  isReversal        Boolean         @default(false) 
+  isIntercompany    Boolean         @default(false) // [Phase 10] 內部交易快照
+
+  // 雙日期防禦 (Rule 7.1)
+  documentDate      DateTime        // 發票日/單據真實發生日
+  postingDate       DateTime        // 会計入帳日 (受 Period-Closing 鎖定)
+
+  totalAmount       Decimal         @db.Decimal(15, 2) // 四柱加總期望總額
+  status            PaymentStatus   @default(DRAFT)
+  
+  lineItems         PaymentLineItem[]
+  checkDetails      CheckDetail? // 票據一對一生命週期
+
+  // A+ 混合型作廢防禦 (Rule 7.4)
+  isDeleted         Boolean         @default(false)
+  version           Int             @default(1)
+  voidReason        String?         @db.Text // 作廢原因強制留痕
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([companyId, postingDate, status])
+  @@map("fin_payment_records")
+}
+
+/// 動態沖銷明細表 (四柱平衡與粉紅代扣款)
+model PaymentLineItem {
+  id                      String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid // RULE-0.1
+  paymentId               String            @db.Uuid
+  paymentRecord           PaymentRecord     @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  
+  sourceType              PaymentSourceType
+  sourceId                String            @db.Uuid // 對應源頭請款單單據 ID
+  
+  // 粉紅代扣款視覺化基礎
+  itemType                ItemType          @default(STANDARD) 
+
+  // 四柱沖銷金額 (Rule 7.3)
+  appliedAmount           Decimal           @db.Decimal(15, 2) // 本次實付沖抵 (RULE-0.5: 絕對正數)
+  feeAmount               Decimal           @default(0) @db.Decimal(15, 2) // 銀行手續費
+  isFeeAbsorbedByCompany  Boolean           @default(true)  // 跨行轉帳費內外扣開關
+  discountAmount          Decimal           @default(0) @db.Decimal(15, 2) // 廠商尾數折讓/抹零
+  
+  // 營造業特化：專案利潤還原 (BRD 5)
+  offsetExpenseId         String?           @db.Uuid // 綁定當初幫小包代墊的專案費用單據 ID
+
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  @@map("fin_payment_line_items")
+}
+
+/// 支票票據明細表 (期票對帳生命週期)
+model CheckDetail {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid // RULE-0.1
+  paymentId             String          @unique @db.Uuid
+  paymentRecord         PaymentRecord   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  
+  checkNumber           String          // 支票票號
+  drawerBank            String          // 付款行
+  
+  // 票據雙日期 (BRD 2)
+  issueDate             DateTime        // 開票日
+  expectedClearanceDate DateTime        // 預計兌現日 (現金流預測盤基準)
+  actualClearanceDate   DateTime?       // 實際存摺兌現日 (出納事後對帳補登)
+
+  status                CheckStatus     @default(ISSUED)
+
+  @@map("fin_check_details")
+}
+
+/// 共用發票主檔 (進項及銷項共用，不在請款／付款單重複保存發票資料)
+model Invoice {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceType           String   // INPUT | OUTPUT
+  invoiceNumber         String
+  invoiceDate           DateTime
+  taxReportingCompanyId String   @db.Uuid // 本系統負責申報／入帳的法人
+  issuerCompanyId       String?  @db.Uuid
+  issuerPartnerId       String?  @db.Uuid
+  buyerCompanyId        String?  @db.Uuid
+  buyerPartnerId        String?  @db.Uuid
+  issuerTaxId           String   @db.VarChar(50)
+  buyerTaxId            String   @db.VarChar(50)
+  netAmount             Decimal  @db.Decimal(15, 2)
+  taxAmount             Decimal  @db.Decimal(15, 2)
+  totalAmount           Decimal  @db.Decimal(15, 2)
+  currency              String   @default("TWD")
+  status                String   @default("VALID") // VALID | VOIDED | CREDITED
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([taxReportingCompanyId, issuerTaxId, invoiceNumber])
+  @@map("fin_invoices")
+}
+
+/// 發票與 AP／AR 來源單據的多對多勾稽
+model BillingInvoiceMapping {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId          String   @db.Uuid
+  sourceDocumentType String   // AP | AR | PROGRESS_BILLING 等來源類型
+  sourceDocumentId   String   @db.Uuid
+  mappedAmount       Decimal  @db.Decimal(15, 2)
+  createdAt          DateTime @default(now())
+
+  @@unique([invoiceId, sourceDocumentType, sourceDocumentId])
+  @@index([sourceDocumentType, sourceDocumentId])
+  @@map("fin_billing_invoice_mappings")
+}
+~~~
+
+---
+
+## 肆、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+~~~typescript
+import { z } from "zod";
+
+// RULE-0.8: 幽靈小數洗滌器
+const NTDAmountSchema = z.number()
+  .min(0, "金流金額絕對不可為負數") // RULE-0.5 零負數防禦
+  .transform(val => Math.round(val));
+
+export const PaymentLineItemSchema = z.object({
+  itemType: z.enum(['STANDARD', 'DEDUCTION']),
+  appliedAmount: NTDAmountSchema,
+  feeAmount: NTDAmountSchema.default(0),
+  isFeeAbsorbedByCompany: z.boolean().default(true),
+  discountAmount: NTDAmountSchema.default(0),
+  expectedTotalAP: NTDAmountSchema, // 來源請款單傳入的應付總額期望值
+}).superRefine((data, ctx) => {
+  
+  // 執行 Rule 7.3 跨行匯費內外扣公式校驗
+  let totalApplied = 0;
+  if (data.isFeeAbsorbedByCompany) {
+    // 外加模式：手續費由公司吸收，會計帳需包含手續費進行四柱平衡
+    totalApplied = data.appliedAmount + data.feeAmount + data.discountAmount;
+  } else {
+    // 內扣模式：手續費從包商工程款中內扣，算平衡時不重複累加手續費
+    totalApplied = data.appliedAmount + data.discountAmount;
+  }
+
+  if (totalApplied !== data.expectedTotalAP) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `借貸四柱不平衡！本期沖銷加總為 ${totalApplied}，與應付期望總額 ${data.expectedTotalAP} 不符。`,
+      path: ["appliedAmount"],
+    });
+  }
+});
+~~~
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (出納極速與防呆)
+
+1. **銀行帳戶異動黃燈警告 (出金雙重控制鎖)**：
+   * 出納建立付款單草稿（`DRAFT`）時，若選定之廠商處於 `PAYMENT_LOCKED` 狀態，畫面右上方立即彈出耀眼的黃色橫幅：**「⚠️ 警告：該廠商銀行帳戶已被工務異動，目前處於鎖定審查狀態。本單據僅供暫存草稿，在主管核准帳戶前鎖死過帳！」**。具備高權限之財務主管通過帳號更正訊息後，畫面即時「紅燈轉綠燈」，出納免重新打單即可一鍵核准。
+2. **減項粉紅防呆視覺 (Pink Deduction UI)**：
+   * 在付款沖銷明細中，出納如果拉入工地代墊款或罰款（`itemType === "DEDUCTION"`），該整行輸入框與背景強制渲染為**粉紅色/警示紅**。直觀引導出納直接輸入正數，系統底層會自動執行減法沖抵。
+3. **迴轉單全紅防呆視覺 (Red Reversal UI)**：
+   * 當出納發起支票退票或退匯作廢時，系統自動生成的 `REVERSAL` 迴轉單介面背景強制渲染為**「警告全紅色」**。提醒會計此單據為紅字反向沖銷單，直接輸入正數即可，底層會自動執行借貸對調拋轉外帳。
+4. **發票本位拆單智慧精靈 (Invoice Splitting Wizard)**：
+   * 月底請款對帳時，系統提供「發票拆單小幫手」，會計只需輸入下包商拿來的多張發票抬頭與金額，系統會自動在背景分拆出兩筆完全獨立的 `ProgressBilling` 憑證並自動綁定各自對應的 `companyId`，極致簡化操作。

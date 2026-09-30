@@ -1,0 +1,295 @@
+# 🏛️ ERP 系統全端重構專案：Phase 4 報價與銷售模組總綱 (Prisma 旗艦版)
+
+**文件定位**：本文件為 Phase 4 (Quotation & Sales - CPQ 引擎) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：借鑑 Salesforce CPQ 架構，打造「三軌並行議價引擎」。在賦予前線業務極致靈活度（藏工於料、整數請款）的同時，以「草稿驗證閘門」、「幽靈小數洗滌」、「有效單價歸一化」與「印花稅動態銷印」建構強硬內控防護，徹底終結報價單、合約與後續追減工程的爭議死角。
+
+---
+
+## 壹、 業務需求與跨角色實務情境 (BRD)
+
+### 1. 三軌並行議價引擎 (Triple-Track CPQ Engine)
+因應第一線業務面對不同業主的談判策略，單據表頭支援一鍵切換三種議價列印軌道：
+* **軌道一【表頭折讓流】**：明細維持原價，於報價單最下方印出「協議折讓：-X 元」。適合喜歡看自己「砍了多少價」的業主。
+* **軌道二【單價微調流】**：系統依目標總價，自動反推並蓋寫明細單價（最多 2 位小數）。紙本完全不出現折讓字眼，適合要求明細與總價必須數學絕對吻合的嚴謹業主。
+* **軌道三【文字備註影子流】**：明細與總計皆維持原價。僅在最下方印出指定文字（如：「經雙方協議同意以 150,000 承製」）。適合工地現場最常見的「總價發包、不改明細」快速成交情境。
+
+### 2. 草稿先行與幽靈小數防禦 (Draft-First & Ghost Decimal Defense)
+* **草稿先行**：業務在操作台點擊儲存時，系統無論如何先產出 `DRAFT` (草稿)，確保心血落地。
+* **幽靈小數與尾差警報**：當採用「軌道二」反推單價時，若因單價小數進位與小計取整產生了除不盡的尾差（如 2 元），系統「絕對不擅自竄改最大項」，而是在畫面上亮起橘燈警報。業務必須手動微調單價或轉入表頭折讓，直到數學 100% 吻合，才允許核准定案，杜絕業主拿計算機驗算報價單的信任危機。
+
+### 3. 歸一化有效單價與追減防禦 (Effective Unit Price)
+無論業務在前端採用哪一條軌道，當報價單轉為「正式合約」時，系統底層會啟動「影子均攤引擎」，自動為每一個項目計算出隱藏的 `effectiveUnitPrice`（折讓後有效單價）。未來工地主任辦理「追減工程 (VO)」時，系統強制以此影子單價作為退款基準，徹底消滅溢退虧損。
+
+### 4. 版次演進與部分得標 (V_FINAL 決選版)
+* **主單深拷貝 (Deep Copy)**：業主反覆議價時，嚴禁直接蓋寫原單。系統採用整單深拷貝機制，舊版降級為 `SUPERSEDED` (已取代) 鎖死，保留議價軌跡。
+* **部分得標防護網**：當業主剔除部分工項時，系統產生最終 `V_FINAL` 決選版。被砍掉的明細「不實體刪除」，而是標記為 `isAwarded = false` 並註記失標原因。工務端採購自動過濾未得標項，戰情室則可一覽流失的潛在營收。
+
+### 5. 印花稅動態引擎與內外帳銷印防線
+* **動態稅率解耦**：印花稅率動態讀取 Phase 0 參數字典。
+* **內外帳分離與基數**：系統自動檢查是否外加營業稅。若有載明，印花稅以 `netAmount` (未稅總額) 作為基數合法省稅；若未載明，則以 `grossAmount` (含稅總額) 計算。
+* **大額總繳銷印防查稅**：合約具備大額總繳憑證號（`stampDutyVoucherNo`）防呆。未登錄前，狀態標記為「待申報（有罰款風險）」，防範漏銷印挨罰。
+
+### 6. 銷售追加減與中途解約機制
+* 原始合約簽署完成即封印。追加減工程走正式變更單（Change Order）。中途解約或追減支援「負數變更單」扣減應收總額，維護帳務真實血緣。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 4.1：深拷貝版次隔離與部分得標鐵律 (Version Control & Partial Award)
+當報價單切換版次時，嚴禁執行 `UPDATE` 覆寫，必須 `INSERT` 新單據並指回 `parentQuotationId`。在 `V_FINAL` 單據中，未得標的項目必須保留且 `isAwarded = false`。後端拋轉合約或採購時，ORM 強制加上 `where: { isAwarded: true }` 過濾。
+
+### Rule 4.2：草稿驗證閘門與幽靈小數洗滌 (Validation Gate & Sanitization)
+Zod 驗證層必須實作「進海關前強制 Round 洗滌」。所有前端傳入的金額（`netAmount`、`lineAmount` 等），必須於 `.transform(val => Math.round(val))` 抹平幽靈小數。且表單必須通過 `數量 × 報價單價 ≈ lineAmount` 與 `淨額 + 稅額 - 折讓 = 總額` 的絕對數學平衡驗證，方可脫離 `DRAFT` 狀態。
+
+### Rule 4.3：全域非負數與減項表單粉紅防呆 (Non-Negative & UI Indicator)
+資料庫與 Zod 全面強制 `.min(0)`，徹底消滅實體負數寫入。追減工程或客戶折讓在資料庫中一律以「正數」儲存，並綁定 `itemType: DEDUCTION`。前端 UI 偵測到 `DEDUCTION` 時，頁面背景與輸入框必須強制渲染為「粉紅色/警示紅」防呆。
+
+### Rule 4.4：追減變更單防溢退校驗 (Anti-Refund Overage)
+建立負數追減單時，退款單價（`refundUnitPrice`）絕對不可大於該工項隱藏的 `effectiveUnitPrice`（折讓後有效單價），從底層卡死業務因人情溢退或算錯款項之內控漏洞。
+
+### Rule 4.5：印花稅動態核算與特權放行機制 (Stamp Duty Override)
+若啟用 `isStampDutyRequired` 開關且未偵測到憑證號（`stampDutyVoucherNo`），合約結案流程預設予以攔截。僅具備 `canOverrideValidation` 特權之帳號可執行強制放行，並必須輸入 `overrideReason` 寫入審計日誌。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約 (Prisma Schema Models)
+
+~~~prisma
+// ==========================================
+// Module: Phase 4 - Quotation & Sales (CPQ Engine)
+// ⚠️ 嚴守 Rule 0.6~0.8 與 Phase 4 三軌防禦
+// ==========================================
+
+enum QuotationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SUPERSEDED       // 被新版次取代 (歷史存檔)
+  CONVERTED        // 已轉為正式專案/合約
+  LOST
+}
+
+enum PricingMode {
+  HEADER_DISCOUNT         // 軌道一：表頭折讓流
+  UNIT_PRICE_ADJUSTMENT   // 軌道二：單價微調流
+  SHADOW_ALLOCATION       // 軌道三：影子均攤流 (純文字備註)
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  TERMINATED
+}
+
+enum ItemType {
+  STANDARD      // 常規加項
+  DEDUCTION     // 追減/折讓減項 (存正數)
+}
+
+/// 報價單主表 (三軌議價與版控)
+model Quotation {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quotationNumber   String
+  versionNumber     Int               @default(1)
+  lockVersion       Int               @default(1)
+  
+  projectId         String            @db.Uuid
+  companyId         String            @db.Uuid
+  customerId        String            @db.Uuid
+  validUntil        DateTime
+  
+  // 🛡️ 三軌議價引擎控制樞紐
+  pricingMode       PricingMode       @default(HEADER_DISCOUNT)
+  customDiscountText String?          @db.VarChar(255)
+  agreedTotalAmount Decimal?          @db.Decimal(15, 2)
+
+  // 財務核心金額
+  netAmount         Decimal           @db.Decimal(15, 2)
+  discountAmount    Decimal           @db.Decimal(15, 2) @default(0) // 軌道一專用
+  taxAmount         Decimal           @db.Decimal(15, 2) @default(0)
+  totalAmount       Decimal           @db.Decimal(15, 2)
+  lossReasonCode    String?
+  lossRemarks       String?           @db.Text
+  
+  status            QuotationStatus   @default(DRAFT)
+  
+  // 歷史血緣追蹤 (Rule 4.1 深拷貝)
+  parentQuotationId String?           @unique @db.Uuid
+  parentQuotation   Quotation?        @relation("QuotationHistory", fields: [parentQuotationId], references: [id], onDelete: Restrict)
+  childQuotation    Quotation?        @relation("QuotationHistory")
+
+  items             QuotationItem[]
+
+  isDeleted         Boolean           @default(false)
+  createdBy         String?
+  updatedBy         String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([quotationNumber, versionNumber])
+  @@map("sales_quotations")
+}
+
+/// 報價單明細表
+model QuotationItem {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quotationId       String            @db.Uuid
+  quotation         Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  
+  itemType          ItemType          @default(STANDARD) // RULE-4.3
+  isOptional        Boolean           @default(false)
+  itemName          String            @db.VarChar(255)
+  
+  quantity          Decimal           @db.Decimal(10, 2)
+  
+  // 對外報價單價 (PDF 列印用，最多 2 位小數)
+  quotedUnitPrice   Decimal           @db.Decimal(15, 2)
+  lineAmount        Decimal           @db.Decimal(15, 2) // 明細金額
+  
+  // 預估成本及折讓後有效單價，供成本基準與追減退款計算
+  estimatedUnitCost Decimal          @db.Decimal(15, 2)
+  effectiveUnitPrice Decimal          @db.Decimal(15, 4) @default(0)
+  
+  // 🛡️ 部分得標開關 (Rule 4.1)
+  isAwarded         Boolean           @default(true) 
+  lostReason        String?           @db.VarChar(255)
+
+  @@map("sales_quotation_items")
+}
+
+/// 正式銷售合約主表 (內外帳解耦與印花稅引擎)
+model ProjectContract {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId           String            @db.Uuid
+  projectId           String            @db.Uuid
+  contractNumber      String            @unique
+  
+  originalTotalAmount Decimal           @db.Decimal(15, 2)
+  currentTotalAmount  Decimal           @db.Decimal(15, 2)
+  
+  // 印花稅動態引擎與內外帳分離架構 (Rule 4.5)
+  isStampDutyRequired Boolean           @default(false)
+  stampDutyRuleId     String?           @db.Uuid
+  isTaxExclusive      Boolean           @default(true)
+  originalCopiesCount Int               @default(2)
+  stampDutyShare      Decimal           @default(1.0) @db.Decimal(3, 2)
+  stampDutyAmount     Decimal           @default(0) @db.Decimal(15, 2)
+  stampDutyVoucherNo  String?
+  isStampDutyPaid     Boolean           @default(false)
+  
+  status              ContractStatus    @default(DRAFT)
+  overrideReason      String?           @db.Text
+  
+  changeOrders        SalesChangeOrder[]
+  
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@map("sales_project_contracts")
+}
+
+/// 銷售追加減變更單 (附約隔離)
+model SalesChangeOrder {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  contractId        String            @db.Uuid
+  contract          ProjectContract   @relation(fields: [contractId], references: [id])
+  coNumber          String            @unique
+  
+  // 追減亦存正數，由 type 控制加減
+  itemType          ItemType          @default(STANDARD) 
+  changeAmount      Decimal           @db.Decimal(15, 2)
+  reason            String
+  isApproved        Boolean           @default(false)
+  
+  createdAt         DateTime          @default(now())
+
+  @@map("sales_change_orders")
+}
+~~~
+
+---
+
+## 肆、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+~~~typescript
+import { z } from "zod";
+
+// RULE-0.6: 幽靈小數洗滌器 (進海關前強制四捨五入)
+const NTDAmountSchema = z.number().min(0, "金額不可為負數").transform(val => Math.round(val));
+
+const QuotationItemSchema = z.object({
+  itemName: z.string().trim().min(1),
+  itemType: z.enum(["STANDARD", "DEDUCTION"]),
+  quantity: z.number().positive(),
+  quotedUnitPrice: z.number().min(0), // 允許小數
+  lineAmount: NTDAmountSchema,        // 強制整數洗滌
+  isAwarded: z.boolean().default(true),
+  lostReason: z.string().nullable().optional()
+}).superRefine((data, ctx) => {
+  if (!data.isAwarded && (!data.lostReason || data.lostReason.trim() === "")) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "未得標必須填寫原因", path: ["lostReason"] });
+  }
+  // 數學絕對吻合驗證
+  const calcLineAmount = Math.round(data.quantity * data.quotedUnitPrice);
+  if (calcLineAmount !== data.lineAmount) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `數學驗算錯誤：數量 × 單價應為 ${calcLineAmount}，系統嚴禁幽靈尾差，請微調單價。`,
+      path: ["lineAmount"]
+    });
+  }
+});
+
+export const QuotationUpsertSchema = z.object({
+  customerId: z.string().uuid(),
+  pricingMode: z.enum(["HEADER_DISCOUNT", "UNIT_PRICE_ADJUSTMENT", "SHADOW_ALLOCATION"]),
+  customDiscountText: z.string().nullable().optional(),
+  agreedTotalAmount: z.number().nullable().optional(),
+  
+  items: z.array(QuotationItemSchema).min(1),
+  
+  // 進入全域非負數與取整洗滌
+  netAmount: NTDAmountSchema,
+  discountAmount: NTDAmountSchema,
+  taxAmount: NTDAmountSchema,
+  totalAmount: NTDAmountSchema
+}).superRefine((data, ctx) => {
+  // 軌道三防呆：必須輸入協議總價與文字
+  if (data.pricingMode === "SHADOW_ALLOCATION") {
+    if (!data.agreedTotalAmount || data.agreedTotalAmount <= 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "影子均攤模式必須輸入協議金額", path: ["agreedTotalAmount"] });
+    }
+  }
+
+  // 財務四柱平衡檢驗
+  if (data.pricingMode !== "SHADOW_ALLOCATION") {
+    const expectedTotal = data.netAmount - data.discountAmount + data.taxAmount;
+    if (expectedTotal !== data.totalAmount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `財務平衡錯誤：淨額 - 折讓 + 稅額 (${expectedTotal}) 必須等於總額 (${data.totalAmount})。`,
+        path: ["totalAmount"]
+      });
+    }
+  }
+});
+~~~
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (初學者與防弊防呆)
+
+1. **三軌模式無縫切換器 (Mode Switcher)**：
+   * 表頭提供視覺化卡片讓業務選擇「折讓模式」。切換時，畫面右側的 `[PDF 列印即時預覽區]` 會瞬間改變長相（顯示折讓行、或隱藏折讓行並顯示協議文字），讓業務對「印出去長怎樣」具備絕對安全感。
+2. **智慧尾差警報台 (Smart Gap Resolver)**：
+   * 點擊儲存時，系統必定先產生 `DRAFT` (草稿)。
+   * 若使用「軌道二 (單價微調流)」，因整數進位產生尾差（如差 2 元），畫面頂端強制彈出 **「⚠️ 尾差警報：距離目標尚差 2 元，禁止定案」**。
+   * 提供快捷修復：`[高光提示，讓我手動微調單價]` 或 `[切換為軌道一，將 2 元計入表頭折讓]`。核准定案按鈕在紅燈解除前永遠保持反灰鎖死。
+3. **版次演進歷史樹 (Version History Tree)**：
+   * 表頭右上方提供徽章顯示當前版次（如 `V3 (決選版)`）。點擊滑出側邊抽屜，以視覺化時間軸顯示 `V1 (已取代) ➔ V2 (已取代) ➔ V3 (核准)`，支援點擊歷史節點唯讀對比。
+4. **部分得標一鍵開關 (Partial Award Toggles)**：
+   * 將單據轉為 `V_FINAL` 決選版時，網格最左側出現「✅ / ❌」得標開關。點擊 ❌ 後，整行變灰加刪除線，並自動彈出「失標原因」下拉選單，流暢捕捉戰情室所需之商業數據。
+5. **減項粉紅防呆視覺 (Pink Deduction UI)**：
+   * 當業務在開立負數變更單或客戶折讓時，由於系統底層全面封殺負數輸入，前端只要偵測到 `itemType === "DEDUCTION"`，整張單據的背景與輸入框強制轉為粉紅色，直觀引導業務輸入正數。

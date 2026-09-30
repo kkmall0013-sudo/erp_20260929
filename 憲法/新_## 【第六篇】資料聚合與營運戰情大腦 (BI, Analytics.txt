@@ -1,0 +1,149 @@
+## 【第六篇】資料聚合與營運戰情大腦 (BI, Analytics & Command Center) - 修正定版
+
+> **【架構師最高聲明】**
+> 本篇章為系統的「最高決策大腦」。戰情室的底層設計必須在「極致的上帝視角」與「絕對的資料庫安全」之間取得完美平衡。任何開發者在實作聚合查詢 (OLAP) 與報表匯出時，必須嚴格遵守本篇定義的「零信任運算」、「雙軌排程分水嶺」與「機密遮蔽引擎」。嚴禁任何圖表查詢因效能超載而拖垮前線業務 (OLTP) 的運行。
+
+### 🛡️ RULE-6.1：戰情室交互與深層跳轉 (Deep Link & State Preservation)
+1. **側邊抽屜疊加預設 (Side Drawer)**：戰情大表一律採用「單頁應用 (SPA)」架構。當使用者點擊圖表或列表上的異常數字時，系統強制從畫面右側滑出佔據 70% 寬度的「側邊抽屜」顯示明細。嚴禁跳轉頁面導致戰情室的「時間區間與條件篩選」狀態遺失。
+2. **獨立視窗分流 (Pop-out)**：針對複雜查帳需求，側邊抽屜右上角必須提供「在新分頁開啟 (Pop-out)」按鈕，允許使用者將單據獨立彈出，實現雙螢幕交叉比對。
+
+### 🛡️ RULE-6.2：零信任數學運算防禦與集團沖銷 (Zero-Trust Math & Elimination)
+1. **預防性零值化 (Pre-emptive Zero-fill)**：所有 Prisma 聚合查詢 (`_sum`, `_avg`) 回傳的數值，在進入前端或報表引擎前，中介層必須攔截 `NULL` 與 `Undefined` 並強制轉化為 `0.00`。
+2. **防零除崩潰 (Divide-by-Zero Defense)**：計算毛利率或進度百分比時，API 必須實作防零除邏輯。若分母為 0，強制回傳 `0`。嚴禁前端出現 `NaN` 或導致白畫面崩潰。
+3. **集團未實現利潤消除 (Intercompany Elimination) [新增]**：產出「全集團總覽報表」時，系統底層自動啟動抵銷分錄，扣除各子公司間的「假營收與假成本」，還原集團真實淨利，防止資產虛胖。
+
+### 🛡️ RULE-6.3：報表效能分水嶺與 VIP 快車道 (Queue Threshold & VIP Bypass)
+1. **1 個月智能閥值與 VIP 特權 [修正]**：針對 Excel 報表匯出，查詢區間小於等於 30 天內，允許「同步串流 (Synchronous) 即時下載」；查詢區間大於 30 天或勾選「全集團/跨公司總表」，一般使用者強制阻斷即時請求，轉入「非同步排程 (Asynchronous Queue)」。**若操作者具備 `SuperAdmin` 權限，介面將解鎖專屬的 `[⚡ 強行即時下載 (VIP)]` 按鈕，開闢最高優先級通道，不需排隊直接產出。**
+2. **分批吞吐指標 (Cursor Pagination)**：排程機器人撈取資料時，嚴禁使用 `SELECT *` 一次拉取全量明細。必須強制使用 Cursor 指標，每批次撈取上限 1,000 筆，算完即釋放記憶體，徹底消滅 OOM (Out of Memory) 當機風險。
+3. **斷點續傳重試 (Idempotent Retry)**：背景排程必須具備狀態記憶。若遇伺服器重啟或斷線，已產出的月份快照必須保留，排程重啟後僅接續計算未完成之月份。
+
+### 🛡️ RULE-6.4：機密成本模糊化與上帝解碼開關 (Confidentiality & God-Mode)
+1. **總部管理費雙軌過渡制 (Overhead Allocation) [修正]**：為防範專案經理 (PM) 透過成本反推「機密薪資」或「特支費」，戰情室專案成本必須強制納入「總部管理費」黑盒子。實施兩階段過渡：第一階段（目前）由財務部於月底「手動分攤入帳」吃掉專案毛利；第二階段（未來）啟用「日均平滑扣除」，每天自動微幅扣除管理費，降低 PM 月底被突襲的負面感受。
+2. **上帝解碼器 (God-Mode Toggle)**：針對具備 `SuperAdmin` (老闆) 權限之帳號，戰情室右上角必須提供 `[👁️ 顯示機密原始成本]` 的一鍵開關。預設關閉以利會議投影；開啟後，後端 API 瞬間拆解黑盒子，還原真實血緣。
+
+### 🛡️ RULE-6.5：BvA 預算三柱模型與變更單基線 (Budget vs Actual)
+1. **承諾成本防線 (Committed Cost)**：戰情大腦的預算監控，嚴禁僅比較「總預算與已付款」。系統必須強制計算「已核准但尚未請款之發包/採購合約餘額」作為承諾成本。
+2. **三柱預算公式**：所有專案儀表板的剩餘資金計算，必須死守公式：`真實剩餘可用預算 = 總預算 - (實際已過帳成本 + 已承諾未請款成本)`，消滅隱形財務黑洞。
+3. **變更單基線動態覆蓋 (VO Baseline Override) [新增]**：拒絕歐美 ERP 複雜的多重歷史基線。當業主追加工程（VO 變更單）並經核准後，戰情室的「專案總預算天花板」必須瞬間動態加總覆蓋（V1 預算 + VO 追加）。只要實際花費低於最新天花板即亮起綠燈，杜絕錯誤的超支紅燈警報。
+
+### 🛡️ RULE-6.6：智能快照重算矩陣與即時刷新 (Smart Dirty-Flag Matrix)
+1. **A 級核心欄位 (強制重算)**：當已關帳單據之 `金額 (Amount)`、`日期 (Date)`、`稅額 (Tax)` 或 `狀態 (Status)` 發生異動時，系統底層靜默標記 `isDirty = true`，午夜排程強制重算該月快照。
+2. **B 級邊緣欄位 (彈性詢問)**：若使用者僅修改 `備註 (Remarks)`、`錯字` 或 `附件檔名`，前端必須彈出提示：「此修改不影響總額，是否需要排程重新產出歷史報表？」。將運算資源決定權交還使用者，避免蝴蝶效應引發的無效伺服器耗損。
+3. **老闆即時強制重算按鈕 (Real-time Recalculation) [新增]**：若戰情室首頁偵測到 `isDirty = true`，標題旁將顯示警示並提供專屬 `[🔄 即時強制重算]` 按鈕。高管點擊後，系統瞬間穿透快照，執行當下活數據的最新運算，給予老闆毫秒級的真實上帝視角。
+
+### 🛡️ RULE-6.7：上帝之眼防內鬼調閱稽核 (Read & Export Audit Trail)
+1. **唯讀足跡紀錄**：有別於傳統 ERP 只紀錄修改，任何人進入戰情室執行「大範圍聚合查詢」或「報表匯出 (EXPORT)」，API 必須強制寫入 Audit Log（包含 Who, When, What 及查詢參數）。
+2. **大範圍匯出防線與預警**：若非 SuperAdmin 權限帳號，於 24 小時內連續執行超過 3 次「大範圍報表匯出」，系統不予阻擋但必須立即於背景觸發「機密防護預警」，發送通知至管理者信箱或 LINE，防範商業機密打包外洩。
+
+### 🛡️ RULE-6.8：90 天資金預測雷達與盲區填補 (Cash Flow Radar) [新增]
+戰情室的 90 天資金水位預測盤，除了整合 AR/AP 與三燈號應收付票據外，必須強制填補以下隱形現金流黑洞：
+1. **營業稅 (VAT) 雙月衝擊預測**：系統自動推算單數月 15 日應繳納之營業稅（當期預估銷項 - 預估進項），並於資金雷達的該日期安插巨額扣款旗標。
+2. **經常性固定支出預測**：允許財務於系統手動設定常規資金流出（如：每月 5 日薪資 200 萬、每月 10 日廠房租金），確保老闆看到的「預測可用現金」已扣除所有無單據之隱性負債。
+
+---
+
+### 💻 附錄：第六篇 Prisma & Zod 標準實作範本
+
+    // ==========================================
+    // Prisma Schema: 報表快照實體與調閱稽核日誌
+    // ==========================================
+    
+    // 報表快照表 (RULE-6.3 & 6.6)
+    model ReportSnapshot {
+      id              String   @id @default(uuid()) @db.Uuid
+      reportType      String   // 'BVA_PROJECT', 'AR_AGING', 'PROFIT_SUMMARY'
+      periodYear      Int
+      periodMonth     Int
+      dimension       String   // 'ALL_GROUP', 'PROJECT_A'
+      
+      isDirty         Boolean  @default(false) // 智能髒標記，大於 0 (true) 等待重算
+      lastGeneratedAt DateTime?
+      vaultFileId     String?  @unique @db.Uuid // 綁定 Phase 1 的 Vault 實體檔案
+    
+      createdAt       DateTime @default(now())
+      updatedAt       DateTime @updatedAt
+    
+      @@unique([periodYear, periodMonth, dimension, reportType])
+      @@map("report_snapshots")
+    }
+    
+    // 戰情室敏感操作調閱日誌 (RULE-6.7)
+    model ReportAuditLog {
+      id              String   @id @default(uuid()) @db.Uuid
+      userId          String   @db.Uuid
+      actionType      String   // 'VIEW_DASHBOARD', 'EXPORT_EXCEL'
+      queryParameters Json     // 記錄查了什麼 (如: { "year": 2024, "companyId": "all" })
+      ipAddress       String?
+      createdAt       DateTime @default(now())
+    
+      @@index([userId, createdAt])
+      @@map("report_audit_logs")
+    }
+
+    // ==========================================
+    // Zod Schema: 零信任數學與報表匯出防呆
+    // ==========================================
+    import { z } from "zod";
+
+    // 報表匯出請求防禦 (RULE-6.3) [修正加入 VIP 開關]
+    export const ReportExportRequestSchema = z.object({
+      reportType: z.enum(["BVA_PROJECT", "PROFIT_SUMMARY", "CASH_FLOW"]),
+      dateFrom: z.string().datetime(),
+      dateTo: z.string().datetime(),
+      companyId: z.string().uuid().or(z.literal("ALL")),
+      isVipBypass: z.boolean().default(false), // VIP 特權快車道開關
+    }).superRefine((data, ctx) => {
+      const start = new Date(data.dateFrom);
+      const end = new Date(data.dateTo);
+      const diffDays = (end.getTime() - start.getTime()) / (1000 * 3600 * 24);
+    
+      // 閥值判定：超過 30 天或跨公司，若非 VIP，強制轉入背景排程
+      if ((diffDays > 30 || data.companyId === "ALL") && !data.isVipBypass) {
+        // 註解：此錯誤碼將由 Axios Interceptor 捕捉，UI 自動轉為「排程鈴鐺通知」畫面
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "QUEUE_REQUIRED: 查詢範圍過大，必須轉入背景排程",
+          path: ["dateTo"],
+        });
+      }
+    });
+
+    // BvA 預算三柱防禦計算 (RULE-6.5) [修正加入變更單基線覆蓋]
+    export const BvaCalculationSchema = z.object({
+      v1Budget: z.number().min(0).default(0),        // 原始預算
+      approvedVOBudget: z.number().min(0).default(0), // 已核准變更單追加預算
+      actualCost: z.number().min(0).default(0),
+      committedCost: z.number().min(0).default(0),
+    }).transform((data) => {
+      // RULE-6.5.3: 動態基線覆蓋 (最新總合約天花板)
+      const dynamicTotalBudget = (data.v1Budget || 0) + (data.approvedVOBudget || 0);
+      
+      const safeActual = data.actualCost || 0;
+      const safeCommitted = data.committedCost || 0;
+      
+      // 嚴格公式：可用剩餘 = 最新天花板 - (實際 + 承諾)
+      const remainingBudget = dynamicTotalBudget - (safeActual + safeCommitted);
+    
+      return {
+        ...data,
+        dynamicTotalBudget,
+        remainingBudget: Number(remainingBudget.toFixed(2)),
+        isOverBudget: remainingBudget < 0
+      };
+    });
+
+    // 90 天資金雷達預測模型 (RULE-6.8) [全新加入]
+    export const CashFlowRadarSchema = z.object({
+      currentBankBalance: z.number(),
+      projectedAR: z.number(),
+      projectedAP: z.number(),
+      unclearedChecks: z.number(),               // 黃燈未兌現票據
+      estimatedVAT: z.number().default(0),       // 預估應納營業稅
+      recurringExpenses: z.number().default(0),  // 常規固定支出 (薪資/租金)
+    }).transform((data) => {
+      // 真實可用資金預測 = 銀行餘額 + 應收 - 應付 - 未兌票據 - 營業稅 - 固定支出
+      const projectedNetCash = data.currentBankBalance + data.projectedAR 
+          - data.projectedAP - data.unclearedChecks 
+          - data.estimatedVAT - data.recurringExpenses;
+      return { ...data, projectedNetCash };
+    });

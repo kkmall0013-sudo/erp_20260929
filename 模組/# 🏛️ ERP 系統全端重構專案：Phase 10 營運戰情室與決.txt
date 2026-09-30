@@ -1,0 +1,134 @@
+# 🏛️ ERP 系統全端重構專案：Phase 10 營運戰情室與決策模組總綱 (Prisma 憲法全卷版)
+
+**文件定位**：本文件為 Phase 10 (Command Center & Decision Support) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：打造 100% 唯讀、零崩潰的高階決策大腦。戰情室不負責產出單據，而是作為**《新_最高憲法》第 0 章至第 7 章所有硬核內控、跨模組血緣、與台灣營造實務智慧的「終極顯像鏡」**。系統預埋 GR/IR 權責發生管線、實作資金水位虛線軟隔離、並以 RLS 級別捍衛老闆口袋隱私，呈現絕對真實、零水分的集團專案利潤。
+
+---
+
+## 壹、 業務需求與跨角色實務情境白皮書 (BRD)
+
+### 1. 雙軌日期視角與全域單據血緣鑽取 (Dual-Track View & Deep Drill-down)
+* **聯動憲法第 7 章 (Rule 7.1)**：戰情室首頁提供「管理視角」與「稅務視角」一鍵切換：
+  * **管理視角**：以 `documentDate` (憑證發生日/發票真實日) 為聚合基準，真實呈現工地當下的進度、成本與毛利。
+  * **稅務視角**：以 `postingDate` (會計承認入帳日) 為聚合基準，完全對齊會計師的作帳期與 401 營業稅申報軌跡。
+* **全域穿透 (Drill-down)**：戰情室畫面上所有聚合數字支援「點擊穿透」，可層層向下鑽取，經由「總帳 ➡️ 估驗單 ➡️ 收料單」，最終直達 Phase 9 保險箱（Vault）中儲存的實體發票與合約 PDF 附件，確保數據血緣 100% 可追溯。
+
+### 2. 未來擴編管線預埋：GR/IR 權責發生制與暫估負債防禦
+* **聯動憲法第 5、6 章（發包與採購防線）**：為因應公司未來擴編、職務分拆後產生的「現場收料」與「會計打單」時間差黑洞，戰情室底層聚合引擎強制非同步穿透現場的「收料單 (GoodsReceipt)」。
+* **實做實算暫估成本**：凡屬於「現場已簽收點收、但會計尚未收到發票/尚未打估驗單」的盲收料件與核准點工，戰情室自動撈取 Phase 5 的採購單價進行算術換算，認列為 **`[GR/IR 暫估應付帳款 (Accrued Liabilities)]`** 並直接從當期專案毛利中扣除。確保老闆看到的毛利永遠是扣除真實消耗後的「殘酷真相」，絕非虛盈實虧的快樂表。
+* **超請死鎖可視化**：聯動 Rule 7.5，若現場發生超收（收料數量 > PO 數量），戰情室毛利看板的成本端將強制套用 `MIN(收料數量, PO數量)` 作為計價上限，將超收部分標示為「零成本材料」，協助高層監控廠商溢請風險。
+
+### 3. 90 天資金雷達與水位線視覺軟隔離 (Cash Radar & Soft Isolation)
+* **聯動憲法第 7 章 (支票對帳解耦)**：資金雷達整合各實體銀行帳戶。針對已開立的期票，雷達強制抓取 `CheckDetail` 表中的 `status === ISSUED`（已開票未兌現），並以其 `expectedClearanceDate` (預計兌現日/票期) 為時序定錨，動態繪製未來 90 天的公司生存資金曲線。當出納於 Phase 7 變更為 `CLEARED` 時，雷達自動切換為實體存摺扣款日。
+* **資金水位視覺軟隔離**：聯動業主預收款共用台帳。針對尚未沖抵的 `PrepaymentLedger.balanceAmount`，系統不硬性鎖死帳戶資金的自由調度，而是在資金雷達總水位上，以「虛線或堆疊色塊」軟性隔離標示 `[含特定案場預收款 X 萬]`，提供直覺的營運安全警告。
+
+### 4. 老闆口袋虛擬帳戶之最高層級隱私防護 (Absolute Privacy)
+* **聯動憲法第 7 章 (資金雙軌制)**：為了日常工務極速建單與年底外帳無痛申報，系統在 Phase 7 建立了「老闆口袋/股東往來」虛擬帳戶。
+* **列級安全過濾 (Row-Level Security)**：戰情室總資金盤實施鋼鐵權限隔離。底層 SQL 查詢強制掛載過濾器：當偵測到帳戶 `isVirtualAccount === true` 時，除非當前登入使用者的 Role 嚴格等於 `BOSS` 或 `SUPERADMIN`，否則 API 直接將該行數據**徹底隱形**（不顯示、不加總、連 0 元欄位都不曝露），防止專案 PM 或一般財務人員窺探高層私人調度水池。
+
+### 5. 90 天帳齡矩陣與合法資產隔離
+* **逾期呆帳抓漏**：系統自動將未收/未付款依「未逾期、1-30天、31-60天、61-90天、90天以上」進行帳齡分組。
+* **剔除保留款與預付污染**：聯動 Phase 6 與 Phase 8 的雙軌保留款發票模式。在 SQL 聚合帳齡時，**強制剔除尚未到期的「應收/應付保留款（Retention）」與「預付備料款（Prepaid 資產）」**，防止尚未合法的未到期款項污染逾期矩陣，徹底消滅負數資產引發的報表崩潰。
+
+### 6. 集團內部沖銷與跨公司代付血緣損益 (Intercompany Elimination)
+* **聯動憲法第 7 章 (Rule 7.6 沖銷印記)**：當選擇「全集團總覽戰情」時，系統底層捨棄緩慢的動態比對，**直接依賴過帳瞬間被鎖死的 `isIntercompany = true` 快照印記**，全自動物理排除集團子公司互開發票所產生的虛增營業額與虛增成本。
+* **代付血緣「認單不認錢」**：當發生 A 公司代墊 B 案場費用時，戰情室的專案損益雷達完全無視出金的法人（A公司），而是依據憑證抬頭與案場綁定血緣，**100% 將成本歸戶於 B 案場**，確保專案真實利潤不因跨公司代付而污染。
+
+### 7. 行政瓶頸監控中心 (Native Action Center)
+* **聯動憲法第 3 章 (廠商鎖定狀態機)**：首頁工作台主動提示當前全系統的卡單與危機。例如：提示當前有哪些付款單因為廠商遭 `PAYMENT_LOCKED` 鎖定而卡在「草稿」狀態，並直接顯示「行政停滯天數」，協助大老闆一眼看穿行政阻塞點，一鍵深層跳轉（Deep Link）至目標模組核准放行。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 10.1：絕對精準之唯讀聚合鐵律 (Read-Only Aggregation)
+* **[鐵律]**：戰情室為 100% 唯讀模組。除儲存「個人化看板配置（如 visibleMetrics）」外，嚴禁透過戰情室的任何 API 接口發起對其他業務模組單據的 `INSERT`、`UPDATE` 或 `DELETE`（含實體刪除與軟刪除）。所有操作按鈕必須轉化為唯讀跳轉連結。
+
+### Rule 10.2：極致嚴苛之防空值與零除防禦 (Null & Zero-Division Defense)
+* **[鐵律]**：使用 Prisma `_sum` 或 SQL `SUM()` 執行專案金額、稅金、代扣款聚合時，必須強制包裹 `COALESCE(..., 0.0)`。
+* **[鐵律]**：計算毛利率、成本耗用率等任何比率前，必須在代數層強制判斷分母。若分母小於或等於 0，系統強制回傳 `0.00`，絕對禁止引發 `NaN` 或 `Infinity` 導致前端控制台崩潰黑屏。
+
+### Rule 10.3：跨表多維度防污染過濾 (Data Bloodline Integrity)
+* **[鐵律]**：執行任何戰情數據聚合時，必須在 Prisma 的 `where` 條件中，同時校驗主表與明細表的 `isDeleted: false`。
+* **[鐵律]**：必須主動排除狀態為 `DRAFT`（草稿單據不具備財會效力）與 `VOIDED`（已作廢、已透過 Rule 7.4 全紅迴轉單沖銷之單據），嚴防髒數據污染戰情面板。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約
+
+```prisma
+// ==========================================
+// Module: Phase 10 - Command Center & Decision Support (旗艦定版)
+// ⚠️ 嚴守 RULE-0.1(旗艦UUID), RULE-0.7(多公司法人隔離)
+// ==========================================
+
+/// 戰情室個人化看板配置表 (僅儲存主管的介面配置，不碰觸核心金流寫入)
+model CommandDashboardConfig {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid // RULE-0.1 旗艦標準
+  companyId       String   @db.Uuid // RULE-0.7 多公司法人隔離
+  userId          String   @db.Uuid // 關聯至核心 AuthUser 主檔，建立權限動態安全過濾
+  
+  dashboardName   String   // 看板名稱 (如："集團CEO戰略大腦"、"專案 PM 毛利監控盤")
+  visibleMetrics  Json     // 允許檢視的指標陣列快照快取 (如：["CASH_RADAR", "AGING_MATRIX", "GR_IR_ALERT"])
+  refreshInterval Int      @default(300) // 背景非同步刷新的快取時間 (秒)
+  
+  isDeleted       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([companyId, userId])
+  @@map("sys_command_dashboard_configs")
+}
+
+// ==========================================================================
+// [Database Index Optimization Definition - 跨模組戰情效能優化複合索引] 
+// 為確保戰情室在百萬級數據下執行 OLAP 下鑽穿透不卡頓，後端工程師必須於前置 Phase 表格確保以下複合索引：
+// 1. 業主計價主表 (Phase 8): [companyId, status, documentDate, isDeleted]
+// 2. 資金收支主表 (Phase 7): [companyId, status, postingDate, isDeleted, isIntercompany]
+// 3. 現場收料主表：以 [status, isDeleted] 篩選收料；法人由 Invoice.taxReportingCompanyId 提供，開票狀態由 BillingInvoiceMapping 推導，不在 GoodsReceipt 重複保存 companyId / isBilled。
+// ==========================================================================
+```
+
+---
+
+## 肆、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+```typescript
+import { z } from "zod";
+
+// 戰情室全局動態查詢過濾器防呆 (攔截高層跨日期、跨公司篩選時的非法條件)
+export const CommandQueryParamSchema = z.object({
+  // companyId: 允許為 null (代表看全集團總帳，底層觸發 Rule 7.6 內部交易自動沖銷)。若有值則必須為合法 UUID。
+  companyId: z.string().uuid().nullable().default(null),
+  
+  // dateFrom / dateTo: ISO 日期字串，進海關自動洗滌時間戳
+  dateFrom: z.string().datetime().nullable().default(null),
+  dateTo: z.string().datetime().nullable().default(null),
+  projectId: z.string().uuid().nullable().default(null),
+  
+  // viewMode: 強制字串列舉，對齊憲法 Rule 7.1 雙日期系統
+  viewMode: z.enum(["MANAGEMENT_VIEW", "TAX_VIEW"]).default("MANAGEMENT_VIEW"),
+}).superRefine((data, ctx) => {
+  // 防呆基本法：結束時間不可早於開始時間
+  if (data.dateFrom && data.dateTo && new Date(data.dateFrom) > new Date(data.dateTo)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "查詢區間錯誤：結束時間不可早於開始時間。",
+      path: ["dateTo"],
+    });
+  }
+});
+```
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (高層決策防呆設計)
+
+1. **零除與空值視覺化「防瞎盾牌」 (Safe UI Placeholder)**：
+   * 當專案處於變更編列、期初無任何實體金額時，UI 前端絕不顯示毀滅性的 `NaN%` 或空白。必須優雅渲染為 `0.00% (專案預算編列中)`，搭配淡灰色鎖定圖示，保持高階主管介面的端莊與穩定，提供極致的視覺安全感。
+2. **特權核銷與深層跳轉二次驗證 (Secondary Auth PIN)**：
+   * 戰情室提供的「卡單瓶頸催辦」按鈕，實體為跳轉至 Phase 6/7 原生模組的深層連結（Deep Link）。跳轉抵達目標模組後，**系統強制彈出獨立的高安全驗證視窗，要求輸入 `6 位數大老闆專屬 PIN 碼`**，具備防暴力破解鎖定機制，防止老闆手機未鎖導致隨行人員誤觸出金等核彈級操作。
+3. **90 天資金雷達之「水位線視覺軟隔離」長條圖**：
+   * 現金流預測盤中，公司的總體現金長條圖上方，會以清晰的「粉紅虛線與堆疊色塊」橫切分層，並在滑鼠懸停時提示：`【提示：當前可用餘額 1000 萬，其中包含專案預收材料款 800 萬，自由周轉水位為 200 萬】`。既保留調度權，又兼顧警示。
+4. **追加減未定風險之「虛線長條圖附載」**：
+   * 在專案毛利雷達面板中，系統將「Pending CO (工地已施工、但業主尚未簽核完成的追加減單據金額)」以正數、虛線長條圖的形式疊加在現有營收旁。視覺化呈現「只要業主一簽名，毛利即可回升至目標線」的潛力，協助高層決策是否要派人去跟業主催收簽單。

@@ -1,0 +1,247 @@
+# 🏛️ ERP 系統全端重構專案：Phase 6 發包與估驗模組總綱 (Prisma 旗艦版)
+
+**文件定位**：本文件為 Phase 6 (Subcontracts & Progress Billing) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：捨棄傳統 ERP 死板的 % 數綁架，導入「預算期別化承諾鎖」與「瀑布式結算引擎」。賦予現場手動微調請款數字、無發票純請款與手動暫押款的極致彈性，同時以「最後一期強制收尾閘門」、「減項粉紅防呆」與「幽靈小數洗滌」建構鋼鐵內控，打造最貼合台灣營造實務的發包大腦。
+
+---
+
+## 壹、 業務需求與跨角色實務情境 (BRD)
+
+### 1. 瀑布式期別結算與手動微調彈性 (Waterfall Settlement)
+* **預設帶出與手動覆寫**：簽約時確立期別與比例。請款時系統帶出預設金額，但允許會計手動修改為乾淨的整數（如 123,456 改為 120,000）。
+* **尾期強制收尾 (Final Period Hard Gate)**：前期少請的尾數自動遞延。當勾選「最後一期結案」時，系統強制結算 `合約最新總價 - 歷次累計請款` 作為最終餘額，確保合約總價 100% 吻合，一塊錢不漏。
+
+### 2. 減項粉紅防呆與追加減大會師 (Change Order Flow)
+* 變更單不再產生負數。追減工程強制標記為 `DEDUCTION` 且存正數。
+* 當建立下期估驗單時，系統明細網格自動帶入追減項目，整行強制渲染為「粉紅色」防呆。底層數學自動執行減法，視覺與帳務雙重清晰。
+
+### 3. 無發票未稅與純請款控管 (Non-Invoice Billing)
+* 合約支援 `isTaxExclusive` 開關。當下包商為個人工班、免用統一發票或點工時，關閉開關，系統自動將稅金鎖死為 0。
+* 此類單據不自動拋轉 Phase 7 的年度扣繳申報，僅做純請款與出納放款控管，後續由會計於財務模組以「股東往來/暫付款」手動平帳，確保外帳安全。
+
+### 4. 象徵性手動押款 (Manual Retainage / Delayed Payment)
+* 廢除死板的「合約 10% 自動扣留」。下包商的保留款本質為「延遲付款或象徵性押款」。
+* 會計於估驗單表頭 `[本期押款/保留款]` 欄位手動輸入雙方協議的押金（如 3 萬），系統自動算出現金實付淨額。該 3 萬元流入押款水池，待未來包商覆驗通過後，再行釋放。
+
+### 5. 異常掛起與特權放行 (Exception Override)
+* 面對急需發薪或口頭追加導致「超領合約天花板」時，系統將單據降級為 `PENDING_OVERRIDE`。具備特權之帳號可一鍵強行放行並留下審計原因，確保工地營運不卡死。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 6.1：幽靈小數洗滌與全域零負數鐵律 (Sanitization & Null Defense)
+* 嚴守 RULE-0.5 與 RULE-0.8。所有前端傳入的金額，Zod 必須掛載 `.transform(val => Math.round(val))` 抹平幽靈小數。
+* 資料庫全面封殺實體負數。追減變更單、代扣款皆強制以「正數」寫入資料庫，並由應用層 `itemType === DEDUCTION` 執行減法。
+
+### Rule 6.2：合約封印與動態天花板 (Dynamic Contract Ceiling)
+* 發包合約的 `originalAmount` 經核准後永久封印。
+* 最新合約天花板 `contractCeilingAmount` 必須透過動態計算：`原始合約金額 + SUM(加項變更單) - SUM(減項變更單)`，嚴禁人工直接竄改。
+
+### Rule 6.3：最後一期餘額收斂驗證 (Final Period Convergence)
+* 當估驗單 `isFinalPeriod === true` 時，Zod 驗證器強制切換為最嚴格模式。
+* 系統自動驗算：`歷次所有核准請款 + 本期請款` 必須 **絕對等於** `contractCeilingAmount`。不允許任何手動微調，違者阻斷存檔。
+
+### Rule 6.4：現場超收黃燈與結算死鎖 (GR/IR Integrity)
+* 現場收料單 (`GoodsReceipt`) 允許紀錄大於合約數量的實際到料。但在建立估驗計價單時，系統強制套用 `MIN(實際收料, 最新合約數量)` 作為請款上限，超出部分視為零成本。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約
+
+~~~prisma
+// ==========================================
+// Module: Phase 6 - Subcontracts & Progress Billing
+// ⚠️ 嚴守 RULE-0.5(零負數), RULE-0.8(草稿與洗滌)
+// ==========================================
+
+enum SubcontractType { LUMP_SUM, UNIT_PRICE }
+enum ContractStatus { DRAFT, ACTIVE, COMPLETED, TERMINATED }
+enum ApprovalStatus { PENDING, APPROVED, REJECTED }
+enum BillingStatus { DRAFT, PENDING_APPROVAL, PENDING_OVERRIDE, APPROVED, PAID }
+enum ItemType { STANDARD, DEDUCTION }
+enum ItemCategory { MATERIAL, LABOR, LUMP_SUM }
+enum RetentionMethod { PER_PERIOD, FINAL_MILESTONE, MANUAL, NONE }
+
+/// 發包合約主表
+model Subcontract {
+  id                  String             @id @default(uuid())
+  companyId           String             @db.Uuid
+  projectId           String             // 關聯 Phase 2
+  vendorId            String             // 關聯 Phase 3
+  
+  contractNumber      String             @unique
+  contractTitle       String
+  contractType        SubcontractType    @default(LUMP_SUM)
+  
+  // 稅務與內外帳分離 (RULE-0.3 聯動)
+  isTaxExclusive      Boolean            @default(true) // 是否為外加稅(有發票)
+  isIntercompany      Boolean            @default(false)
+  
+  // 金額與天花板 (RULE-0.5 零負數與精度防禦)
+  originalAmount      Decimal            @db.Decimal(15, 2)
+  contractCeilingAmount Decimal          @db.Decimal(15, 2) // original + Sum(CO加項) - Sum(CO減項)
+  
+  // 保留款規則存於合約；預付款及保留款餘額由共用台帳彙總
+  retentionMethod     RetentionMethod    @default(MANUAL)
+  retentionRate       Decimal?           @db.Decimal(5, 2)
+  retentionCapAmount  Decimal?           @db.Decimal(15, 2)
+  
+  status              ContractStatus     @default(DRAFT)
+  
+  changeOrders        ChangeOrder[]
+  progressBillings    ProgressBilling[]
+  
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([projectId, vendorId])
+  @@map("subcontracts")
+}
+
+/// 變更單 (附約隔離與粉紅防呆源頭)
+model ChangeOrder {
+  id                  String             @id @default(uuid())
+  subcontractId       String
+  subcontract         Subcontract        @relation(fields: [subcontractId], references: [id])
+  coNumber            String             @unique
+  
+  itemType            ItemType           @default(STANDARD) // 區分追加(加項)或追減(減項)
+  amount              Decimal            @db.Decimal(15, 2) // RULE-0.5: 絕對正數
+  reason              String?
+  status              ApprovalStatus     @default(PENDING)
+  
+  createdAt           DateTime           @default(now())
+  @@map("subcontract_change_orders")
+}
+
+/// 估驗單主表 (瀑布式結算引擎核心)
+model ProgressBilling {
+  id                  String             @id @default(uuid())
+  subcontractId       String
+  subcontract         Subcontract        @relation(fields: [subcontractId], references: [id])
+  companyId           String             @db.Uuid // 本期 AP／發票歸戶法人，對應 Invoice.taxReportingCompanyId
+  billingPeriod       DateTime
+  billingCount        Int
+  
+  // 期別控制與收尾閘門
+  isFinalPeriod       Boolean            @default(false)
+
+  // 稅務與發票 (無發票則為空)
+    isTaxExclusive      Boolean            @default(true) // 是否為外加稅(有發票)
+  taxAmount           Decimal            @db.Decimal(15, 2) @default(0)
+  
+  // 累計與本期請款
+  cumulativeAmount    Decimal            @db.Decimal(15, 2)
+  previousAmount      Decimal            @db.Decimal(15, 2)
+    periodAmount        Decimal            @db.Decimal(15, 2) // 本期實際請款額
+  
+  // 手動扣減結算 (隔離減項)
+  prepaymentAppliedAmount Decimal        @default(0) @db.Decimal(15, 2)
+  retentionDeductionAmount Decimal       @default(0) @db.Decimal(15, 2) // 本期扣留保留款
+  payableAmount       Decimal            @db.Decimal(15, 2) // 實付淨額
+  
+  overrideReason      String?            @db.Text
+  status              BillingStatus      @default(DRAFT)
+  
+  items               ProgressBillingItem[]
+
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@map("progress_billings")
+}
+
+/// 估驗單明細 (粉紅防呆渲染目標)
+model ProgressBillingItem {
+  id                  String             @id @default(uuid())
+  progressBillingId   String
+  billing             ProgressBilling    @relation(fields: [progressBillingId], references: [id])
+  
+  itemName            String
+  itemType            ItemType           @default(STANDARD) // 若為 DEDUCTION 則渲染粉紅行
+  itemCategory        ItemCategory
+  
+  lineAmount          Decimal            @db.Decimal(15, 2)
+  isPrepaidDeduction  Boolean            @default(false)
+  
+  @@map("progress_billing_items")
+}
+~~~
+
+---
+
+## 肆、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+~~~typescript
+import { z } from "zod";
+
+// RULE-0.8: 幽靈小數洗滌器 (徹底抹平 JavaScript 浮點數漂移)
+const NTDAmountSchema = z.number()
+  .min(0, "金額不可為負數") // RULE-0.5 零負數鐵律
+  .transform(val => Math.round(val));
+
+export const ProgressBillingSchema = z.object({
+  subcontractId: z.string().uuid(),
+  companyId: z.string().uuid(),
+  isFinalPeriod: z.boolean().default(false),
+  isTaxExclusive: z.boolean(),
+  
+  previousAmount: NTDAmountSchema,
+  periodAmount: NTDAmountSchema,
+  
+  prepaymentAppliedAmount: NTDAmountSchema,
+  retentionDeductionAmount: NTDAmountSchema,
+  taxAmount: NTDAmountSchema,
+  payableAmount: NTDAmountSchema,
+  
+  // 用於傳遞最新合約天花板，供 Zod 執行瀑布式結算驗證
+  contractCeilingAmount: NTDAmountSchema, 
+}).superRefine((data, ctx) => {
+  const cumulative = data.previousAmount + data.periodAmount;
+
+  // 1. 尾期瀑布式收尾閘門 (The Hard Gate)
+  if (data.isFinalPeriod) {
+    if (cumulative !== data.contractCeilingAmount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `強制收尾失敗：歷次累計 + 本期請款 (${cumulative}) 必須絕對等於合約總天花板 (${data.contractCeilingAmount})。`,
+        path: ["periodAmount"]
+      });
+    }
+  } else {
+    // 2. 常規期別超付掛起防禦
+    if (cumulative > data.contractCeilingAmount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "⚠️ 累計金額已超過合約總價。單據將被掛起為 PENDING_OVERRIDE，需主管特權放行。",
+        path: ["periodAmount"]
+      });
+    }
+  }
+
+  // 3. 淨額四柱平帳驗算 (本期 + 稅金 - 各項押款 = 實付)
+  const expectedNet = data.periodAmount + data.taxAmount - data.prepaymentAppliedAmount - data.retentionDeductionAmount;
+  if (expectedNet !== data.payableAmount) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `淨額計算不平衡！系統試算應為 ${expectedNet}。`,
+      path: ["payableAmount"]
+    });
+  }
+});
+~~~
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (輸入簡化與防呆設計)
+
+1. **瀑布式健康儀表板 (Waterfall Dashboard)**：
+   * 估驗單表頭強制顯示唯讀的：`[合約總價]`、`[歷次累計]`、`[尚未請領餘額]`。
+   * 會計修改本期金額時，`尚未請領餘額` 即時動態遞減，提供極致的操作安全感。
+2. **尾期強制結算按鈕 (Final Period Lock)**：
+   * 提供 `[✅ 本期為最後一期結案請款]` 核取方塊。勾選瞬間，本期金額輸入框自動填入 `尚未請領餘額`，並鎖死不允許修改，確保合約一塊錢不差。
+3. **減項粉紅防呆視覺 (Pink Deduction UI)**：
+   * 當網格自動帶入追減變更單或代墊扣款時，前端偵測到 `itemType === "DEDUCTION"`，該整行網格與背景強制渲染為**粉紅色/警示紅**。會計看到粉紅色即知此為扣款，且底層全自動跑減法。
+4. **無發票稅金豁免鎖 (Tax Exemption Lock)**：
+   * 當合約判定為無發票/未稅時，估驗單的 `[稅額]` 欄位反灰鎖死為 0。過帳時，自動略過發票號碼必填檢核，斷開與 Phase 7 自動扣繳之血緣。

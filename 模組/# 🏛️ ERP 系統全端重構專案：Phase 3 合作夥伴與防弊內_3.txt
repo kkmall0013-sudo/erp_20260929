@@ -1,0 +1,314 @@
+# 🏛️ ERP 系統全端重構專案：Phase 3 合作夥伴與防弊內控模組總綱 (Prisma 旗艦版)
+
+**文件定位**：本文件為 Phase 3 (CRM, SRM & Master Data) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：徹底屏棄傳統 ERP「客戶、廠商、料件」分離的舊思維，導入 SAP 級「商業夥伴 (BP)」雙重身分架構。完美包容台灣營建製造業的四方交易、代工扣款、對沖結算。並以符合新版憲法的「狀態降級雙重控制鎖」、「集團全域株連」及「智慧容差會計畫押」，確立系統單一事實來源 (SSoT)。
+
+---
+
+## 壹、 業務需求與跨角色實務情境 (BRD)
+
+### 1. 商業夥伴雙重身分、四方矩陣與母子血緣
+* **BP 雙軌制實體**：單一檔案可同時勾選 [是客戶] 與 [是廠商]。支援「公司實體 (綁定統編)」與「個人實體 (綁定身分證)」，消滅重複建檔孤島。
+* **四方交易矩陣 (4-Party Hierarchy)**：支援大集團交易拆分（下單方、收貨方、發票抬頭、實際付款方），確保物流、發票流與金流獨立運作且不衝突。
+* **母子血緣與統編解鎖**：為適應大型企業「多廠區共用同一統編但帳號地址不同」，系統解除統編唯一性，改以「名稱加上廠區後綴」為唯一值。並透過 `parentBpId` 綁定母公司，支援獨立廠區請款或母公司匯總對帳。
+* **多位介紹人分潤矩陣**：單一 BP 可綁定多位介紹人與抽成比例（如：張總 60%、陳特助 40%），結算時系統自動拆分拋轉應付帳款，並預留連帶保證人設計。
+* **集團內部交易映射 (Intercompany Mapping)**：支援將外部廠商綁定「內部子公司 ID」，作為戰情室執行「自動物理沖銷內部虛增營收」之權威錨點。
+
+### 2. 會計師視角：對沖結算、匯費與網格強確認
+* **雙向款項對沖 (AR/AP Netting)**：針對互為客廠的對象，支援「一鍵對沖結算」產生最終憑單，免除互相匯款手續費。
+* **銀行匯費內外扣自動化**：批次放款時，系統自動將「內扣」廠商的實付總額扣除匯費，並切轉為公司什費，完美平帳。
+* **個人包商代扣繳 (活用制)**：點工師傅給付達門檻時，系統微服務自動算出「預扣所得稅」與「二代健保」，並允許會計手動覆寫。
+* **Excel 網格直貼智慧洗滌**：會計批次貼上資料時，系統自動洗滌空格與橫槓。若有洗滌行為，強制鎖死存檔，會計必須點擊「確認洗滌結果」畫押後方可放行。
+
+### 3. 工地主任視角：台灣專屬現場防護網與度量衡
+* **代工扣款 / 索賠強制攔截 (Back-Charges)**：工地代墊修繕時記下紅字。會計下次付款時系統跳出「紅色強制攔截」，確保欠款優先抵扣。
+* **料件與虛擬工項 (Item Master)**：納入主檔邊界，嚴格區分 MATERIAL (強制過庫存) 與 SERVICE (豁免庫存)。雜項強制綁定會計費用碼，防堵成本黑洞。
+* **供應商專屬度量衡 (Vendor UoM)**：允許設定特定廠商的進貨換算率（例：A廠商1箱=1000支）。選定廠商後，底層自動換算入庫量，前端 UI 強制亮起藍色提示，嚴禁人腦重複計算。
+
+### 4. 企業級防弊與黑名單管理 (Security & Audit)
+* **集團全域株連防換殼**：新廠建檔時，背景比對負責人身分證。若為黑名單，全集團所有子公司發包時全面亮紅燈；合法變更統編者，強制寫入 predecessorId 繼承歷史。
+* **雙重控制鎖 (Dual Control)**：修改銀行帳號等敏感欄位，廠商狀態直接降級為 PAYMENT_LOCKED，寫入全域審計日誌，核准前凍結出金。
+* **缺失記點自動淘汰**：現場開立缺失罰款時，系統自動扣除廠商評鑑分數。低於 60 分降級警告，低於 40 分閘門立即死鎖 (SUSPEND)，阻斷全集團新發包。
+
+---
+
+## 貳、 技術白皮書與資料庫架構 (HLD)
+
+### 1. 斷網可用的三層式本地快取架構 (Local-First)
+偏遠工地建檔採三層海關：
+1. **本地 BP 庫快取**：優先秒查既有資料庫，統編一打自動帶出。
+2. **本地政府工商快取**：內建全量公司登記 CSV 快取。無網路時輸入統編仍可瞬間帶出名稱與負責人。
+3. **API 即時查驗**：無快取時呼叫 Open Data API，帶出後 UI 強制要求確認 [通訊/請款地址]，區隔法定登記地址。
+
+### 2. 金流與稅務運算微服務 (Microservices)
+* **TaxAndPremiumService**：專理 2.11% 健保與扣繳，輸出 calculatedTax、netPayableAmount，記錄手動覆寫標記。
+* **APNettingService**：撈取未結 AR/AP 執行抵銷演算法，產生對沖分錄，嚴禁暗改原始單據。
+
+### 3. 全域視圖與多公司覆蓋解耦 (Global vs Company View)
+* **全域共用層**：BP 物理屬性（名稱、統編、負責人）全集團共用。
+* **公司覆蓋層 (BPCompanyOverride)**：商業屬性（票期、額度）允許各子公司獨立調整。底層採 COALESCE 邏輯，未設則抓預設值。
+
+---
+
+## 參、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 3.1：敏感欄位雙重控制鎖鐵律 (Dual Control Security)
+對 bankAccount 等敏感欄位執行更新時，主表直接變更，但在同一 Transaction 內狀態強制降級為 PAYMENT_LOCKED，並將新舊值 JSON 寫入全域 AuditLog。出納系統強制攔截此狀態，主管解鎖後才可出金。
+
+### Rule 3.2：劣質包商防換殼與集團全域株連 (Global Quarantine)
+建檔 API 必須比對 ownerIdNumber 與 telephone。若命中停權廠商，系統不阻斷建檔，但強制寫入 isHighRisk = true。全集團所有子公司發包時 UI 全面高光亮紅燈，裁量權交給主管。
+
+### Rule 3.3：對沖金流與匯費分離鐵律 (Financial Integrity)
+執行 AR/AP 雙向對沖時，嚴禁竄改原始估驗/請款單金額，必須在 LedgerEntries 產生借貸沖銷分錄。匯費內扣時，AP 以 100% 原始金額沖平，匯費切轉為公司「匯費支出抵減」。
+
+### Rule 3.4：智慧容差洗滌與會計 SSoT 畫押防線
+從 Excel 貼上資料時，若 Zod 引擎清除了空白或格式，不允許直接寫入資料庫。必須拋出 SYSTEM_WASHED_REQUIRE_CONFIRMATION，前端鎖定存檔，待會計點擊確認後（isAccountantConfirmed = true）才獲准寫入。
+
+---
+
+## 肆、 核心功能要求與 Prisma Schema 契約
+
+```prisma
+// ============================================================================
+// 💡 Phase 3: 商業夥伴與主檔邊界 (CRM, SRM & Master Data)
+// ⚠️ 嚴守 RULE-01 (軟刪除/樂觀鎖)、RULE-03 (全域審計)，廢除冗餘中介表
+// ============================================================================
+
+enum PartnerStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  WARNING          // 記點扣分警告 (< 60 分)
+  SUSPEND          // 停權死鎖 (< 40 分或黑名單)
+  PAYMENT_LOCKED   // 雙重控制鎖 (防內鬼財務鎖定)
+}
+
+enum BankFeePayer {
+  INTERNAL         // 公司負擔 (外扣)
+  EXTERNAL         // 廠商負擔 (內扣)
+}
+
+/// 商業夥伴主檔
+model BusinessPartner {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  
+  isCustomer          Boolean       @default(false)
+  isVendor            Boolean       @default(false)
+  internalCompanyId   String?       @db.Uuid // 內部子公司映射
+  
+  // 🛡️ 核心工商資訊 (統編解鎖，名稱唯一)
+  name                String        @unique
+  taxId               String?       @db.VarChar(8)
+  ownerIdNumber       String?       @db.VarChar(10)
+  telephone           String?       @db.VarChar(50)
+  hasInvoice          Boolean       @default(true)
+  
+  // 🛡️ 母子血緣綁定 (分廠與總公司關係)
+  parentBpId          String?       @db.Uuid
+  parentBp            BusinessPartner? @relation("ParentChild", fields: [parentBpId], references: [id], onDelete: Restrict)
+  childBps            BusinessPartner[] @relation("ParentChild")
+
+  // 財務與交易控管設定
+  bankFeePayer        BankFeePayer  @default(INTERNAL)
+  
+  // 🛡️ 核心內控狀態與記點快照
+  status              PartnerStatus @default(PENDING_APPROVAL)
+  isHighRisk          Boolean       @default(false) // 全域株連紅燈
+  currentScore        Int           @default(100)   // 評鑑記點快照 (連動狀態降級)
+  
+  // 🛡️ 換殼血緣鏈
+  predecessorId       String?       @unique @db.Uuid
+  predecessor         BusinessPartner? @relation("BPHistory", fields: [predecessorId], references: [id], onDelete: Restrict)
+  successor           BusinessPartner? @relation("BPHistory")
+
+  // 全域防線
+  isDeleted           Boolean       @default(false)
+  version             Int           @default(1)
+  createdBy           String        @db.Uuid
+  updatedBy           String        @db.Uuid
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  companyOverrides    BPCompanyOverride[]
+  bankAccounts        BPBankAccount[]
+  addresses           PartnerAddress[]
+  contacts            PartnerContact[]
+  relationshipsAsSource PartnerRelationship[] @relation("SourcePartner")
+  relationshipsAsTarget PartnerRelationship[] @relation("TargetPartner")
+  scorecardLogs       BPScorecardLog[]
+  vendorUoms          VendorItemUoM[]
+
+  @@index([taxId])         // 取消 unique，改為常規 index
+  @@index([ownerIdNumber])
+  @@index([telephone])
+  @@map("business_partners")
+}
+
+/// 多公司視圖獨立覆寫表
+model BPCompanyOverride {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bpId              String          @db.Uuid
+  companyId         String          @db.Uuid // 獨立子公司法人 ID
+  
+  paymentTermsDays  Int?            // null 時沿用全域預設付款條件
+  creditLimit       Decimal         @db.Decimal(15, 2) @default(0.00)
+
+  businessPartner   BusinessPartner @relation(fields: [bpId], references: [id], onDelete: Cascade)
+  @@unique([bpId, companyId])
+  @@map("bp_company_overrides")
+}
+
+/// 銀行帳戶 (異動觸發 PAYMENT_LOCKED)
+model BPBankAccount {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bpId              String          @db.Uuid
+  bankCode          String          @db.VarChar(10)
+  accountNumber     String          @db.VarChar(50)
+  accountName       String          @db.VarChar(150)
+  isPrimary         Boolean         @default(false)
+  partner           BusinessPartner @relation(fields: [bpId], references: [id], onDelete: Cascade)
+  @@map("bp_bank_accounts")
+}
+
+/// 地址與聯絡人表
+model PartnerAddress {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partnerId         String          @db.Uuid
+  addressType       String          @db.VarChar(50) // REGISTERED, BILLING, SHIPPING
+  fullAddress       String
+  isDeleted         Boolean         @default(false)
+  partner           BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  @@map("partner_addresses")
+}
+
+model PartnerContact {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partnerId         String          @db.Uuid
+  contactType       String          @db.VarChar(50) // FINANCE, SITE, PROCUREMENT
+  name              String
+  phone             String?
+  email             String?
+  isDeleted         Boolean         @default(false)
+  partner           BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  @@map("partner_contacts")
+}
+
+/// 多對多介紹人與分潤關聯表
+model PartnerRelationship {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourcePartnerId   String          @db.Uuid
+  targetPartnerId   String          @db.Uuid
+  relationType      String          @db.VarChar(50) // REFERRER, GUARANTOR
+  commissionRate    Decimal?        @db.Decimal(5, 2)
+  createdAt         DateTime        @default(now())
+  
+  sourcePartner     BusinessPartner @relation("SourcePartner", fields: [sourcePartnerId], references: [id])
+  targetPartner     BusinessPartner @relation("TargetPartner", fields: [targetPartnerId], references: [id])
+  
+  @@unique([sourcePartnerId, targetPartnerId, relationType])
+  @@map("partner_relationships")
+}
+
+/// 廠商缺失記點日誌表
+model BPScorecardLog {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bpId              String          @db.Uuid
+  projectId         String?         @db.Uuid
+  scoreDelta        Int             // 記點扣分 (負數)
+  reason            String          @db.Text
+  createdAt         DateTime        @default(now())
+  partner           BusinessPartner @relation(fields: [bpId], references: [id], onDelete: Cascade)
+  @@map("bp_scorecard_logs")
+}
+
+/// 全域料件與虛擬工項主檔
+model Item {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  itemCode          String          @unique @db.VarChar(100)
+  name              String          @db.VarChar(255)
+  itemType          String          @db.VarChar(50) // MATERIAL, SERVICE
+  baseUnit          String          @db.VarChar(20)
+  expenseCodeId     String?         @db.Uuid
+  
+  isDeleted         Boolean         @default(false)
+  version           Int             @default(1)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  vendorUoms        VendorItemUoM[]
+  @@map("items")
+}
+
+/// 供應商專屬度量衡轉換表 (Vendor UoM)
+model VendorItemUoM {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vendorId        String          @db.Uuid
+  itemId          String          @db.Uuid
+  vendorUomName   String          @db.VarChar(20) // 例如: "箱", "桶"
+  conversionRate  Decimal         @db.Decimal(15, 4) // 換算為 baseUnit 的倍率 (例: 1箱 = 1000支)
+  
+  vendor          BusinessPartner @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  item            Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorId, itemId, vendorUomName])
+  @@map("vendor_item_uoms")
+}
+```
+
+---
+
+## 伍、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+```typescript
+import { z } from "zod";
+
+// 🛠️ 智慧洗滌器：移除多餘空格與橫槓，回傳洗滌狀態
+export const smartWashData = (value: string | null | undefined, mode: "TAX_ID" | "BANK_ACC") => {
+  if (!value || value.trim() === "") return { original: value, washed: null, isChanged: false };
+  const original = value.trim();
+  const washed = mode === "TAX_ID" ? original.replace(/[\s\-]/g, "") : original.replace(/[\s\-]/g, "");
+  return { original, washed, isChanged: original !== washed };
+};
+
+// 💡 會計網格直貼：洗滌與強制畫押防禦 (Rule 3.4)
+export const BPSmartCreateSchema = z.object({
+  name: z.string().min(1, "名稱不可為空"),
+  inputTaxId: z.string().nullable().optional(),
+  inputBankAccount: z.string().nullable().optional(),
+  isAccountantConfirmed: z.boolean().default(false), // SSoT 畫押按鈕
+}).superRefine((data, ctx) => {
+  // 1. 若無敏感輸入則放行
+  if (!data.inputTaxId && !data.inputBankAccount) return;
+
+  // 2. 觸發智慧洗滌
+  const taxWash = smartWashData(data.inputTaxId, "TAX_ID");
+  const bankWash = smartWashData(data.inputBankAccount, "BANK_ACC");
+  const dataWasWashed = taxWash.isChanged || bankWash.isChanged;
+  
+  // 3. 容差洗滌強確認攔截網
+  if (dataWasWashed && !data.isAccountantConfirmed) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "SYSTEM_WASHED_REQUIRE_CONFIRMATION", // 觸發前端橘燈與確認按鈕
+      path: ["isAccountantConfirmed"]
+    });
+    return;
+  }
+
+  // 4. 洗滌後的正規防呆
+  if (taxWash.washed) {
+    const isTaiwanTaxId = /^\d{8}$/.test(taxWash.washed);
+    const isTaiwanIdNumber = /^[A-Z][12]\d{8}$/.test(taxWash.washed);
+    if (!isTaiwanTaxId && !isTaiwanIdNumber) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "統編或身分證格式錯誤", path: ["inputTaxId"] });
+    }
+  }
+});
+```
+
+---
+
+## 陸、 UI/UX 大師級操作體驗規範 (初學者與防弊防呆)
+
+1. **斷網工商秒查儀表板**：建檔介面輸入統編時，UI 必須配備載入動畫。若匹配到「防換殼黑名單」負責人，畫面中央立刻彈出**全螢幕深紅色警告彈窗**，並發出提示音。
+2. **高風險防禦警示 (High-Risk Banner)**：當使用者在任何單據（如採購單）選擇了 `isHighRisk = true` 的廠商時，前端 UI 需立即觸發「高光警告」——背景閃爍淡紅色並強制顯示廠商的「違規歷史清單」。這不是為了阻擋業務，而是為了讓「最終發包權限」回歸到授權主管。
+3. **快速對帳與法人切換 (法人參數彈性)**：當會計在設定該廠商的付款參數時，UI 應呈現「表格矩陣」，列出各子公司對該廠商的設定。點擊即可直接修改該子公司的付款天數，實現對帳資訊的一目了然。
