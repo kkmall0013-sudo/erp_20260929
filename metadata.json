@@ -1,6 +1,6 @@
 {
   "name": "客製化營造工程 ERP 系統",
-  "description": "具備鼎新 A1 互動式流程圖、SQLite 可攜式 SQL 一鍵備份匯出、12 大全模組貫通與全域資安防呆防弊的企業級工程管理系統",
+  "description": "具備互動式全流程圖、SQLite 可攜式 SQL 一鍵備份匯出、12 大全模組貫通與全域資安防呆防弊的客製化營造工程管理系統",
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

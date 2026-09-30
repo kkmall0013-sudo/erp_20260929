@@ -13,7 +13,8 @@ import {
   ShieldAlert,
   Sparkles,
   HelpCircle,
-  Database
+  Database,
+  Users
 } from 'lucide-react';
 import { ActiveTab } from './Sidebar';
 
@@ -50,7 +51,7 @@ export const FlowchartNavigator: React.FC<FlowchartNavigatorProps> = ({
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                鼎新 A1 風格流程引擎
+                客製化營造工程全流程引擎
               </span>
               <span className="text-xs text-slate-400">
                 · 單一事實來源 (SSoT) 全鏈貫通
@@ -80,6 +81,15 @@ export const FlowchartNavigator: React.FC<FlowchartNavigatorProps> = ({
             >
               <Database className="w-5 h-5 mb-1" />
               <span>SQL 備份</span>
+            </button>
+
+            <button
+              onClick={() => onNavigate('USERS_PERMISSIONS')}
+              className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-lg flex flex-col items-center justify-center transition-colors text-center text-xs font-medium border border-slate-700 shadow-sm"
+              title="管理企業員工帳號、角色職能與 PBAC 權限矩陣"
+            >
+              <Users className="w-5 h-5 mb-1 text-indigo-400" />
+              <span>帳號權限</span>
             </button>
           </div>
         </div>
@@ -436,6 +446,23 @@ export const FlowchartNavigator: React.FC<FlowchartNavigatorProps> = ({
           className="text-indigo-600 hover:text-indigo-800 font-medium shrink-0 flex items-center gap-1"
         >
           <span>查看系統憲法與審計軌跡</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* 帳號權限與 PBAC 安全控制卡片 */}
+      <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-indigo-950">
+        <div className="flex items-center gap-2">
+          <Users className="w-4 h-4 text-indigo-700 shrink-0" />
+          <span>
+            <strong>帳號與角色權限中心 (PBAC)：</strong>支援多法人跨公司授權、單次核准金額上限防弊、資料外洩日匯出額度控管與代理人職能設定。
+          </span>
+        </div>
+        <button
+          onClick={() => onNavigate('USERS_PERMISSIONS')}
+          className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shrink-0 flex items-center gap-1.5 shadow-xs transition-colors"
+        >
+          <span>進入帳號權限管理</span>
           <ArrowRight className="w-3.5 h-3.5" />
         </button>
       </div>

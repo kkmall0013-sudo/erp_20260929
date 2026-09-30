@@ -14,14 +14,80 @@ export interface Company {
   updatedAt: string;
 }
 
+export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'USER';
+
+export type ErpModuleKey = 
+  | 'PROJECTS'           // 專案與案場 (WBS)
+  | 'QUOTATIONS'         // 報價單 (CPQ)
+  | 'PURCHASE_ORDERS'    // 採購發包 (PO)
+  | 'SUBCONTRACTS'       // 下包合約
+  | 'VALUATIONS'         // 估驗計價
+  | 'FINANCE_AP'         // 應付帳款 (AP)
+  | 'FINANCE_AR'         // 應收帳款 (AR)
+  | 'BANK_CHECKS'        // 銀行期票
+  | 'BUSINESS_PARTNERS'  // 商業夥伴 (BP)
+  | 'SYSTEM_CONFIGS'     // 系統全域參數
+  | 'AUDIT_LOGS'         // 審計歷程日誌
+  | 'USER_MANAGEMENT';   // 帳號與權限矩陣
+
+export interface ModulePermissionItem {
+  moduleKey: ErpModuleKey;
+  moduleName: string;
+  category: 'CORE_ENGINEERING' | 'PROCUREMENT_SUBCONTRACT' | 'FINANCE_ACCOUNTING' | 'GOVERNANCE';
+  canRead: boolean;
+  canWrite: boolean;
+  canApprove: boolean;
+  canExport: boolean;
+}
+
+export interface UserGroup {
+  id: string;
+  groupCode: string;
+  groupName: string;
+  description: string;
+  isSystem: boolean;
+  approvalLimit: number;
+  canExportData: boolean;
+  permissions: ModulePermissionItem[];
+  memberCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface User {
   id: string;
+  employeeId: string;
   username: string;
   fullName: string;
   email: string;
-  role: 'SUPERADMIN' | 'PM' | 'BUYER' | 'ENGINEER' | 'ACCOUNTANT' | 'EXECUTIVE';
+  role: UserRole | string;
+  groupId?: string;
+  groupName?: string;
   allowedCompanies: string[];
   defaultCompanyId: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'RESIGNED';
+  dailyExportLimit: number;
+  maxConcurrentSessions: number;
+  delegateToId?: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Role {
+  id: string;
+  roleCode: string;
+  roleName: string;
+  description: string;
+  canReadOwn: boolean;
+  canReadAll: boolean;
+  canWrite: boolean;
+  canApprove: boolean;
+  approvalLimit: number;
+  canExportData: boolean;
+  canVoidCheck: boolean;
+  canManageUsers: boolean;
 }
 
 export interface SystemConfig {
