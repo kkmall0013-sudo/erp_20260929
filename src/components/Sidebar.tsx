@@ -11,7 +11,6 @@ import {
   FileText,
   Sliders,
   Database,
-  Users,
   ArrowRightCircle
 } from 'lucide-react';
 
@@ -26,7 +25,6 @@ export type ActiveTab =
   | 'COMMAND_CENTER'
   | 'REPORTS'
   | 'SYSTEM_CONFIG'
-  | 'USERS_PERMISSIONS'
   | 'DATABASE_MANAGER';
 
 interface SidebarProps {
@@ -38,7 +36,6 @@ interface SidebarProps {
     posCount: number;
     valuationsCount: number;
     checksCount: number;
-    usersCount?: number;
   };
 }
 
@@ -51,7 +48,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     posCount: 3,
     valuationsCount: 2,
     checksCount: 4,
-    usersCount: 6,
   }
 }) => {
   const navSections = [
@@ -60,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: 'FLOWCHART' as ActiveTab,
-          label: '業務全流程圖',
+          label: '鼎新 A1 業務流程圖',
           icon: LayoutDashboard,
           badge: '核心導航',
           badgeColor: 'bg-indigo-500/10 text-indigo-600',
@@ -133,14 +129,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       group: '平台基礎設施',
       items: [
         {
-          id: 'USERS_PERMISSIONS' as ActiveTab,
-          label: '帳號與權限管理 (PBAC)',
-          icon: Users,
-          count: stats.usersCount,
-          badge: '權限矩陣',
-          badgeColor: 'bg-indigo-500/10 text-indigo-700',
-        },
-        {
           id: 'SYSTEM_CONFIG' as ActiveTab,
           label: '全域參數與審計日誌',
           icon: Sliders,
@@ -173,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div>
               <div className="text-xs font-bold leading-tight">全流程作業圖</div>
               <div className={`text-[10px] ${activeTab === 'FLOWCHART' ? 'text-indigo-100' : 'text-slate-400'}`}>
-                營造工程全生命週期導航
+                鼎新 A1 貫通流程導航
               </div>
             </div>
           </div>

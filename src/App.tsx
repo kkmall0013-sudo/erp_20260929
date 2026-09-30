@@ -12,8 +12,6 @@ import { CommandCenterModule } from './components/modules/CommandCenterModule';
 import { ReportsModule } from './components/modules/ReportsModule';
 import { SystemConfigModule } from './components/modules/SystemConfigModule';
 import { DatabaseManager } from './components/modules/DatabaseManager';
-import { UserPermissionModule } from './components/modules/UserPermissionModule';
-import { AuthScreen } from './components/AuthScreen';
 
 import {
   getDatabase,
@@ -30,8 +28,6 @@ import {
   getAllBankChecks,
   getAllSystemConfigs,
   getAllAuditLogs,
-  getAllUsers,
-  getAllRoles,
   getCashFlowMetrics,
   exportSqlDump,
   exportSqliteBinary
@@ -50,22 +46,13 @@ import {
   BankCheck,
   SystemConfig,
   AuditLog,
-  CashFlowMetrics,
-  User,
-  Role
+  CashFlowMetrics
 } from './types/erp';
 
 export const App: React.FC = () => {
   const [isDbReady, setIsDbReady] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('FLOWCHART');
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('COMP-01');
-
-  // 使用者身分與認證狀態
-  const [users, setUsers] = useState<User[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [isLoggedOut, setIsLoggedOut] = useState(false);
 
   // 資料庫資料狀態
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -100,13 +87,7 @@ export const App: React.FC = () => {
 
   // 重新載入所有資料庫狀態
   const reloadData = useCallback(() => {
-    const loadedCompanies = getAllCompanies();
-    const loadedUsers = getAllUsers();
-    const loadedRoles = getAllRoles();
-
-    setCompanies(loadedCompanies);
-    setUsers(loadedUsers);
-    setRoles(loadedRoles);
+    setCompanies(getAllCompanies());
     setProjects(getAllProjects());
     setPartners(getAllBusinessPartners());
     setQuotations(getAllQuotations());
@@ -119,13 +100,6 @@ export const App: React.FC = () => {
     setConfigs(getAllSystemConfigs());
     setAuditLogs(getAllAuditLogs());
     setMetrics(getCashFlowMetrics());
-
-    // 同步當前使用者資料（若已登入）
-    setCurrentUser(prev => {
-      if (!prev) return null;
-      const updated = loadedUsers.find(u => u.id === prev.id);
-      return updated || prev;
-    });
   }, []);
 
   // 初始化資料庫
@@ -134,74 +108,17 @@ export const App: React.FC = () => {
     getDatabase().then(() => {
       setIsDbReady(true);
       reloadData();
-
-      // 檢查本機儲存的登入狀態
-      const savedUserId = localStorage.getItem('engineering_erp_current_user_id');
-      const allUsers = getAllUsers();
-      if (savedUserId) {
-        const found = allUsers.find(u => u.id === savedUserId);
-        if (found && found.status === 'ACTIVE') {
-          setCurrentUser(found);
-          if (found.defaultCompanyId) setSelectedCompanyId(found.defaultCompanyId);
-        } else {
-          // 預設為 admin 系統管理員
-          const defaultAdmin = allUsers.find(u => u.username === 'admin') || allUsers[0];
-          if (defaultAdmin) {
-            setCurrentUser(defaultAdmin);
-            localStorage.setItem('engineering_erp_current_user_id', defaultAdmin.id);
-          }
-        }
-      } else {
-        // 初次進入預設登入系統管理員 (陳大為)
-        const defaultAdmin = allUsers.find(u => u.username === 'admin') || allUsers[0];
-        if (defaultAdmin) {
-          setCurrentUser(defaultAdmin);
-          localStorage.setItem('engineering_erp_current_user_id', defaultAdmin.id);
-        }
-      }
-
       unsubscribe = subscribeToDatabase(() => {
         reloadData();
       });
     }).catch(err => {
       console.error('SQLite 資料庫初始化失敗', err);
-      try {
-        localStorage.removeItem('engineering_erp_sqlite_db');
-      } catch (_) {}
     });
 
     return () => {
       if (unsubscribe) unsubscribe();
     };
   }, [reloadData]);
-
-  // 登入成功處理
-  const handleLoginSuccess = (user: User, companyId: string) => {
-    setCurrentUser(user);
-    setSelectedCompanyId(companyId);
-    setIsLoggedOut(false);
-    setIsAuthModalOpen(false);
-    localStorage.setItem('engineering_erp_current_user_id', user.id);
-    showToast(`🎉 歡迎回來，${user.fullName} (${user.role})！`);
-  };
-
-  // 登出系統
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setIsLoggedOut(true);
-    localStorage.removeItem('engineering_erp_current_user_id');
-    showToast('已登出系統');
-  };
-
-  // 切換身分
-  const handleImpersonateUser = (targetUser: User) => {
-    setCurrentUser(targetUser);
-    if (targetUser.defaultCompanyId) {
-      setSelectedCompanyId(targetUser.defaultCompanyId);
-    }
-    localStorage.setItem('engineering_erp_current_user_id', targetUser.id);
-    showToast(`已切換身分為：${targetUser.fullName} (${targetUser.role})`);
-  };
 
   // 快捷 SQL 備份
   const handleQuickBackupSql = () => {
@@ -255,31 +172,16 @@ export const App: React.FC = () => {
     );
   }
 
-  // 若使用者已主動登出且目前無登入者，顯示完整的登入畫面
-  if (isLoggedOut && !currentUser) {
-    return (
-      <AuthScreen
-        users={users}
-        companies={companies}
-        onLoginSuccess={handleLoginSuccess}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen flex flex-col bg-slate-100/80 text-slate-900 font-sans">
       {/* 頂部導航 */}
       <Header
         companies={companies}
         selectedCompanyId={selectedCompanyId}
-        currentUser={currentUser}
         onSelectCompany={setSelectedCompanyId}
         onQuickBackupSql={handleQuickBackupSql}
         onQuickBackupSqlite={handleQuickBackupSqlite}
         onOpenDatabaseManager={() => setActiveTab('DATABASE_MANAGER')}
-        onOpenUserPermissions={() => setActiveTab('USERS_PERMISSIONS')}
-        onOpenSwitchUserModal={() => setIsAuthModalOpen(true)}
-        onLogout={handleLogout}
       />
 
       {/* 主體架構：左側 Sidebar + 右側主工作區 */}
@@ -293,7 +195,6 @@ export const App: React.FC = () => {
             posCount: purchaseOrders.length,
             valuationsCount: valuations.length,
             checksCount: checks.length,
-            usersCount: users.length,
           }}
         />
 
@@ -318,18 +219,6 @@ export const App: React.FC = () => {
                   currentBankBalance: metrics.currentBankBalance,
                   pendingCO: metrics.pendingChangeOrdersAmount,
                 }}
-              />
-            )}
-
-            {/* 帳號與權限管理模組 (Phase 1 PBAC) */}
-            {activeTab === 'USERS_PERMISSIONS' && (
-              <UserPermissionModule
-                users={users}
-                roles={roles}
-                companies={companies}
-                currentUser={currentUser}
-                onDataChanged={reloadData}
-                onImpersonateUser={handleImpersonateUser}
               />
             )}
 
@@ -399,17 +288,6 @@ export const App: React.FC = () => {
           </div>
         </main>
       </div>
-
-      {/* 切換身分/登入彈窗 Modal */}
-      {isAuthModalOpen && (
-        <AuthScreen
-          users={users}
-          companies={companies}
-          onLoginSuccess={handleLoginSuccess}
-          onClose={() => setIsAuthModalOpen(false)}
-          isModal={true}
-        />
-      )}
 
       {/* 浮動提示 Toast */}
       {toastMessage && (
