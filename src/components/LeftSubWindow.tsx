@@ -16,11 +16,13 @@ import {
   FileSpreadsheet,
   ShoppingCart,
   HardHat,
-  LineChart
+  LineChart,
+  UserCog
 } from 'lucide-react';
 
 export type LeftNavId =
   | 'COMPANY'
+  | 'USERS'
   | 'DASHBOARD'
   | 'PROJECTS'
   | 'FLOWCHART'
@@ -33,6 +35,8 @@ export type LeftNavId =
   | 'ROADMAP'
   | 'SETTINGS';
 
+import { useAuth } from '../context/AuthContext';
+
 interface LeftSubWindowProps {
   activeId: LeftNavId;
   onSelect: (id: LeftNavId) => void;
@@ -44,7 +48,10 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
   onSelect,
   isOpen = true,
 }) => {
-  // 對應截圖中經典的鼎新 A1 垂直圖示功能鍵 (優先聚焦：公司設定)
+  const { currentUser, isSuperadmin } = useAuth();
+  const hasUserManagementAccess = isSuperadmin || Boolean(currentUser?.canManageUsers);
+
+  // 對應截圖中經典的鼎新 A1 垂直圖示功能鍵 (優先聚焦：公司設定、帳號管理)
   const navItems: {
     id: LeftNavId;
     label: string;
@@ -52,6 +59,7 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     badgeCount?: number;
   }[] = [
     { id: 'COMPANY', label: '公司設定', icon: Building2 },
+    { id: 'USERS', label: '帳號管理', icon: UserCog },
     { id: 'DASHBOARD', label: '儀表板', icon: LayoutDashboard },
     { id: 'PROJECTS', label: '專案案場', icon: FolderGit2, badgeCount: 3 },
     { id: 'FLOWCHART', label: '業務流程', icon: Home },
@@ -65,12 +73,20 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     { id: 'SETTINGS', label: '基本資料', icon: Sliders },
   ];
 
+  // 帳號管理專人防護：未獲 Superadmin 指定帳號管理權限者，完全自選單隱藏不可見
+  const visibleNavItems = navItems.filter(item => {
+    if (item.id === 'USERS' && !hasUserManagementAccess) {
+      return false;
+    }
+    return true;
+  });
+
   if (!isOpen) return null;
 
   return (
     <aside className="w-[62px] bg-white border-r border-slate-200 flex flex-col shrink-0 select-none overflow-y-auto overflow-x-hidden py-1 z-20 shadow-xs">
       <div className="flex-1 flex flex-col items-center space-y-1">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeId === item.id;
 

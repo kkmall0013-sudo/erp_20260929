@@ -47,12 +47,17 @@ export interface User {
   fullName: string;
   email: string;
   role: UserRole;
+  canManageUsers?: boolean; // 【Superadmin 特許帳號管理專人】可進帳號管理模組與重設他人密碼
+  canManageSystemConfigs?: boolean; // 【Superadmin 特許授權】開放此 Admin 修改全域核心參數
+  canManageAdmins?: boolean; // 【Superadmin 特許同階管理】開放此 Admin 新增、編輯、重設密碼與刪除同階 Admin
   groupId?: string; // 當 role === 'USER' 時主要群組 ID
   groupIds?: string[]; // 支援同仁同時隸屬多個業務群組矩陣 (PBAC 多重群組)
   status: 'ACTIVE' | 'DISABLED';
   title?: string;
   allowedCompanies: string[];
   defaultCompanyId: string;
+  passwordHash?: string; // 密碼字串或雜湊
+  isPasswordReset?: boolean; // 是否為重設後之初始預設密碼標記
   lastLoginAt?: string;
   createdAt: string;
   updatedAt: string;

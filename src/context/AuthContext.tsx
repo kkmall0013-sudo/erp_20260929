@@ -99,10 +99,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Superadmin: 擁有所有模組的無條件最高權限
     if (currentUser.role === 'SUPERADMIN') return true;
 
-    // Admin: 系統管理員擁有絕大多數檢視、同仁維護與系統管理權限，但不可變更底層全域設定
+    // Admin: 系統管理員擁有絕大多數檢視、同仁維護與系統管理權限
     if (currentUser.role === 'ADMIN') {
-      if ((moduleKey === 'AUDIT_LOGS' || moduleKey === 'SYSTEM_CONFIGS') && (action === 'write' || action === 'approve')) {
+      // 審計日誌不可竄改，永遠禁止覆寫
+      if (moduleKey === 'AUDIT_LOGS' && (action === 'write' || action === 'approve')) {
         return false;
+      }
+      // 全域核心參數：若獲得 Superadmin 特許授權 (canManageSystemConfigs)，則開放維護；否則唯讀
+      if (moduleKey === 'SYSTEM_CONFIGS' && (action === 'write' || action === 'approve')) {
+        return Boolean(currentUser.canManageSystemConfigs);
       }
       return true;
     }

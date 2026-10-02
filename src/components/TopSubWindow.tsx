@@ -18,9 +18,15 @@ import {
   RotateCcw,
   CheckCircle2,
   FileCode,
-  HardDrive
+  HardDrive,
+  KeyRound,
+  Eye,
+  EyeOff,
+  X,
+  Check
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { changeSelfPassword } from '../db/sqlite';
 
 interface TopSubWindowProps {
   companies: Company[];
@@ -49,6 +55,54 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
   const { currentUser, allUsers, switchUser } = useAuth();
   const [isDbMenuOpen, setIsDbMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 自主修改密碼對話框狀態
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showOldPass, setShowOldPass] = useState(false);
+  const [showNewPass, setShowNewPass] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccessToast, setPasswordSuccessToast] = useState<string | null>(null);
+
+  const handleOpenPasswordModal = () => {
+    setOldPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowOldPass(false);
+    setShowNewPass(false);
+    setPasswordError(null);
+    setIsPasswordModalOpen(true);
+  };
+
+  const handleSaveMyPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError(null);
+    if (!currentUser) return;
+
+    if (!oldPassword.trim()) {
+      setPasswordError('請輸入目前原始密碼！');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPasswordError('新密碼長度至少需為 6 個字元！');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('兩次輸入的新密碼不相符，請再次確認！');
+      return;
+    }
+
+    try {
+      changeSelfPassword(currentUser.id, oldPassword, newPassword, confirmPassword);
+      setIsPasswordModalOpen(false);
+      setPasswordSuccessToast('🎉 個人密碼已成功更新！');
+      setTimeout(() => setPasswordSuccessToast(null), 3500);
+    } catch (err: unknown) {
+      setPasswordError((err as Error).message);
+    }
+  };
 
   // 處理匯入 SQL 檔案
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -225,7 +279,13 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
 
         {/* 帳號身分下拉 (截圖右上方之帳號區) */}
         <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700 ml-1">
-          <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 ${
+            currentUser?.role === 'SUPERADMIN'
+              ? 'bg-amber-500 shadow-2xs'
+              : currentUser?.role === 'ADMIN'
+              ? 'bg-indigo-600'
+              : 'bg-emerald-600'
+          }`}>
             {currentUser?.fullName ? currentUser.fullName.slice(0, 1) : '帳'}
           </div>
 
@@ -234,27 +294,160 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
               value={currentUser?.id || ''}
               onChange={(e) => switchUser(e.target.value)}
               title="切換操作身分"
-              className="bg-slate-800 text-[11px] text-slate-200 border border-slate-700 rounded px-1.5 py-0.5 outline-none cursor-pointer max-w-[95px] sm:max-w-[120px] truncate"
+              className="bg-slate-800 text-[11px] text-slate-200 border border-slate-700 rounded px-1.5 py-0.5 outline-none cursor-pointer max-w-[105px] sm:max-w-[130px] truncate"
             >
               {allUsers.map(u => (
                 <option key={u.id} value={u.id}>
-                  {u.fullName} ({u.role})
+                  {u.fullName} ({u.role}{u.role === 'SUPERADMIN' ? ' 👑' : ''}{u.role === 'ADMIN' && u.canManageUsers ? ' 🔑' : ''}{u.role === 'ADMIN' && u.canManageSystemConfigs ? ' 🛡️' : ''}{u.role === 'ADMIN' && u.canManageAdmins ? ' ⚡' : ''})
                 </option>
               ))}
             </select>
           </div>
+
+          {/* 修改個人密碼按鈕 */}
+          <button
+            onClick={handleOpenPasswordModal}
+            title="修改自己登入密碼 (驗證舊密碼與兩次新密碼)"
+            className="p-1 rounded hover:bg-slate-700 text-slate-300 hover:text-amber-400 transition-colors cursor-pointer flex items-center gap-1"
+          >
+            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden md:inline text-[11px]">改密碼</span>
+          </button>
         </div>
 
         {/* 模組切換九宮格按鈕 (對應截圖最右上角之 [模組切換]) */}
         <button
           onClick={onOpenFlowchart}
           title="點擊切換鼎新 A1 業務流程地圖"
-          className="ml-1 px-2.5 py-1 rounded bg-[#3b4b5e] hover:bg-indigo-600 text-white flex items-center gap-1.5 transition-colors border border-slate-600 shadow-2xs font-medium"
+          className="ml-1 px-2.5 py-1 rounded bg-[#3b4b5e] hover:bg-indigo-600 text-white flex items-center gap-1.5 transition-colors border border-slate-600 shadow-2xs font-medium cursor-pointer"
         >
           <Grid className="w-3.5 h-3.5" />
           <span className="hidden sm:inline text-xs font-semibold">模組切換</span>
         </button>
       </div>
+
+      {/* 修改密碼成功浮動提示 */}
+      {passwordSuccessToast && (
+        <div className="fixed bottom-6 right-6 bg-slate-900 text-white px-4 py-2.5 rounded-lg shadow-2xl text-xs font-semibold z-50 animate-in fade-in flex items-center gap-2 border border-slate-700">
+          <span>{passwordSuccessToast}</span>
+        </div>
+      )}
+
+      {/* 自主修改個人密碼對話框 (Centered Modal) */}
+      {isPasswordModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-2xs animate-in fade-in text-slate-800">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-sm overflow-hidden animate-in zoom-in-95">
+            <div className="px-5 py-3.5 bg-slate-800 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-amber-400" />
+                <span className="font-bold text-xs">修改個人登入密碼</span>
+              </div>
+              <button
+                onClick={() => setIsPasswordModalOpen(false)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMyPassword} className="p-5 space-y-3.5 text-xs">
+              <div className="bg-slate-50 p-2.5 rounded border border-slate-200 text-[11px] text-slate-600 flex items-center justify-between">
+                <span>當前登入者：</span>
+                <span className="font-bold text-slate-900">{currentUser?.fullName} (@{currentUser?.username})</span>
+              </div>
+
+              {passwordError && (
+                <div className="p-2.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium animate-in fade-in">
+                  ❌ {passwordError}
+                </div>
+              )}
+
+              {/* 原始密碼 */}
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  目前原始密碼 <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showOldPass ? 'text' : 'password'}
+                    required
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    placeholder="請輸入目前密碼"
+                    className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 pr-8 text-slate-800 font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOldPass(!showOldPass)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {showOldPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* 設定新密碼 */}
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  設定新密碼 (至少 6 位) <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showNewPass ? 'text' : 'password'}
+                    required
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="請設定新密碼"
+                    className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 pr-8 text-slate-800 font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPass(!showNewPass)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {showNewPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* 再次確認新密碼 */}
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  再次確認新密碼 <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type={showNewPass ? 'text' : 'password'}
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="請再次輸入新密碼"
+                  className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                {confirmPassword && newPassword !== confirmPassword && (
+                  <span className="text-[10px] text-rose-500 mt-0.5 block">兩次輸入密碼不相符</span>
+                )}
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsPasswordModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>確認變更密碼</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

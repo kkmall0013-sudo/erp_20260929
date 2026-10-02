@@ -171,14 +171,25 @@ PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄
 |---|---|
 | `id` | 使用者識別碼。 |
 | `employeeId` | 員工編號。 |
+| `username` | 登入帳號名稱（唯一不重複）。 |
+| `name` / `fullName` | 使用者姓名。 |
+| `title` | 職務職稱，如「工務主任」、「財務會計長」。 |
 | `email` | 登入或聯絡 Email。 |
-| `name` | 使用者姓名。 |
-| `passwordHash` | 密碼雜湊，不存明碼。 |
+| `passwordHash` | 密碼雜湊或加密字串，不存明碼。 |
+| `isPasswordReset` | 是否為管理員重設後之初始預設密碼標記（布林值）。 |
+| `role` | 三層式身分架構：`SUPERADMIN`（唯一最高）、`ADMIN`（系統管理員）、`USER`（業務同仁）。 |
+| `canManageSystemConfigs` | **【Superadmin 特許核心授權】** 是否開放此特定 Admin 帳號修改全域核心參數（布林值，僅最高 Superadmin 有權授予開關，預設 0／false）。 |
+| `canManageUsers` | **【Superadmin 特許帳號管理專人授權】** 是否開放此特定 Admin 進入帳號管理模組，並具備同仁帳號維護與重設他人密碼之專人權限（布林值，僅最高 Superadmin 有權授予開關，預設 0／false；未獲授權者選單完全隱藏）。 |
+| `canManageAdmins` | **【Superadmin 特許同階管理授權】** 是否開放此特定 Admin 帳號新增、編輯、重設密碼與停用/刪除同階 Admin 帳號（布林值，僅最高 Superadmin 有權授予開關，預設 0／false）。 |
+| `groupId` | 主要業務權限群組代碼（對應 `user_groups.id`）。 |
+| `groupIds` | 多重業務權限群組矩陣 JSON（例如 `["GRP-ENG","GRP-PROC"]`，採權限聯集）。 |
+| `allowedCompanies` | 授權營運法人 ID 清單 JSON（例如 `["COMP-01","COMP-02"]`）。 |
+| `defaultCompanyId` | 預設進入之營運法人 ID。 |
 | `tokenVersion` | Token 版本；更新後可使既有登入憑證失效。 |
 | `maxConcurrentSessions` | 同時允許登入的設備數上限。 |
 | `allowedIpRanges` | 此帳號可登入的 IP／網段。 |
 | `dailyExportLimit` | 每日報表或資料匯出筆數上限。 |
-| `status` | 帳號狀態，如啟用、停權、離職。 |
+| `status` | 帳號狀態：`ACTIVE`（正常啟用）、`DISABLED`（停用／離職）。 |
 | `isGhost` | 幽靈員工標記；新選單隱藏但保留歷史血緣。 |
 | `resignedAt`、`reinstatedAt` | 離職及復職時間。 |
 | `delegateToId` | 代理人使用者 ID。 |
@@ -188,7 +199,13 @@ PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄
 | `version` | 樂觀鎖版本。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-**憲法版 User 欄位差異：**第二篇範本另有 `username`（登入帳號）、`isActive`（一般啟用狀態）、`isSuspended`（緊急停權並觸發登出）。此範本未列 `employeeId`、`email`、`name`、`resignedAt`、`reinstatedAt`、`isDeleted`、`version` 等模組欄位，兩套欄位定義應先統一。`status` 與 `isActive`／`isSuspended` 是不同版本的狀態表達，不建議不經決策直接重複保存。
+> **三層式權限與特許核心設定規則（憲法補充）：**
+> 1. **Superadmin 金身防護**：全系統僅此 1 位，具備絕對最高權限，不可刪除、不可停用、不可被一般 Admin 修改；欲更換最高管理者必須走「最高權限交接程序」。
+> 2. **Admin 全域參數特許 (`canManageSystemConfigs`)**：一般 Admin 帳號預設無權修改全域系統核心參數（`SYSTEM_CONFIGS`）；但 **Superadmin 可在帳號管理中個別點擊開放特許權限給特定 Admin**。擁有此特許之 Admin 即可協同維護全域參數，兼顧分權與安全。
+> 3. **Admin 帳號管理專人特許 (`canManageUsers`)**：帳號管理非所有 Admin 固有權限，而是**由唯一最高 Superadmin 指定專人 Admin 負責**。未獲指定之 Admin 在左側導航選單中**完全隱藏「帳號管理」入口**，且無權重設他人密碼；他人密碼僅具備此權限之專人能重設。
+> 4. **Admin 同階管理特許 (`canManageAdmins`)**：依階層原則，獲指定管理帳號之專人 Admin 預設只能管理下一階層（User），無法新增、修改、重設密碼或刪除同階（Admin）。唯有進一步經 Superadmin 授權開啟 `canManageAdmins` 之專人 Admin，始具備管理同階 Admin 帳號之特許權力（但依然嚴禁異動或刪除唯一最高 Superadmin）。
+> 5. **同仁自主密碼維護**：所有同仁（包含一般 User）皆可於頂部個人帳號區自主變更個人密碼，變更時需驗證目前原始密碼，並由系統強制輸入兩次新密碼以資確認。
+> 6. **User 業務多重矩陣**：User 身分必須指派至少一個群組，多群組時權限為聯集生效。
 
 ### Role｜權限角色
 

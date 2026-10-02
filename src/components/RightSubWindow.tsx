@@ -23,6 +23,8 @@ import { FlowchartNavigator } from './FlowchartNavigator';
 import { MainCanvasWorkspace } from './MainCanvasWorkspace';
 import { DiscussionRoadmapView } from './DiscussionRoadmapView';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
+import { AccountManagementWorkspace } from './AccountManagementWorkspace';
+import { useAuth } from '../context/AuthContext';
 
 interface RightSubWindowProps {
   activeNavId: LeftNavId;
@@ -47,6 +49,16 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   onSelectCompany,
   onReloadData,
 }) => {
+  const { currentUser, isSuperadmin } = useAuth();
+  const hasUserManagementAccess = isSuperadmin || Boolean(currentUser?.canManageUsers);
+
+  // 安全防護：若當前同仁非專人且在 USERS 頁面，自動安全回退至個人儀表板
+  React.useEffect(() => {
+    if (activeNavId === 'USERS' && !hasUserManagementAccess) {
+      onNavigateNav('DASHBOARD');
+    }
+  }, [activeNavId, hasUserManagementAccess, onNavigateNav]);
+
   const [showFlowchartInline, setShowFlowchartInline] = useState(false);
 
   const currentProject = projects.find(p => p.id === selectedProjectId) || projects[0] || null;
@@ -56,6 +68,8 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
     switch (activeNavId) {
       case 'COMPANY':
         return '集團與公司基本資料設定 (母子法人架構)';
+      case 'USERS':
+        return '使用者帳號與三層式身分管理 (密碼維護與特許授權)';
       case 'DASHBOARD':
         return '個人儀表板';
       case 'PROJECTS':
@@ -156,6 +170,16 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
             companies={companies}
             selectedCompanyId={selectedCompanyId}
             onSelectCompany={onSelectCompany}
+            onDataChanged={onReloadData}
+          />
+        )}
+
+        {/* ======================================================== */}
+        {/* 0.1 帳號管理視圖 (三層式身分、密碼重設與全域特許授權)      */}
+        {/* ======================================================== */}
+        {activeNavId === 'USERS' && (
+          <AccountManagementWorkspace
+            companies={companies}
             onDataChanged={onReloadData}
           />
         )}
@@ -373,6 +397,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         {/* 其他尚未實裝之模組，提示即將依序聚焦開發 */}
         {![
           'COMPANY',
+          'USERS',
           'DASHBOARD',
           'PROJECTS',
           'ROADMAP',
