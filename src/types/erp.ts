@@ -2,11 +2,36 @@
 
 export type CompanyId = string;
 
+export interface PhoneItem {
+  id: string;
+  type: '市話' | '傳真' | '工務專線' | '行動電話' | '緊急聯絡';
+  number: string;
+}
+
+export interface KeyPerson {
+  id: string;
+  title: string; // 職稱如: 董事長, 總經理, 財務長, 營造特助
+  name: string;
+  phone?: string;
+}
+
 export interface Company {
   id: string;
   companyCode: string;
   name: string;
-  taxId: string;
+  shortName?: string;
+  entityType: 'GROUP' | 'CORPORATION' | 'PERSONAL';
+  parentId?: string;
+  taxId?: string; // 公司法人 8 碼統編
+  nationalId?: string; // 個人實體台灣身分證字號 (1 碼英文字母 + 9 碼數字加權防呆)
+  representative?: string; // 法定代表人 / 負責人
+  keyPersonnel?: KeyPerson[]; // 公司重要人物清單
+  documentPrefix?: string;
+  phones?: PhoneItem[];
+  email?: string;
+  registeredAddress?: string;
+  contactAddress?: string;
+  capitalAmount?: number;
   baseCurrency: string;
   isDeleted: boolean;
   version: number;
@@ -14,14 +39,59 @@ export interface Company {
   updatedAt: string;
 }
 
+export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'USER';
+
 export interface User {
   id: string;
   username: string;
   fullName: string;
   email: string;
-  role: 'SUPERADMIN' | 'PM' | 'BUYER' | 'ENGINEER' | 'ACCOUNTANT' | 'EXECUTIVE';
+  role: UserRole;
+  groupId?: string; // 當 role === 'USER' 時主要群組 ID
+  groupIds?: string[]; // 支援同仁同時隸屬多個業務群組矩陣 (PBAC 多重群組)
+  status: 'ACTIVE' | 'DISABLED';
+  title?: string;
   allowedCompanies: string[];
   defaultCompanyId: string;
+  lastLoginAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserGroup {
+  id: string;
+  groupCode: string;
+  groupName: string;
+  description: string;
+  isSystem: boolean; // 系統內建預設群組防誤刪
+  approvalLimit: number; // 單筆核准金額上限 ($0 ~ 無限制)
+  canExport: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ModuleKey =
+  | 'COMPANIES'
+  | 'PROJECTS'
+  | 'PARTNERS'
+  | 'QUOTATIONS'
+  | 'PURCHASE_ORDERS'
+  | 'SUBCONTRACTS'
+  | 'VALUATIONS'
+  | 'FINANCE_AP'
+  | 'FINANCE_AR'
+  | 'BANK_CHECKS'
+  | 'SYSTEM_CONFIGS'
+  | 'AUDIT_LOGS';
+
+export interface GroupModulePermission {
+  id: string;
+  groupId: string;
+  moduleKey: ModuleKey;
+  canRead: boolean;
+  canWrite: boolean;
+  canApprove: boolean;
+  canExport: boolean;
 }
 
 export interface SystemConfig {

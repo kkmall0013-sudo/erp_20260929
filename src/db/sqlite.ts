@@ -2,6 +2,8 @@
 import type { Database, SqlJsStatic } from 'sql.js';
 import {
   Company,
+  PhoneItem,
+  KeyPerson,
   Project,
   ProjectSite,
   ProjectWBS,
@@ -21,7 +23,12 @@ import {
   BankCheck,
   SystemConfig,
   AuditLog,
-  CashFlowMetrics
+  CashFlowMetrics,
+  User,
+  UserGroup,
+  GroupModulePermission,
+  ModuleKey,
+  UserRole
 } from '../types/erp';
 
 declare global {
@@ -74,6 +81,7 @@ export async function getDatabase(): Promise<Database> {
       const uInt8Array = new Uint8Array(JSON.parse(savedDb));
       dbInstance = new SQL.Database(uInt8Array);
       console.log('✅ 成功從本機快照還原 SQLite 資料庫');
+      ensureDatabaseIntegrity(dbInstance);
       return dbInstance;
     } catch (e) {
       console.warn('⚠️ 舊快照載入失敗，將重新建置全新資料庫', e);
@@ -102,18 +110,73 @@ export function saveDatabaseSnapshot() {
 // 12 大模組資料表 DDL
 function initializeTables(db: Database) {
   db.run(`
-    -- 1. 公司法人 (Company)
+    -- 0. 三層式帳號架構與自訂群組模組矩陣 (Users, UserGroups, GroupModulePermissions)
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      fullName TEXT NOT NULL,
+      email TEXT,
+      role TEXT NOT NULL,
+      groupId TEXT,
+      groupIds TEXT DEFAULT '[]',
+      status TEXT DEFAULT 'ACTIVE',
+      title TEXT,
+      allowedCompanies TEXT DEFAULT '["COMP-01","COMP-02"]',
+      defaultCompanyId TEXT DEFAULT 'COMP-01',
+      lastLoginAt TEXT,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS user_groups (
+      id TEXT PRIMARY KEY,
+      groupCode TEXT UNIQUE NOT NULL,
+      groupName TEXT NOT NULL,
+      description TEXT,
+      isSystem INTEGER DEFAULT 0,
+      approvalLimit REAL DEFAULT 0,
+      canExport INTEGER DEFAULT 0,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS group_module_permissions (
+      id TEXT PRIMARY KEY,
+      groupId TEXT NOT NULL,
+      moduleKey TEXT NOT NULL,
+      canRead INTEGER DEFAULT 0,
+      canWrite INTEGER DEFAULT 0,
+      canApprove INTEGER DEFAULT 0,
+      canExport INTEGER DEFAULT 0
+    );
+
+    -- 1. 公司法人與集團實體 (Company)
     CREATE TABLE IF NOT EXISTS companies (
       id TEXT PRIMARY KEY,
       companyCode TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
-      taxId TEXT NOT NULL,
+      shortName TEXT,
+      entityType TEXT DEFAULT 'CORPORATION',
+      parentId TEXT,
+      taxId TEXT,
+      nationalId TEXT,
+      representative TEXT,
+      keyPersonnel TEXT DEFAULT '[]',
+      documentPrefix TEXT,
+      phones TEXT DEFAULT '[]',
+      email TEXT,
+      registeredAddress TEXT,
+      contactAddress TEXT,
+      capitalAmount REAL DEFAULT 0,
       baseCurrency TEXT DEFAULT 'TWD',
       isDeleted INTEGER DEFAULT 0,
       version INTEGER DEFAULT 1,
       createdAt TEXT,
       updatedAt TEXT
     );
+
+    CREATE INDEX IF NOT EXISTS idx_companies_parent_type ON companies (parentId, entityType, isDeleted);
+    CREATE INDEX IF NOT EXISTS idx_companies_code ON companies (companyCode);
 
     -- 2. 全域參數與審計 (SystemConfig & AuditLog)
     CREATE TABLE IF NOT EXISTS system_configs (
@@ -426,6 +489,7 @@ function initializeTables(db: Database) {
 export function seedInitialData(db: Database) {
   // 清理現有資料
   const tables = [
+    'users', 'user_groups', 'group_module_permissions',
     'companies', 'system_configs', 'audit_logs', 'projects', 'project_sites',
     'project_wbs', 'business_partners', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
@@ -434,12 +498,17 @@ export function seedInitialData(db: Database) {
   ];
   tables.forEach(t => db.run(`DELETE FROM ${t};`));
 
-  // 1. 公司法人
+  // 0. 三層式帳號權限與 PBAC 模組矩陣
+  seedUserPermissionData(db);
+
+  // 1. 公司法人、集團與個人實體
   db.run(`
-    INSERT INTO companies (id, companyCode, name, taxId, baseCurrency, isDeleted, version, createdAt, updatedAt)
+    INSERT INTO companies (id, companyCode, name, shortName, entityType, parentId, taxId, nationalId, representative, keyPersonnel, documentPrefix, phones, email, registeredAddress, contactAddress, capitalAmount, baseCurrency, isDeleted, version, createdAt, updatedAt)
     VALUES 
-      ('COMP-01', 'CMP-TW01', '台灣大巨營造工程股份有限公司', '88991234', 'TWD', 0, 1, '2026-01-01', '2026-01-01'),
-      ('COMP-02', 'CMP-TW02', '宏達機電工程股份有限公司', '54329876', 'TWD', 0, 1, '2026-01-01', '2026-01-01');
+      ('GRP-01', 'GRP-TW', '大巨營造事業集團', '大巨集團', 'GROUP', NULL, NULL, NULL, '林大巨 創辦人', '[{"id":"kp-0","title":"集團總裁","name":"林大巨","phone":"0910-123-456"}]', 'GRP', '[]', 'group@daju-group.com.tw', '台北市信義區經貿二路100號', '台北市信義區經貿二路100號28樓', 500000000, 'TWD', 0, 1, '2026-01-01', '2026-01-01'),
+      ('COMP-01', 'CMP-TW01', '台灣大巨營造工程股份有限公司', '大巨營造', 'CORPORATION', 'GRP-01', '88991234', NULL, '林大巨 董事長', '[{"id":"kp-1","title":"董事長","name":"林大巨","phone":"0910-123-456"},{"id":"kp-2","title":"總經理","name":"陳國安","phone":"0920-654-321"},{"id":"kp-3","title":"工務特助","name":"黃志明","phone":"0933-778-899"}]', 'DJ', '[{"id":"p1","type":"市話","number":"02-2720-8888"},{"id":"p2","type":"傳真","number":"02-2720-9999"},{"id":"p3","type":"工務專線","number":"0910-123-456"}]', 'service@daju-eng.com.tw', '台北市信義區經貿二路100號5樓', '台北市信義區經貿二路100號5樓', 150000000, 'TWD', 0, 1, '2026-01-01', '2026-01-01'),
+      ('COMP-02', 'CMP-TW02', '宏達機電工程股份有限公司', '宏達機電', 'CORPORATION', 'GRP-01', '54329876', NULL, '陳總經理', '[{"id":"kp-4","title":"總經理","name":"陳志豪","phone":"0928-888-999"}]', 'HD', '[{"id":"p4","type":"市話","number":"02-8950-6677"}]', 'mep@hongda-eng.com.tw', '新北市板橋區縣民大道二段68號', '新北市板橋區縣民大道二段68號12樓', 50000000, 'TWD', 0, 1, '2026-01-01', '2026-01-01'),
+      ('BOSS-01', 'BOSS-01', '林董私人調度資金戶', '林董私帳', 'PERSONAL', 'GRP-01', NULL, 'A123456789', '林大巨', '[]', 'BOSS', '[]', NULL, NULL, NULL, 0, 'TWD', 0, 1, '2026-01-01', '2026-01-01');
   `);
 
   // 2. 系統全域參數
@@ -575,10 +644,19 @@ export function seedInitialData(db: Database) {
   `);
 }
 
+// 重設資料庫為初始預設種子狀態
+export function resetToSeedData(): void {
+  if (!dbInstance) return;
+  seedInitialData(dbInstance);
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
 // 產生完整 SQL DDL & INSERT Dump 文本
 export function exportSqlDump(): string {
   if (!dbInstance) return '-- 資料庫尚未載入';
   const tables = [
+    'users', 'user_groups', 'group_module_permissions',
     'companies', 'system_configs', 'audit_logs', 'projects', 'project_sites',
     'project_wbs', 'business_partners', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
@@ -664,22 +742,139 @@ export function executeCustomQuery(sqlQuery: string): { columns: string[]; value
   }));
 }
 
-// 讀取所有公司
+// 讀取所有集團、公司與個人實體
 export function getAllCompanies(): Company[] {
   if (!dbInstance) return [];
-  const res = dbInstance.exec(`SELECT * FROM companies WHERE isDeleted = 0 ORDER BY companyCode;`);
+  const res = dbInstance.exec(`
+    SELECT id, companyCode, name, shortName, entityType, parentId, taxId, nationalId, representative, keyPersonnel, documentPrefix, phones, email, registeredAddress, contactAddress, capitalAmount, baseCurrency, isDeleted, version, createdAt, updatedAt 
+    FROM companies 
+    WHERE isDeleted = 0 
+    ORDER BY CASE WHEN entityType = 'GROUP' THEN 0 WHEN entityType = 'CORPORATION' THEN 1 ELSE 2 END, companyCode;
+  `);
   if (!res.length) return [];
-  return res[0].values.map(v => ({
-    id: String(v[0]),
-    companyCode: String(v[1]),
-    name: String(v[2]),
-    taxId: String(v[3]),
-    baseCurrency: String(v[4]),
-    isDeleted: Boolean(v[5]),
-    version: Number(v[6]),
-    createdAt: String(v[7]),
-    updatedAt: String(v[8]),
-  }));
+  return res[0].values.map(v => {
+    let keyPersonnelList: KeyPerson[] = [];
+    try {
+      if (v[9]) keyPersonnelList = JSON.parse(String(v[9]));
+    } catch (e) {
+      keyPersonnelList = [];
+    }
+
+    let phonesList: PhoneItem[] = [];
+    try {
+      if (v[11]) phonesList = JSON.parse(String(v[11]));
+    } catch (e) {
+      phonesList = [];
+    }
+    return {
+      id: String(v[0]),
+      companyCode: String(v[1]),
+      name: String(v[2]),
+      shortName: v[3] ? String(v[3]) : undefined,
+      entityType: (v[4] as Company['entityType']) || 'CORPORATION',
+      parentId: v[5] ? String(v[5]) : undefined,
+      taxId: v[6] ? String(v[6]) : undefined,
+      nationalId: v[7] ? String(v[7]) : undefined,
+      representative: v[8] ? String(v[8]) : undefined,
+      keyPersonnel: keyPersonnelList,
+      documentPrefix: v[10] ? String(v[10]) : undefined,
+      phones: phonesList,
+      email: v[12] ? String(v[12]) : undefined,
+      registeredAddress: v[13] ? String(v[13]) : undefined,
+      contactAddress: v[14] ? String(v[14]) : undefined,
+      capitalAmount: v[15] ? Number(v[15]) : 0,
+      baseCurrency: String(v[16] || 'TWD'),
+      isDeleted: Boolean(v[17]),
+      version: Number(v[18] || 1),
+      createdAt: String(v[19] || ''),
+      updatedAt: String(v[20] || '')
+    };
+  });
+}
+
+// 儲存或更新公司法人/集團/個人實體
+export function saveCompany(company: Partial<Company> & { id: string; name: string; companyCode: string }, operatorName: string = '系統管理員'): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString().substring(0, 10);
+  const phonesJson = company.phones ? JSON.stringify(company.phones).replace(/'/g, "''") : '[]';
+  const personnelJson = company.keyPersonnel ? JSON.stringify(company.keyPersonnel).replace(/'/g, "''") : '[]';
+
+  const check = dbInstance.exec(`SELECT count(*) FROM companies WHERE id = '${company.id}';`);
+  const exists = check.length && Number(check[0].values[0][0]) > 0;
+
+  if (exists) {
+    dbInstance.run(`
+      UPDATE companies SET
+        companyCode = '${company.companyCode}',
+        name = '${company.name.replace(/'/g, "''")}',
+        shortName = ${company.shortName ? `'${company.shortName.replace(/'/g, "''")}'` : 'NULL'},
+        entityType = '${company.entityType || 'CORPORATION'}',
+        parentId = ${company.parentId ? `'${company.parentId}'` : 'NULL'},
+        taxId = ${company.taxId ? `'${company.taxId}'` : 'NULL'},
+        nationalId = ${company.nationalId ? `'${company.nationalId}'` : 'NULL'},
+        representative = ${company.representative ? `'${company.representative.replace(/'/g, "''")}'` : 'NULL'},
+        keyPersonnel = '${personnelJson}',
+        documentPrefix = ${company.documentPrefix ? `'${company.documentPrefix.replace(/'/g, "''")}'` : 'NULL'},
+        phones = '${phonesJson}',
+        email = ${company.email ? `'${company.email.replace(/'/g, "''")}'` : 'NULL'},
+        registeredAddress = ${company.registeredAddress ? `'${company.registeredAddress.replace(/'/g, "''")}'` : 'NULL'},
+        contactAddress = ${company.contactAddress ? `'${company.contactAddress.replace(/'/g, "''")}'` : 'NULL'},
+        capitalAmount = ${company.capitalAmount || 0},
+        baseCurrency = '${company.baseCurrency || 'TWD'}',
+        version = version + 1,
+        updatedAt = '${now}'
+      WHERE id = '${company.id}';
+    `);
+    logAudit(dbInstance, operatorName, 'UPDATE', 'companies', company.id, undefined, company);
+  } else {
+    dbInstance.run(`
+      INSERT INTO companies (id, companyCode, name, shortName, entityType, parentId, taxId, nationalId, representative, keyPersonnel, documentPrefix, phones, email, registeredAddress, contactAddress, capitalAmount, baseCurrency, isDeleted, version, createdAt, updatedAt)
+      VALUES (
+        '${company.id}',
+        '${company.companyCode}',
+        '${company.name.replace(/'/g, "''")}',
+        ${company.shortName ? `'${company.shortName.replace(/'/g, "''")}'` : 'NULL'},
+        '${company.entityType || 'CORPORATION'}',
+        ${company.parentId ? `'${company.parentId}'` : 'NULL'},
+        ${company.taxId ? `'${company.taxId}'` : 'NULL'},
+        ${company.nationalId ? `'${company.nationalId}'` : 'NULL'},
+        ${company.representative ? `'${company.representative.replace(/'/g, "''")}'` : 'NULL'},
+        '${personnelJson}',
+        ${company.documentPrefix ? `'${company.documentPrefix.replace(/'/g, "''")}'` : 'NULL'},
+        '${phonesJson}',
+        ${company.email ? `'${company.email.replace(/'/g, "''")}'` : 'NULL'},
+        ${company.registeredAddress ? `'${company.registeredAddress.replace(/'/g, "''")}'` : 'NULL'},
+        ${company.contactAddress ? `'${company.contactAddress.replace(/'/g, "''")}'` : 'NULL'},
+        ${company.capitalAmount || 0},
+        '${company.baseCurrency || 'TWD'}',
+        0, 1, '${now}', '${now}'
+      );
+    `);
+    logAudit(dbInstance, operatorName, 'CREATE', 'companies', company.id, undefined, company);
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 刪除公司法人/集團/個人實體 (安全防呆：有子實體或有專案時禁止刪除)
+export function deleteCompany(companyId: string, operatorName: string = '系統管理員'): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  
+  const projCheck = dbInstance.exec(`SELECT count(*) FROM projects WHERE companyId = '${companyId}' AND isDeleted = 0;`);
+  if (projCheck.length && Number(projCheck[0].values[0][0]) > 0) {
+    throw new Error(`無法刪除：尚有 ${projCheck[0].values[0][0]} 個進行中專案工程綁定此公司法人，請先移轉或結案專案！`);
+  }
+  
+  const childCheck = dbInstance.exec(`SELECT count(*) FROM companies WHERE parentId = '${companyId}' AND isDeleted = 0;`);
+  if (childCheck.length && Number(childCheck[0].values[0][0]) > 0) {
+    throw new Error(`無法刪除：該集團下尚有 ${childCheck[0].values[0][0]} 個子公司或個人帳戶，請先將子公司移轉或刪除！`);
+  }
+
+  dbInstance.run(`UPDATE companies SET isDeleted = 1, updatedAt = '${new Date().toISOString().substring(0, 10)}' WHERE id = '${companyId}';`);
+  logAudit(dbInstance, operatorName, 'DELETE', 'companies', companyId, { id: companyId });
+  saveDatabaseSnapshot();
+  notifyListeners();
 }
 
 // 讀取所有專案
@@ -1024,3 +1219,670 @@ export function logAudit(
       ${beforeJson ? `'${beforeJson}'` : 'NULL'}, ${afterJson ? `'${afterJson}'` : 'NULL'}, '127.0.0.1', '${now}');
   `);
 }
+
+// 12 大營造工程核心模組字典
+export const SYSTEM_MODULES: { key: ModuleKey; name: string; category: string; description: string }[] = [
+  { key: 'COMPANIES', name: '公司法人組織', category: '基礎架構', description: '集團多法人架構、統編與幣別維護' },
+  { key: 'PROJECTS', name: '專案與案場工程', category: '工程工務', description: '工程案場主檔、WBS 節點、預算與成本' },
+  { key: 'PARTNERS', name: '商業夥伴主檔', category: '主檔邊界', description: '業主、材料商、工程下包商與銀行帳號' },
+  { key: 'QUOTATIONS', name: '報價與銷售 (CPQ)', category: '專案業務', description: 'REV-A/B 投標單、粉紅扣減折讓、里程碑請款' },
+  { key: 'PURCHASE_ORDERS', name: '採購與發包 (PO)', category: '採購發包', description: '物料採購單、計價拋轉、過帳實體快照' },
+  { key: 'SUBCONTRACTS', name: '發包合約管理', category: '採購發包', description: '下包工程主約、保留款比例、預付款抵扣' },
+  { key: 'VALUATIONS', name: '估驗計價請款', category: '工程工務', description: '工區累計進度、保留款扣款、憑單自動拋轉' },
+  { key: 'FINANCE_AP', name: '應付帳款 (AP)', category: '財務會計', description: '廠商憑單拆單、稅額勾稽、付款沖銷' },
+  { key: 'FINANCE_AR', name: '應收帳款 (AR)', category: '財務會計', description: '業主工程進度款請款與收款' },
+  { key: 'BANK_CHECKS', name: '票據與資金管理', category: '財務會計', description: '應收付支票開立、票據兌現、作廢紀錄' },
+  { key: 'SYSTEM_CONFIGS', name: '全域系統參數', category: '平台基礎', description: '營業稅率、保留款預設率、防竄改鎖定' },
+  { key: 'AUDIT_LOGS', name: '全域安全審計日誌', category: '資安防護', description: '不可竄改之全域操作歷程快照' },
+];
+
+// 種子權限與使用者資料建立
+export function seedUserPermissionData(db: Database) {
+  // 檢查是否已有群組
+  const existing = db.exec(`SELECT count(*) FROM user_groups;`);
+  if (existing.length && Number(existing[0].values[0][0]) > 0) return;
+
+  // 1. 建立預設四大核心業務群組 (工務、財務會計、採購發包、專案業務)
+  db.run(`
+    INSERT INTO user_groups (id, groupCode, groupName, description, isSystem, approvalLimit, canExport, createdAt, updatedAt)
+    VALUES
+      ('GRP-ENG', 'SITE_ENG', '工務組', '案場施工日誌填報、工區料件點收、估驗草稿編製、施工進度維護', 1, 0, 0, '2026-01-01', '2026-01-01'),
+      ('GRP-ACC', 'FIN_ACC', '財務會計組', '應收應付憑單拆單、支票開立/兌現、發票稅額勾稽、資金水池預測', 1, 10000000, 1, '2026-01-01', '2026-01-01'),
+      ('GRP-PROC', 'PROC_SRC', '採購發包組', '材料供應商管理、採購單 PO 開立、原物料詢價與預付款沖銷', 1, 3000000, 1, '2026-01-01', '2026-01-01'),
+      ('GRP-SALES', 'PROJ_SALES', '專案業務組', '業主報價單 REV-A/B 維護、工程 WBS 預算節點控管、合約里程碑請款', 1, 5000000, 1, '2026-01-01', '2026-01-01');
+  `);
+
+  // 2. 建立四大群組之 12 大模組權限矩陣 (Read, Write, Approve, Export)
+  const groupPermMap: Record<string, Record<ModuleKey, { r: number; w: number; a: number; e: number }>> = {
+    'GRP-ENG': {
+      COMPANIES: { r: 1, w: 0, a: 0, e: 0 },
+      PROJECTS: { r: 1, w: 1, a: 0, e: 0 },
+      PARTNERS: { r: 1, w: 0, a: 0, e: 0 },
+      QUOTATIONS: { r: 0, w: 0, a: 0, e: 0 },
+      PURCHASE_ORDERS: { r: 1, w: 0, a: 0, e: 0 },
+      SUBCONTRACTS: { r: 1, w: 0, a: 0, e: 0 },
+      VALUATIONS: { r: 1, w: 1, a: 0, e: 0 },
+      FINANCE_AP: { r: 0, w: 0, a: 0, e: 0 },
+      FINANCE_AR: { r: 0, w: 0, a: 0, e: 0 },
+      BANK_CHECKS: { r: 0, w: 0, a: 0, e: 0 },
+      SYSTEM_CONFIGS: { r: 0, w: 0, a: 0, e: 0 },
+      AUDIT_LOGS: { r: 0, w: 0, a: 0, e: 0 },
+    },
+    'GRP-ACC': {
+      COMPANIES: { r: 1, w: 0, a: 0, e: 0 },
+      PROJECTS: { r: 1, w: 0, a: 0, e: 0 },
+      PARTNERS: { r: 1, w: 1, a: 0, e: 0 },
+      QUOTATIONS: { r: 1, w: 0, a: 0, e: 0 },
+      PURCHASE_ORDERS: { r: 1, w: 0, a: 0, e: 0 },
+      SUBCONTRACTS: { r: 1, w: 0, a: 0, e: 0 },
+      VALUATIONS: { r: 1, w: 0, a: 0, e: 0 },
+      FINANCE_AP: { r: 1, w: 1, a: 1, e: 1 },
+      FINANCE_AR: { r: 1, w: 1, a: 1, e: 1 },
+      BANK_CHECKS: { r: 1, w: 1, a: 1, e: 1 },
+      SYSTEM_CONFIGS: { r: 1, w: 0, a: 0, e: 0 },
+      AUDIT_LOGS: { r: 1, w: 0, a: 0, e: 0 },
+    },
+    'GRP-PROC': {
+      COMPANIES: { r: 1, w: 0, a: 0, e: 0 },
+      PROJECTS: { r: 1, w: 0, a: 0, e: 0 },
+      PARTNERS: { r: 1, w: 1, a: 0, e: 0 },
+      QUOTATIONS: { r: 0, w: 0, a: 0, e: 0 },
+      PURCHASE_ORDERS: { r: 1, w: 1, a: 1, e: 1 },
+      SUBCONTRACTS: { r: 1, w: 1, a: 1, e: 0 },
+      VALUATIONS: { r: 1, w: 0, a: 0, e: 0 },
+      FINANCE_AP: { r: 1, w: 0, a: 0, e: 0 },
+      FINANCE_AR: { r: 0, w: 0, a: 0, e: 0 },
+      BANK_CHECKS: { r: 0, w: 0, a: 0, e: 0 },
+      SYSTEM_CONFIGS: { r: 0, w: 0, a: 0, e: 0 },
+      AUDIT_LOGS: { r: 0, w: 0, a: 0, e: 0 },
+    },
+    'GRP-SALES': {
+      COMPANIES: { r: 1, w: 0, a: 0, e: 0 },
+      PROJECTS: { r: 1, w: 1, a: 0, e: 0 },
+      PARTNERS: { r: 1, w: 1, a: 0, e: 0 },
+      QUOTATIONS: { r: 1, w: 1, a: 1, e: 1 },
+      PURCHASE_ORDERS: { r: 0, w: 0, a: 0, e: 0 },
+      SUBCONTRACTS: { r: 0, w: 0, a: 0, e: 0 },
+      VALUATIONS: { r: 1, w: 0, a: 0, e: 0 },
+      FINANCE_AP: { r: 0, w: 0, a: 0, e: 0 },
+      FINANCE_AR: { r: 1, w: 0, a: 0, e: 0 },
+      BANK_CHECKS: { r: 0, w: 0, a: 0, e: 0 },
+      SYSTEM_CONFIGS: { r: 0, w: 0, a: 0, e: 0 },
+      AUDIT_LOGS: { r: 0, w: 0, a: 0, e: 0 },
+    },
+  };
+
+  for (const [groupId, pMap] of Object.entries(groupPermMap)) {
+    for (const mod of SYSTEM_MODULES) {
+      const perm = pMap[mod.key] || { r: 0, w: 0, a: 0, e: 0 };
+      const permId = `PERM-${groupId}-${mod.key}`;
+      db.run(`
+        INSERT INTO group_module_permissions (id, groupId, moduleKey, canRead, canWrite, canApprove, canExport)
+        VALUES ('${permId}', '${groupId}', '${mod.key}', ${perm.r}, ${perm.w}, ${perm.a}, ${perm.e});
+      `);
+    }
+  }
+
+  // 3. 建立三層式身分種子使用者 (唯一 Superadmin、Admin、四大業務 User)
+  db.run(`
+    INSERT INTO users (id, username, fullName, email, role, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, createdAt, updatedAt)
+    VALUES
+      ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', NULL, '[]', 'ACTIVE', '副總經理兼營運長 (唯一最高管理者)', '["COMP-01","COMP-02"]', 'COMP-01', '2026-01-01', '2026-01-01'),
+      ('USR-002', 'admin_chen', '陳資訊主任', 'chen.it@mega-build.com.tw', 'ADMIN', NULL, '[]', 'ACTIVE', '資訊系統處主任 (一般管理員)', '["COMP-01","COMP-02"]', 'COMP-01', '2026-01-01', '2026-01-01'),
+      ('USR-003', 'eng_lin', '林工務主任', 'lin.site@mega-build.com.tw', 'USER', 'GRP-ENG', '["GRP-ENG"]', 'ACTIVE', '土木結構主任工程師', '["COMP-01"]', 'COMP-01', '2026-01-01', '2026-01-01'),
+      ('USR-004', 'acc_chang', '張會計長', 'chang.acc@mega-build.com.tw', 'USER', 'GRP-ACC', '["GRP-ACC"]', 'ACTIVE', '財務會計處副理', '["COMP-01","COMP-02"]', 'COMP-01', '2026-01-01', '2026-01-01'),
+      ('USR-005', 'proc_wang', '王採購專員', 'wang.proc@mega-build.com.tw', 'USER', 'GRP-PROC', '["GRP-PROC"]', 'ACTIVE', '發包採購部資深專員', '["COMP-01"]', 'COMP-01', '2026-01-01', '2026-01-01'),
+      ('USR-006', 'sales_liu', '劉業務副理', 'liu.sales@mega-build.com.tw', 'USER', 'GRP-SALES', '["GRP-SALES"]', 'ACTIVE', '專案開發業務副理', '["COMP-01"]', 'COMP-01', '2026-01-01', '2026-01-01');
+  `);
+}
+
+// 平滑資料庫完整性修復器 (保證現有快照升級時表結構與種子資料齊全)
+export function ensureDatabaseIntegrity(db: Database) {
+  initializeTables(db);
+
+  // 升級檢測：確保 users 表擁有 groupIds 欄位
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN groupIds TEXT DEFAULT '[]';`);
+  } catch (e) {
+    // 欄位已存在
+  }
+
+  // 升級檢測：確保 companies 表具備集團、個人實體、電話列表、代表與地址欄位
+  const companyAlterColumns = [
+    { name: 'shortName', type: 'TEXT' },
+    { name: 'entityType', type: "TEXT DEFAULT 'CORPORATION'" },
+    { name: 'parentId', type: 'TEXT' },
+    { name: 'taxId', type: 'TEXT' },
+    { name: 'nationalId', type: 'TEXT' },
+    { name: 'representative', type: 'TEXT' },
+    { name: 'keyPersonnel', type: "TEXT DEFAULT '[]'" },
+    { name: 'documentPrefix', type: 'TEXT' },
+    { name: 'phones', type: "TEXT DEFAULT '[]'" },
+    { name: 'email', type: 'TEXT' },
+    { name: 'registeredAddress', type: 'TEXT' },
+    { name: 'contactAddress', type: 'TEXT' },
+    { name: 'capitalAmount', type: 'REAL DEFAULT 0' }
+  ];
+  for (const c of companyAlterColumns) {
+    try {
+      db.run(`ALTER TABLE companies ADD COLUMN ${c.name} ${c.type};`);
+    } catch (e) {
+      // 欄位已存在
+    }
+  }
+
+  try {
+    db.run(`CREATE INDEX IF NOT EXISTS idx_companies_parent_type ON companies (parentId, entityType, isDeleted);`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_companies_code ON companies (companyCode);`);
+  } catch (e) {
+    // 索引已存在
+  }
+
+  // 自動為既有帳號將 groupId 移轉填補至 groupIds 陣列
+  try {
+    const uRes = db.exec(`SELECT id, groupId, groupIds FROM users;`);
+    if (uRes.length && uRes[0].values.length) {
+      for (const row of uRes[0].values) {
+        const uid = String(row[0]);
+        const gId = row[1] ? String(row[1]) : null;
+        const gIds = row[2] ? String(row[2]) : null;
+        if (gId && (!gIds || gIds === '[]' || gIds === 'null')) {
+          const jsonVal = JSON.stringify([gId]);
+          db.run(`UPDATE users SET groupIds = '${jsonVal}' WHERE id = '${uid}';`);
+        }
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  try {
+    const res = db.exec(`SELECT count(*) FROM user_groups;`);
+    const count = Number(res[0]?.values[0]?.[0] || 0);
+    if (count === 0) {
+      seedUserPermissionData(db);
+    }
+  } catch (e) {
+    seedUserPermissionData(db);
+  }
+
+  // 確保唯一最高 SUPERADMIN 存在
+  try {
+    const superCheck = db.exec(`SELECT count(*) FROM users WHERE role = 'SUPERADMIN';`);
+    const superCount = Number(superCheck[0]?.values[0]?.[0] || 0);
+    if (superCount === 0) {
+      db.run(`
+        INSERT OR REPLACE INTO users (id, username, fullName, email, role, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, createdAt, updatedAt)
+        VALUES ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', NULL, '[]', 'ACTIVE', '副總經理兼營運長 (唯一最高管理者)', '["COMP-01","COMP-02"]', 'COMP-01', '2026-01-01', '2026-01-01');
+      `);
+    }
+  } catch (e) {
+    console.error('Superadmin integrity check failed', e);
+  }
+}
+
+// 讀取所有人員帳號
+export function getAllUsers(): User[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`
+    SELECT id, username, fullName, email, role, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, lastLoginAt, createdAt, updatedAt 
+    FROM users 
+    ORDER BY CASE role WHEN 'SUPERADMIN' THEN 1 WHEN 'ADMIN' THEN 2 ELSE 3 END, id ASC;
+  `);
+  if (!res.length) return [];
+  return res[0].values.map(v => {
+    let groupIds: string[] = [];
+    if (v[6]) {
+      try {
+        const parsed = JSON.parse(String(v[6]));
+        if (Array.isArray(parsed)) groupIds = parsed;
+      } catch (e) {}
+    }
+    const groupId = v[5] ? String(v[5]) : undefined;
+    if (groupIds.length === 0 && groupId) {
+      groupIds = [groupId];
+    }
+    return {
+      id: String(v[0]),
+      username: String(v[1]),
+      fullName: String(v[2]),
+      email: String(v[3] || ''),
+      role: String(v[4]) as User['role'],
+      groupId: groupId || groupIds[0],
+      groupIds,
+      status: (v[7] || 'ACTIVE') as User['status'],
+      title: v[8] ? String(v[8]) : undefined,
+      allowedCompanies: v[9] ? JSON.parse(String(v[9])) : ['COMP-01'],
+      defaultCompanyId: String(v[10] || 'COMP-01'),
+      lastLoginAt: v[11] ? String(v[11]) : undefined,
+      createdAt: String(v[12] || ''),
+      updatedAt: String(v[13] || '')
+    };
+  });
+}
+
+// 讀取所有權限群組 (四大內建 + 自訂群組)
+export function getAllUserGroups(): UserGroup[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`
+    SELECT id, groupCode, groupName, description, isSystem, approvalLimit, canExport, createdAt, updatedAt 
+    FROM user_groups 
+    ORDER BY isSystem DESC, groupCode ASC;
+  `);
+  if (!res.length) return [];
+  return res[0].values.map(v => ({
+    id: String(v[0]),
+    groupCode: String(v[1]),
+    groupName: String(v[2]),
+    description: String(v[3] || ''),
+    isSystem: Boolean(v[4]),
+    approvalLimit: Number(v[5] || 0),
+    canExport: Boolean(v[6]),
+    createdAt: String(v[7] || ''),
+    updatedAt: String(v[8] || '')
+  }));
+}
+
+// 讀取群組模組細項權限矩陣
+export function getAllGroupPermissions(groupId?: string): GroupModulePermission[] {
+  if (!dbInstance) return [];
+  const query = groupId
+    ? `SELECT id, groupId, moduleKey, canRead, canWrite, canApprove, canExport FROM group_module_permissions WHERE groupId = '${groupId}';`
+    : `SELECT id, groupId, moduleKey, canRead, canWrite, canApprove, canExport FROM group_module_permissions;`;
+  const res = dbInstance.exec(query);
+  if (!res.length) return [];
+  return res[0].values.map(v => ({
+    id: String(v[0]),
+    groupId: String(v[1]),
+    moduleKey: String(v[2]) as GroupModulePermission['moduleKey'],
+    canRead: Boolean(v[3]),
+    canWrite: Boolean(v[4]),
+    canApprove: Boolean(v[5]),
+    canExport: Boolean(v[6])
+  }));
+}
+
+// 建立使用者帳號 (Superadmin 防呆：禁止直接建立第二位 Superadmin，支援多群組指派)
+export function createUser(
+  newUser: {
+    username: string;
+    fullName: string;
+    email: string;
+    role: 'ADMIN' | 'USER';
+    groupId?: string;
+    groupIds?: string[];
+    title?: string;
+  },
+  operatorName: string
+): User {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  
+  if ((newUser.role as string) === 'SUPERADMIN') {
+    throw new Error('憲法防呆：系統僅允許一位 Superadmin，禁止直接建立第二位 Superadmin！若需移交請使用「最高權限交接」流程。');
+  }
+
+  const selectedGroupIds = newUser.groupIds && newUser.groupIds.length > 0
+    ? newUser.groupIds
+    : (newUser.groupId ? [newUser.groupId] : []);
+
+  if (newUser.role === 'USER' && selectedGroupIds.length === 0) {
+    throw new Error('一般同仁帳號必須至少指派一個所屬業務群組！');
+  }
+
+  // 檢查帳號重複
+  const check = dbInstance.exec(`SELECT id FROM users WHERE username = '${newUser.username.replace(/'/g, "''")}';`);
+  if (check.length > 0 && check[0].values.length > 0) {
+    throw new Error(`帳號 ${newUser.username} 已存在，請使用其他帳號！`);
+  }
+
+  const id = `USR-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+  const now = new Date().toISOString().substring(0, 10);
+  const title = newUser.title ? `'${newUser.title.replace(/'/g, "''")}'` : 'NULL';
+  const primaryGroupId = selectedGroupIds[0] ? `'${selectedGroupIds[0]}'` : 'NULL';
+  const groupIdsJson = `'${JSON.stringify(selectedGroupIds)}'`;
+
+  dbInstance.run(`
+    INSERT INTO users (id, username, fullName, email, role, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, createdAt, updatedAt)
+    VALUES ('${id}', '${newUser.username.replace(/'/g, "''")}', '${newUser.fullName.replace(/'/g, "''")}', '${(newUser.email || '').replace(/'/g, "''")}', '${newUser.role}', ${primaryGroupId}, ${groupIdsJson}, 'ACTIVE', ${title}, '["COMP-01","COMP-02"]', 'COMP-01', '${now}', '${now}');
+  `);
+
+  logAudit(dbInstance, operatorName, 'CREATE', 'users', id, undefined, {
+    username: newUser.username,
+    fullName: newUser.fullName,
+    role: newUser.role,
+    groupId: selectedGroupIds[0],
+    groupIds: selectedGroupIds
+  });
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    id,
+    username: newUser.username,
+    fullName: newUser.fullName,
+    email: newUser.email,
+    role: newUser.role,
+    groupId: selectedGroupIds[0],
+    groupIds: selectedGroupIds,
+    status: 'ACTIVE',
+    title: newUser.title,
+    allowedCompanies: ['COMP-01', 'COMP-02'],
+    defaultCompanyId: 'COMP-01',
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+// 更新使用者帳號 (含 Superadmin 防呆保護與多群組支援)
+export function updateUser(
+  updateData: {
+    id: string;
+    fullName?: string;
+    email?: string;
+    role?: 'ADMIN' | 'USER';
+    groupId?: string | null;
+    groupIds?: string[];
+    status?: 'ACTIVE' | 'DISABLED';
+    title?: string;
+  },
+  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  // 取得原目標帳號
+  const currentRes = dbInstance.exec(`SELECT id, username, fullName, role, status FROM users WHERE id = '${updateData.id}';`);
+  if (!currentRes.length || !currentRes[0].values.length) {
+    throw new Error('找不到指定帳號！');
+  }
+
+  const targetRole = currentRes[0].values[0][3] as string;
+
+  // 憲法防呆：一般 Admin 不得變更 Superadmin 帳號
+  if (targetRole === 'SUPERADMIN' && operatorRole !== 'SUPERADMIN') {
+    throw new Error('憲法保護防禦：一般 Admin 無權修改系統最高 Superadmin 帳號！');
+  }
+
+  // 憲法防呆：Superadmin 不能被停用或直接被降級 (必須透過交接)
+  if (targetRole === 'SUPERADMIN') {
+    if (updateData.status === 'DISABLED') {
+      throw new Error('憲法保護防禦：唯一的最高 Superadmin 具備不可停用保護！');
+    }
+    if (updateData.role && (updateData.role as string) !== 'SUPERADMIN') {
+      throw new Error('憲法保護防禦：最高 Superadmin 不可直接降級，必須透過最高權限交接！');
+    }
+  }
+
+  // 憲法防呆：不可將任何使用者直接變更為 SUPERADMIN
+  if ((updateData.role as string) === 'SUPERADMIN' && targetRole !== 'SUPERADMIN') {
+    throw new Error('系統禁止直接賦予 SUPERADMIN 角色，必須由現任 Superadmin 執行交接程序！');
+  }
+
+  const updates: string[] = [];
+  const now = new Date().toISOString().substring(0, 10);
+  updates.push(`updatedAt = '${now}'`);
+
+  if (updateData.fullName !== undefined) updates.push(`fullName = '${updateData.fullName.replace(/'/g, "''")}'`);
+  if (updateData.email !== undefined) updates.push(`email = '${updateData.email.replace(/'/g, "''")}'`);
+  if (updateData.title !== undefined) updates.push(`title = '${updateData.title.replace(/'/g, "''")}'`);
+  if (updateData.status !== undefined) updates.push(`status = '${updateData.status}'`);
+  if (updateData.role !== undefined) updates.push(`role = '${updateData.role}'`);
+  
+  if (updateData.groupIds !== undefined) {
+    const jsonStr = JSON.stringify(updateData.groupIds);
+    updates.push(`groupIds = '${jsonStr}'`);
+    if (updateData.groupIds.length > 0) {
+      updates.push(`groupId = '${updateData.groupIds[0]}'`);
+    } else {
+      updates.push(`groupId = NULL`);
+    }
+  } else if (updateData.groupId !== undefined) {
+    updates.push(updateData.groupId ? `groupId = '${updateData.groupId}'` : `groupId = NULL`);
+    updates.push(updateData.groupId ? `groupIds = '["${updateData.groupId}"]'` : `groupIds = '[]'`);
+  }
+
+  dbInstance.run(`
+    UPDATE users SET ${updates.join(', ')} WHERE id = '${updateData.id}';
+  `);
+
+  logAudit(dbInstance, operatorName, 'UPDATE', 'users', updateData.id, 
+    { fullName: currentRes[0].values[0][2], role: targetRole }, 
+    updateData
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 刪除使用者帳號 (含 Superadmin 防呆保護)
+export function deleteUser(userId: string, operatorRole: 'SUPERADMIN' | 'ADMIN', operatorName: string): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const check = dbInstance.exec(`SELECT id, role, fullName FROM users WHERE id = '${userId}';`);
+  if (!check.length || !check[0].values.length) {
+    throw new Error('帳號不存在！');
+  }
+
+  const role = check[0].values[0][1] as string;
+  if (role === 'SUPERADMIN') {
+    throw new Error('【憲法金身防護】系統唯一最高管理員 (Superadmin) 具備永久保護，嚴禁刪除！');
+  }
+
+  if (operatorRole !== 'SUPERADMIN' && role === 'ADMIN') {
+    throw new Error('分權安全防禦：一般 Admin 不得刪除其他 Admin 帳號，須由最高 Superadmin 操作！');
+  }
+
+  dbInstance.run(`DELETE FROM users WHERE id = '${userId}';`);
+  logAudit(dbInstance, operatorName, 'DELETE', 'users', userId, { deletedUser: check[0].values[0][2] }, undefined);
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 最高權限交接 (Transfer Superadmin)
+export function transferSuperadmin(
+  currentSuperadminId: string,
+  targetUserId: string,
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  if (currentSuperadminId === targetUserId) {
+    throw new Error('交接對象不能為當前 Superadmin 本身！');
+  }
+
+  const superCheck = dbInstance.exec(`SELECT id, fullName, role FROM users WHERE id = '${currentSuperadminId}';`);
+  if (!superCheck.length || superCheck[0].values[0][2] !== 'SUPERADMIN') {
+    throw new Error('只有當前最高 Superadmin 才有權限執行移轉程序！');
+  }
+
+  const targetCheck = dbInstance.exec(`SELECT id, fullName, role FROM users WHERE id = '${targetUserId}';`);
+  if (!targetCheck.length || !targetCheck[0].values.length) {
+    throw new Error('指定的交接對象不存在！');
+  }
+
+  const now = new Date().toISOString().substring(0, 10);
+  const oldName = String(superCheck[0].values[0][1]);
+  const newName = String(targetCheck[0].values[0][1]);
+
+  dbInstance.run(`BEGIN TRANSACTION;`);
+  try {
+    dbInstance.run(`
+      UPDATE users SET role = 'ADMIN', updatedAt = '${now}' WHERE id = '${currentSuperadminId}';
+    `);
+    dbInstance.run(`
+      UPDATE users SET role = 'SUPERADMIN', groupId = NULL, updatedAt = '${now}' WHERE id = '${targetUserId}';
+    `);
+    dbInstance.run(`COMMIT;`);
+  } catch (e) {
+    dbInstance.run(`ROLLBACK;`);
+    throw e;
+  }
+
+  logAudit(dbInstance, operatorName, 'UPDATE', 'users', targetUserId, 
+    { action: 'TRANSFER_SUPERADMIN', previousSuperadmin: oldName },
+    { newSuperadmin: newName }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 建立自訂群組與模組權限矩陣
+export function createGroup(
+  group: {
+    groupCode: string;
+    groupName: string;
+    description: string;
+    approvalLimit: number;
+    canExport: boolean;
+  },
+  permissions: {
+    moduleKey: ModuleKey;
+    canRead: boolean;
+    canWrite: boolean;
+    canApprove: boolean;
+    canExport: boolean;
+  }[],
+  operatorName: string
+): UserGroup {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const check = dbInstance.exec(`SELECT id FROM user_groups WHERE groupCode = '${group.groupCode.replace(/'/g, "''")}';`);
+  if (check.length > 0 && check[0].values.length > 0) {
+    throw new Error(`群組代碼 ${group.groupCode} 已存在，請使用不同代碼！`);
+  }
+
+  const id = `GRP-${Date.now().toString().slice(-4)}`;
+  const now = new Date().toISOString().substring(0, 10);
+
+  dbInstance.run(`
+    INSERT INTO user_groups (id, groupCode, groupName, description, isSystem, approvalLimit, canExport, createdAt, updatedAt)
+    VALUES ('${id}', '${group.groupCode.replace(/'/g, "''")}', '${group.groupName.replace(/'/g, "''")}', '${group.description.replace(/'/g, "''")}', 0, ${group.approvalLimit}, ${group.canExport ? 1 : 0}, '${now}', '${now}');
+  `);
+
+  for (const p of permissions) {
+    const permId = `PERM-${id}-${p.moduleKey}`;
+    dbInstance.run(`
+      INSERT INTO group_module_permissions (id, groupId, moduleKey, canRead, canWrite, canApprove, canExport)
+      VALUES ('${permId}', '${id}', '${p.moduleKey}', ${p.canRead ? 1 : 0}, ${p.canWrite ? 1 : 0}, ${p.canApprove ? 1 : 0}, ${p.canExport ? 1 : 0});
+    `);
+  }
+
+  logAudit(dbInstance, operatorName, 'CREATE', 'user_groups', id, undefined, { groupName: group.groupName, approvalLimit: group.approvalLimit });
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    id,
+    groupCode: group.groupCode,
+    groupName: group.groupName,
+    description: group.description,
+    isSystem: false,
+    approvalLimit: group.approvalLimit,
+    canExport: group.canExport,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+// 更新群組與模組權限矩陣
+export function updateGroup(
+  group: {
+    id: string;
+    groupName?: string;
+    description?: string;
+    approvalLimit?: number;
+    canExport?: boolean;
+  },
+  permissions: {
+    moduleKey: ModuleKey;
+    canRead: boolean;
+    canWrite: boolean;
+    canApprove: boolean;
+    canExport: boolean;
+  }[] | undefined,
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const now = new Date().toISOString().substring(0, 10);
+  const updates: string[] = [`updatedAt = '${now}'`];
+
+  if (group.groupName !== undefined) updates.push(`groupName = '${group.groupName.replace(/'/g, "''")}'`);
+  if (group.description !== undefined) updates.push(`description = '${group.description.replace(/'/g, "''")}'`);
+  if (group.approvalLimit !== undefined) updates.push(`approvalLimit = ${group.approvalLimit}`);
+  if (group.canExport !== undefined) updates.push(`canExport = ${group.canExport ? 1 : 0}`);
+
+  dbInstance.run(`UPDATE user_groups SET ${updates.join(', ')} WHERE id = '${group.id}';`);
+
+  if (permissions) {
+    for (const p of permissions) {
+      const check = dbInstance.exec(`SELECT id FROM group_module_permissions WHERE groupId = '${group.id}' AND moduleKey = '${p.moduleKey}';`);
+      if (check.length && check[0].values.length) {
+        dbInstance.run(`
+          UPDATE group_module_permissions
+          SET canRead = ${p.canRead ? 1 : 0}, canWrite = ${p.canWrite ? 1 : 0}, canApprove = ${p.canApprove ? 1 : 0}, canExport = ${p.canExport ? 1 : 0}
+          WHERE groupId = '${group.id}' AND moduleKey = '${p.moduleKey}';
+        `);
+      } else {
+        const permId = `PERM-${group.id}-${p.moduleKey}`;
+        dbInstance.run(`
+          INSERT INTO group_module_permissions (id, groupId, moduleKey, canRead, canWrite, canApprove, canExport)
+          VALUES ('${permId}', '${group.id}', '${p.moduleKey}', ${p.canRead ? 1 : 0}, ${p.canWrite ? 1 : 0}, ${p.canApprove ? 1 : 0}, ${p.canExport ? 1 : 0});
+        `);
+      }
+    }
+  }
+
+  logAudit(dbInstance, operatorName, 'UPDATE', 'user_groups', group.id, undefined, group);
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 刪除自訂群組 (防呆：四大系統群組禁止刪除、有成員之群組禁止刪除)
+export function deleteGroup(groupId: string, operatorName: string): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const check = dbInstance.exec(`SELECT isSystem, groupName FROM user_groups WHERE id = '${groupId}';`);
+  if (!check.length || !check[0].values.length) {
+    throw new Error('群組不存在！');
+  }
+
+  if (Boolean(check[0].values[0][0])) {
+    throw new Error('【憲法安全保護】系統預設四大核心業務群組（工務、財務、採購、業務）禁止刪除！');
+  }
+
+  const allUsers = getAllUsers();
+  const members = allUsers.filter(u => u.groupId === groupId || (u.groupIds && u.groupIds.includes(groupId)));
+  if (members.length > 0) {
+    throw new Error(`無法刪除：尚有 ${members.length} 位同仁隸屬於此群組，請先移轉人員或解除群組指派再行刪除！`);
+  }
+
+  dbInstance.run(`DELETE FROM group_module_permissions WHERE groupId = '${groupId}';`);
+  dbInstance.run(`DELETE FROM user_groups WHERE id = '${groupId}';`);
+
+  logAudit(dbInstance, operatorName, 'DELETE', 'user_groups', groupId, { groupName: check[0].values[0][1] }, undefined);
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 指派同仁所屬單人群組 (向下相容)
+export function assignUserGroup(userId: string, groupId: string, operatorName: string): void {
+  assignUserGroups(userId, [groupId], operatorName);
+}
+
+// 指派同仁所屬多群組矩陣
+export function assignUserGroups(userId: string, groupIds: string[], operatorName: string): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString().substring(0, 10);
+  const primary = groupIds.length > 0 ? `'${groupIds[0]}'` : 'NULL';
+  const jsonStr = JSON.stringify(groupIds);
+  dbInstance.run(`
+    UPDATE users SET groupId = ${primary}, groupIds = '${jsonStr}', updatedAt = '${now}' WHERE id = '${userId}';
+  `);
+  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, undefined, { assignedGroupIds: groupIds });
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+

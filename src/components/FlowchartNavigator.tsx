@@ -423,21 +423,30 @@ export const FlowchartNavigator: React.FC<FlowchartNavigatorProps> = ({
         </div>
       </div>
 
-      {/* 營造業特色內控說明條 (防呆三件套落實) */}
+      {/* 營造業特色內控說明條 (防呆與三層權限架構落實) */}
       <div className="bg-slate-100/70 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-600">
         <div className="flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 text-indigo-600 shrink-0" />
           <span>
-            <strong>憲法級防呆落實：</strong>全系統單據折讓/扣款一律以「正數」輸入並由核心公式扣減（粉紅警示色視覺引導）；過帳後廠商統編與合約名稱凍結為快照防查帳篡改。
+            <strong>憲法級防呆與三層權限落實：</strong>全系統單據折讓/扣款以正數自動抵減；過帳後快照凍結；Superadmin 金身防護與 PBAC 12 模組矩陣控管生效。
           </span>
         </div>
-        <button
-          onClick={() => onNavigate('SYSTEM_CONFIG')}
-          className="text-indigo-600 hover:text-indigo-800 font-medium shrink-0 flex items-center gap-1"
-        >
-          <span>查看系統憲法與審計軌跡</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => onNavigate('USER_PERMISSIONS')}
+            className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded flex items-center gap-1"
+          >
+            <span>權限矩陣中心</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onNavigate('SYSTEM_CONFIG')}
+            className="text-slate-600 hover:text-slate-800 font-medium flex items-center gap-1"
+          >
+            <span>系統參數</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
     </div>
   );
