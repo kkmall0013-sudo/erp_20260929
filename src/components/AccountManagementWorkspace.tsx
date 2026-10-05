@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { User, Company } from '../types/erp';
+import React, { useState, useMemo, useEffect } from 'react';
+import { User, Company, AuditLog } from '../types/erp';
 import {
   Users,
   Shield,
@@ -20,7 +20,12 @@ import {
   Check,
   UserCog,
   FileSpreadsheet,
-  RotateCcw
+  RotateCcw,
+  Archive,
+  Clock,
+  Flame,
+  Undo2,
+  ScrollText
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -34,6 +39,12 @@ import {
   toggleAdminPeerPrivilege,
   toggleAdminUserManagerPrivilege,
   transferSuperadmin,
+  markUserPendingDelete,
+  restorePendingUser,
+  advanceUserToArchive,
+  superadminRestoreArchivedUser,
+  superadminPermanentPurge,
+  getAllAuditLogs,
   SYSTEM_MODULES
 } from '../db/sqlite';
 
@@ -110,10 +121,42 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   // 6. 12 大模組權限矩陣檢視對話框
   const [isMatrixModalOpen, setIsMatrixModalOpen] = useState(false);
 
-  // 7. 刪除同仁防呆確認視窗 (Centered Modal, z-[80])
+  // 7. 階梯式生命週期與資安稽核視圖頁籤 (ACTIVE: 同仁主檔, TRASH: 待刪除回收站, ARCHIVE: 深度封存區, AUDIT_LOGS: Superadmin專屬系統稽核)
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'TRASH' | 'ARCHIVE' | 'AUDIT_LOGS'>('ACTIVE');
+
+  // 8. 系統操作與登入稽核日誌狀態
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [auditSearchTerm, setAuditSearchTerm] = useState('');
+  const [auditActionFilter, setAuditActionFilter] = useState('ALL');
+  const [auditUserFilter, setAuditUserFilter] = useState('ALL');
+
+  // 載入稽核日誌
+  const refreshAuditLogs = () => {
+    try {
+      const logs = getAllAuditLogs(300);
+      setAuditLogs(logs);
+    } catch (e) {
+      console.error('Failed to fetch audit logs', e);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'AUDIT_LOGS') {
+      refreshAuditLogs();
+    }
+  }, [activeTab]);
+
+  // 9. 刪除同仁防呆確認視窗 (第一階段移入回收站, Centered Modal, z-[80])
   const [deleteConfirmUser, setDeleteConfirmUser] = useState<User | null>(null);
 
-  // 8. 刪除後一鍵復原 Toast (Undo Restore, 10 秒倒數)
+  // 10. 提前送往封存確認對話框 (Centered Modal, z-[80])
+  const [advanceArchiveConfirmUser, setAdvanceArchiveConfirmUser] = useState<User | null>(null);
+
+  // 11. Superadmin 永久物理粉碎清除確認對話框 (Centered Modal, z-[80])
+  const [purgeConfirmUser, setPurgeConfirmUser] = useState<User | null>(null);
+  const [purgeConfirmInput, setPurgeConfirmInput] = useState('');
+
+  // 12. 刪除後一鍵復原 Toast (Undo Restore, 10 秒倒數)
   const [undoToast, setUndoToast] = useState<{
     user: User;
     countdown: number;
@@ -190,12 +233,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       return false;
     }
 
-    // 階層原則：一般 Admin 只能管理下一階 User，除非經 Superadmin 授權同階管理特許
-    if (target.role === 'ADMIN' && !isSuperadmin && !operatorCanManageAdmins) {
+    // 階層原則：一般 Admin 只能管理下一階 User，除非經 Superadmin 授權同階管理特許或具備帳號管理人特許
+    if (target.role === 'ADMIN' && !isSuperadmin && !operatorCanManageAdmins && !operatorCanManageUsers) {
       setAlertModal({
         title: `【階層原則受限】無法${actionName}同階管理員`,
-        message: `您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】！`,
-        details: `依系統階層防護憲法，一般系統管理員只能管理下一階層（一般同仁 User）。除非由唯一最高 Superadmin 為您開啟同階管理特許，否則無法${actionName}其他 Admin 帳號。`,
+        message: `您尚未取得 Superadmin 授予之【帳號管理人特許】或【同階管理特許】！`,
+        details: `依系統階層防護憲法，一般系統管理員只能管理下一階層（一般同仁 User）。除非由唯一最高 Superadmin 為您開啟特許，否則無法${actionName}其他 Admin 帳號。`,
       });
       return false;
     }
@@ -534,6 +577,15 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
   // 切換啟用 / 停用 (先檢查權限)
   const handleToggleStatus = (user: User) => {
+    // 嚴禁停用當前登入之自身帳號（自殺式停權防呆防護）
+    if (user.id === currentUser?.id) {
+      setAlertModal({
+        title: '【安全防呆】禁止停用自身帳號',
+        message: '系統安全機制嚴禁將當前正在登入操作的使用者帳號設為停用！若需停用此帳號，請由其他具備權限之專人管理員或 Superadmin 進行此操作。',
+      });
+      return;
+    }
+
     if (!checkCanManageTarget(user, user.status === 'ACTIVE' ? '停用' : '啟用')) return;
 
     const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
@@ -541,7 +593,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     const nextStatus = user.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
 
     try {
-      toggleUserStatus(user.id, nextStatus, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
+      toggleUserStatus(user.id, nextStatus, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins, currentUser?.id);
       showToast(nextStatus === 'ACTIVE'
         ? `✅ 已重新啟用同仁【${user.fullName}】帳號！`
         : `⏸️ 已停用同仁【${user.fullName}】帳號！`
@@ -582,7 +634,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     }
   };
 
-  // 點擊「刪除帳號」按鈕 (先檢查權限)
+  // 點擊「刪除帳號」按鈕 (先檢查權限，通過後開啟置中防呆確認視窗)
   const handleDeleteUser = (user: User) => {
     if (!checkCanManageTarget(user, '刪除')) return;
 
@@ -594,20 +646,114 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       return;
     }
 
-    if (!window.confirm(`確定要刪除同仁【${user.fullName} (${user.username})】的系統帳號嗎？此動作將寫入審計日誌。`)) {
-      return;
-    }
+    // 開啟置中防呆確認視窗 (完全替換 iframe 中失效的 window.confirm)
+    setDeleteConfirmUser(user);
+  };
 
+  // 第一階段確認刪除 (移入待刪除回收站，享有 7 天冷卻期)
+  const handleConfirmDelete = () => {
+    if (!deleteConfirmUser) return;
+
+    const userToDelete = deleteConfirmUser;
     const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
     const operatorName = currentUser?.fullName || '管理員';
 
     try {
-      deleteUser(user.id, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
-      showToast(`🗑️ 已成功刪除同仁【${user.fullName}】帳號！`);
+      markUserPendingDelete(userToDelete.id, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
+      setDeleteConfirmUser(null);
+
+      // 啟動 10 秒倒數一鍵復原機制
+      setUndoToast({
+        user: userToDelete,
+        countdown: 10
+      });
+
+      showToast(`🗑️ 同仁【${userToDelete.fullName}】已移入「待刪除回收站」，具備 7 天冷卻保護期！`);
       reloadAuth();
       onDataChanged();
     } catch (err: unknown) {
-      setAlertModal({ title: '刪除失敗', message: (err as Error).message });
+      setDeleteConfirmUser(null);
+      setAlertModal({ title: '移入回收站失敗', message: (err as Error).message });
+    }
+  };
+
+  // 待刪除回收站：一鍵復原回啟用主檔 (Admin 與 Superadmin 均可)
+  const handleRestorePending = (user: User) => {
+    const operatorName = currentUser?.fullName || '管理員';
+    try {
+      restorePendingUser(user.id, operatorName);
+      showToast(`↩️ 已成功復原同仁【${user.fullName}】帳號回主檔！`);
+      reloadAuth();
+      onDataChanged();
+    } catch (err: unknown) {
+      setAlertModal({ title: '復原失敗', message: (err as Error).message });
+    }
+  };
+
+  // 待刪除回收站：手動提前二次刪除送往 Superadmin 深度封存區
+  const handleAdvanceArchive = () => {
+    if (!advanceArchiveConfirmUser) return;
+    const userToAdvance = advanceArchiveConfirmUser;
+    const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
+    const operatorName = currentUser?.fullName || '管理員';
+
+    try {
+      advanceUserToArchive(userToAdvance.id, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
+      setAdvanceArchiveConfirmUser(null);
+      showToast(`📦 同仁【${userToAdvance.fullName}】已提前移交 Superadmin 深度封存區！一般管理員視角已隱藏。`);
+      reloadAuth();
+      onDataChanged();
+    } catch (err: unknown) {
+      setAdvanceArchiveConfirmUser(null);
+      setAlertModal({ title: '移交封存失敗', message: (err as Error).message });
+    }
+  };
+
+  // 深度封存區：Superadmin 終極救回復原 (僅限 Superadmin)
+  const handleSuperadminRestore = (user: User) => {
+    const operatorName = currentUser?.fullName || '管理員';
+    try {
+      superadminRestoreArchivedUser(user.id, operatorName);
+      showToast(`👑 Superadmin 終極救援成功！同仁【${user.fullName}】已無損恢復至啟用主檔。`);
+      reloadAuth();
+      onDataChanged();
+    } catch (err: unknown) {
+      setAlertModal({ title: '救援失敗', message: (err as Error).message });
+    }
+  };
+
+  // 深度封存區：Superadmin 永久物理粉碎清除 (物理 DELETE)
+  const handlePermanentPurge = () => {
+    if (!purgeConfirmUser) return;
+    const userToPurge = purgeConfirmUser;
+    const operatorName = currentUser?.fullName || '管理員';
+
+    try {
+      superadminPermanentPurge(userToPurge.id, operatorName, purgeConfirmInput);
+      setPurgeConfirmUser(null);
+      setPurgeConfirmInput('');
+      showToast(`🔥 已從資料庫中徹底永久清除同仁【${userToPurge.fullName}】帳號！歷史單據仍純淨維持純文字姓名快照。`);
+      reloadAuth();
+      onDataChanged();
+    } catch (err: unknown) {
+      setAlertModal({ title: '物理清除失敗', message: (err as Error).message });
+    }
+  };
+
+  // 點擊一鍵復原 Toast
+  const handleUndoRestore = () => {
+    if (!undoToast) return;
+    const userToRestore = undoToast.user;
+    const operatorName = currentUser?.fullName || '管理員';
+
+    try {
+      restorePendingUser(userToRestore.id, operatorName);
+      setUndoToast(null);
+      showToast(`✅ 已成功一鍵復原同仁【${userToRestore.fullName}】帳號！`);
+      reloadAuth();
+      onDataChanged();
+    } catch (err: unknown) {
+      setAlertModal({ title: '復原失敗', message: (err as Error).message });
     }
   };
 
@@ -648,17 +794,30 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     showToast(`⚡ 已即時模擬登入為【${user.fullName} (${user.role})】，全系統權限已即刻連動！`);
   };
 
-  // 資料統計
-  const superadminUser = allUsers.find(u => u.role === 'SUPERADMIN');
-  const adminUsers = allUsers.filter(u => u.role === 'ADMIN');
+  // 階梯式生命週期使用者分群
+  const activeUsers = useMemo(() => {
+    return allUsers.filter(u => !u.deleteStage || u.deleteStage === 'ACTIVE');
+  }, [allUsers]);
+
+  const trashUsers = useMemo(() => {
+    return allUsers.filter(u => u.deleteStage === 'PENDING_DELETE');
+  }, [allUsers]);
+
+  const archivedUsers = useMemo(() => {
+    return allUsers.filter(u => u.deleteStage === 'ARCHIVED');
+  }, [allUsers]);
+
+  // 資料統計 (以在職主檔同仁為基準)
+  const superadminUser = activeUsers.find(u => u.role === 'SUPERADMIN');
+  const adminUsers = activeUsers.filter(u => u.role === 'ADMIN');
   const userManagerAdmins = adminUsers.filter(u => u.canManageUsers);
   const configAdmins = adminUsers.filter(u => u.canManageSystemConfigs);
   const peerAdmins = adminUsers.filter(u => u.canManageAdmins);
-  const regularUsers = allUsers.filter(u => u.role === 'USER');
+  const regularUsers = activeUsers.filter(u => u.role === 'USER');
 
-  // 篩選後的使用者列表
+  // 篩選後的主檔使用者列表
   const filteredUsers = useMemo(() => {
-    return allUsers.filter(u => {
+    return activeUsers.filter(u => {
       // 關鍵字
       if (searchTerm.trim()) {
         const t = searchTerm.toLowerCase();
@@ -683,7 +842,40 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
       return true;
     });
-  }, [allUsers, searchTerm, roleFilter, statusFilter, privilegeFilter]);
+  }, [activeUsers, searchTerm, roleFilter, statusFilter, privilegeFilter]);
+
+  // 篩選後的稽核日誌列表
+  const filteredAuditLogs = useMemo(() => {
+    return auditLogs.filter(log => {
+      // 關鍵字搜尋
+      if (auditSearchTerm.trim()) {
+        const t = auditSearchTerm.toLowerCase();
+        const matchUser = log.userName.toLowerCase().includes(t) || log.userId.toLowerCase().includes(t);
+        const matchTable = log.targetTable.toLowerCase().includes(t);
+        const matchId = log.targetId.toLowerCase().includes(t);
+        const matchAction = log.action.toLowerCase().includes(t);
+        const matchAfter = (log.afterJson || '').toLowerCase().includes(t);
+        const matchBefore = (log.beforeJson || '').toLowerCase().includes(t);
+        if (!matchUser && !matchTable && !matchId && !matchAction && !matchAfter && !matchBefore) return false;
+      }
+
+      // 動作類型篩選
+      if (auditActionFilter !== 'ALL') {
+        if (auditActionFilter === 'LOGIN' && !log.action.includes('LOGIN')) return false;
+        if (auditActionFilter === 'CREATE' && log.action !== 'CREATE') return false;
+        if (auditActionFilter === 'UPDATE' && !log.action.includes('UPDATE') && !log.action.includes('STAGE') && !log.action.includes('RESTORE')) return false;
+        if (auditActionFilter === 'DELETE' && !log.action.includes('DELETE') && !log.action.includes('PURGE')) return false;
+        if (auditActionFilter === 'PASSWORD' && !log.action.includes('PASSWORD')) return false;
+      }
+
+      // 操作人員篩選
+      if (auditUserFilter !== 'ALL') {
+        if (log.userName !== auditUserFilter && log.userId !== auditUserFilter) return false;
+      }
+
+      return true;
+    });
+  }, [auditLogs, auditSearchTerm, auditActionFilter, auditUserFilter]);
 
   return (
     <div className="space-y-6">
@@ -733,11 +925,107 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       )}
 
       {/* ======================================================== */}
-      {/* 1. 三層式帳號狀態看板 (Overview KPI Cards)                 */}
+      {/* 視圖切換頁籤：同仁主檔 / 待刪除回收站 (7日冷卻) / 帳號封存與終極清理 */}
       {/* ======================================================== */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* 卡片 1: Superadmin 最高管理員 */}
-        <div className="bg-white rounded-xl border border-amber-200 p-4.5 shadow-2xs relative overflow-hidden flex flex-col justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2">
+          {/* 頁籤 1: 同仁主檔 */}
+          <button
+            onClick={() => setActiveTab('ACTIVE')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'ACTIVE'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>同仁主檔</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+              activeTab === 'ACTIVE' ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-700'
+            }`}>
+              {activeUsers.length}
+            </span>
+          </button>
+
+          {/* 頁籤 2: 待刪除回收站 (7日冷卻期) */}
+          <button
+            onClick={() => setActiveTab('TRASH')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'TRASH'
+                ? 'bg-amber-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            <span>待刪除回收站 (7日冷卻)</span>
+            {trashUsers.length > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                activeTab === 'TRASH' ? 'bg-amber-700 text-white' : 'bg-amber-100 text-amber-800'
+              }`}>
+                {trashUsers.length}
+              </span>
+            )}
+          </button>
+
+          {/* 頁籤 3: 帳號封存與終極清理 (僅 Superadmin 可見) */}
+          {isSuperadmin && (
+            <button
+              onClick={() => setActiveTab('ARCHIVE')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'ARCHIVE'
+                  ? 'bg-purple-700 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <Archive className="w-4 h-4" />
+              <span>帳號封存與終極清理</span>
+              <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 text-purple-800 font-semibold border border-purple-200">
+                Superadmin
+              </span>
+              {archivedUsers.length > 0 && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                  activeTab === 'ARCHIVE' ? 'bg-purple-800 text-white' : 'bg-purple-100 text-purple-800'
+                }`}>
+                  {archivedUsers.length}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* 頁籤 4: 系統操作與登入稽核日誌 (僅 Superadmin 可見) */}
+          {isSuperadmin && (
+            <button
+              onClick={() => setActiveTab('AUDIT_LOGS')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'AUDIT_LOGS'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <ScrollText className="w-4 h-4 text-emerald-400" />
+              <span>系統操作與登入稽核日誌</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-900 text-emerald-300 font-semibold border border-emerald-700">
+                特權日誌
+              </span>
+            </button>
+          )}
+        </div>
+
+        <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+          <span>分權階梯防護：7日防呆冷卻 ＋ 實體物理抹除審核</span>
+        </div>
+      </div>
+
+      {activeTab === 'ACTIVE' && (
+        <>
+          {/* ======================================================== */}
+          {/* 1. 三層式帳號狀態看板 (Overview KPI Cards - 僅 Superadmin 可見) */}
+          {/* ======================================================== */}
+          {isSuperadmin && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* 卡片 1: Superadmin 最高管理員 */}
+              <div className="bg-white rounded-xl border border-amber-200 p-4.5 shadow-2xs relative overflow-hidden flex flex-col justify-between">
           <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
@@ -852,6 +1140,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           </div>
         </div>
       </div>
+    )}
 
       {/* ======================================================== */}
       {/* 2. 搜尋、篩選與快速工具列                                  */}
@@ -1211,15 +1500,18 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       <td className="py-2.5 px-3 text-center">
                         <button
                           onClick={() => handleToggleStatus(user)}
-                          title="點選切換啟用/停用"
+                          title={user.id === currentUser?.id ? '當前登入之帳號，系統禁止將自己停用' : '點選切換啟用/停用'}
                           className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded transition-colors ${
                             user.status === 'ACTIVE'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
                               : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
-                          }`}
+                          } ${user.id === currentUser?.id ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}
                         >
                           <span className={`w-1.5 h-1.5 rounded-full ${user.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                           <span>{user.status === 'ACTIVE' ? '啟用中' : '已停用'}</span>
+                          {user.id === currentUser?.id && (
+                            <span className="text-[9px] text-slate-400 font-normal ml-0.5">(本人)</span>
+                          )}
                         </button>
                       </td>
 
@@ -1287,6 +1579,415 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           </table>
         </div>
       </div>
+    </>
+  )}
+
+  {/* ======================================================== */}
+  {/* 視圖 2: 待刪除回收站 (7日冷卻期獨立頁面)                    */}
+  {/* ======================================================== */}
+  {activeTab === 'TRASH' && (
+    <div className="space-y-4">
+      {/* 回收站說明 Banner */}
+      <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+        <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+        <div className="space-y-1 text-xs">
+          <div className="font-bold text-amber-900">
+            待刪除回收站（7日冷卻保護期）
+          </div>
+          <p className="text-amber-800 leading-relaxed text-[11px]">
+            遭刪除之同仁帳號將在此保留 7 天，期間其系統登入權限自動停用。管理人員可於冷卻期內隨時點選「一鍵復原」無損救回主檔；亦可手動「提前送往封存」。若 7 天冷卻期屆滿，系統將自動移交至 Superadmin 深度封存區。
+          </p>
+        </div>
+      </div>
+
+      {/* 回收站表格 */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-slate-100/80 text-slate-600 font-semibold border-b border-slate-200">
+                <th className="py-3 px-3.5">待刪同仁姓名 / 帳號</th>
+                <th className="py-3 px-3">原職務職稱</th>
+                <th className="py-3 px-3">原身分層級</th>
+                <th className="py-3 px-3">刪除經辦人</th>
+                <th className="py-3 px-3">移入冷卻時間</th>
+                <th className="py-3 px-3">剩餘冷卻期</th>
+                <th className="py-3 px-3">刪除事由 / 備註</th>
+                <th className="py-3 px-3 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {trashUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-60" />
+                    <div>目前回收站內無任何待刪除帳號，所有人員主檔運作正常</div>
+                  </td>
+                </tr>
+              ) : (
+                trashUsers.map(user => {
+                  const due = user.purgeDueAt ? new Date(user.purgeDueAt).getTime() : 0;
+                  const remainingMs = due - Date.now();
+                  const remainingDays = Math.max(0, Math.ceil(remainingMs / (1000 * 60 * 60 * 24)));
+                  const remainingHours = Math.max(0, Math.ceil((remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)));
+
+                  return (
+                    <tr key={user.id} className="hover:bg-amber-50/30 transition-colors">
+                      <td className="py-3 px-3.5">
+                        <div className="font-bold text-slate-800">{user.fullName}</div>
+                        <div className="font-mono text-[11px] text-indigo-600">@{user.username}</div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-600">
+                        {user.title || '-'}
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          user.role === 'ADMIN' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}>
+                          {user.role === 'ADMIN' ? '系統管理員 (ADMIN)' : '業務同仁 (USER)'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-slate-600 font-medium">
+                        {user.deletedBy || '管理員'}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-[11px] text-slate-500">
+                        {user.stageDeletedAt ? new Date(user.stageDeletedAt).toLocaleString() : '-'}
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className="font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                          剩餘 {remainingDays} 天 {remainingHours} 小時
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-slate-500 text-[11px]">
+                        {user.stageNotes || '正常待刪移轉'}
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => handleRestorePending(user)}
+                            className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-700 font-semibold text-xs transition-colors flex items-center gap-1 cursor-pointer border border-emerald-200"
+                            title="一鍵復原回啟用同仁主檔"
+                          >
+                            <Undo2 className="w-3.5 h-3.5" />
+                            <span>一鍵復原</span>
+                          </button>
+                          <button
+                            onClick={() => setAdvanceArchiveConfirmUser(user)}
+                            className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-700 hover:text-white text-slate-600 font-semibold text-xs transition-colors flex items-center gap-1 cursor-pointer border border-slate-300"
+                            title="提前送往 Superadmin 深度封存區"
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                            <span>提前送往封存</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* ======================================================== */}
+  {/* 視圖 3: 帳號封存與終極清理 (Superadmin 專屬救援與粉碎清理) */}
+  {/* ======================================================== */}
+  {activeTab === 'ARCHIVE' && isSuperadmin && (
+    <div className="space-y-4">
+      {/* 封存區說明 Banner */}
+      <div className="bg-purple-50/80 border border-purple-200 rounded-xl p-4 flex items-start gap-3">
+        <Archive className="w-5 h-5 text-purple-700 shrink-0 mt-0.5" />
+        <div className="space-y-1 text-xs">
+          <div className="font-bold text-purple-950 flex items-center gap-1.5">
+            <span>帳號深度封存區（Superadmin 專屬救援與終極清理）</span>
+            <span className="text-[10px] bg-purple-200 text-purple-900 px-1.5 py-0.2 rounded font-mono">最高權限</span>
+          </div>
+          <p className="text-purple-900 leading-relaxed text-[11px]">
+            此處收容冷卻期屆滿（滿7天）或經提前二次刪除之同仁帳號。一般 Admin 視角已徹底隱藏且無權存取。最高 Superadmin 可在此進行「終極救回復原」，或於必要時輸入安全驗證詞執行「不可逆之資料庫物理實體粉碎清除」。歷史單據將純淨保留其姓名純文字快照，永不留白。
+          </p>
+        </div>
+      </div>
+
+      {/* 封存表格 */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-slate-100/80 text-slate-600 font-semibold border-b border-slate-200">
+                <th className="py-3 px-3.5">已封存同仁姓名 / 帳號</th>
+                <th className="py-3 px-3">原職稱</th>
+                <th className="py-3 px-3">原身分層級</th>
+                <th className="py-3 px-3">移交封存時間</th>
+                <th className="py-3 px-3">移交經辦人</th>
+                <th className="py-3 px-3">封存說明</th>
+                <th className="py-3 px-3 text-right">Superadmin 終極操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {archivedUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-slate-400">
+                    <Archive className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-60" />
+                    <div>目前封存區內無任何待清理同仁帳號</div>
+                  </td>
+                </tr>
+              ) : (
+                archivedUsers.map(user => (
+                  <tr key={user.id} className="hover:bg-purple-50/20 transition-colors">
+                    <td className="py-3 px-3.5">
+                      <div className="font-bold text-slate-800">{user.fullName}</div>
+                      <div className="font-mono text-[11px] text-indigo-600">@{user.username}</div>
+                    </td>
+                    <td className="py-3 px-3 text-slate-600">
+                      {user.title || '-'}
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                        {user.role === 'ADMIN' ? '管理員 (ADMIN)' : '一般同仁 (USER)'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 font-mono text-[11px] text-slate-500">
+                      {user.stageDeletedAt ? new Date(user.stageDeletedAt).toLocaleString() : '-'}
+                    </td>
+                    <td className="py-3 px-3 text-slate-600 font-medium">
+                      {user.deletedBy || '系統排程'}
+                    </td>
+                    <td className="py-3 px-3 text-slate-500 text-[11px]">
+                      {user.stageNotes || '7日冷卻期滿自動封存'}
+                    </td>
+                    <td className="py-3 px-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => handleSuperadminRestore(user)}
+                          className="px-2.5 py-1 rounded bg-amber-50 hover:bg-amber-500 hover:text-slate-950 text-amber-800 font-bold text-xs transition-colors flex items-center gap-1 cursor-pointer border border-amber-300"
+                          title="Superadmin 終極救回復原"
+                        >
+                          <Crown className="w-3.5 h-3.5 text-amber-600" />
+                          <span>終極救回</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setPurgeConfirmUser(user);
+                            setPurgeConfirmInput('');
+                          }}
+                          className="px-2.5 py-1 rounded bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 font-bold text-xs transition-colors flex items-center gap-1 cursor-pointer border border-rose-200"
+                          title="從資料庫中物理永久清除 (不可逆)"
+                        >
+                          <Flame className="w-3.5 h-3.5 text-rose-600" />
+                          <span>物理粉碎</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* ======================================================== */}
+  {/* 視圖 4: 系統操作與登入稽核日誌 (Superadmin 專屬資安追蹤功能)   */}
+  {/* ======================================================== */}
+  {activeTab === 'AUDIT_LOGS' && isSuperadmin && (
+    <div className="space-y-4">
+      {/* 稽核日誌說明 Banner */}
+      <div className="bg-slate-900 text-slate-200 border border-slate-700 rounded-xl p-4 flex items-start justify-between gap-3 shadow-sm">
+        <div className="flex items-start gap-3">
+          <ScrollText className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <div className="font-bold text-white flex items-center gap-2">
+              <span>全域系統安全與操作稽核日誌 (Superadmin 專屬追蹤)</span>
+              <span className="text-[10px] bg-emerald-900/80 text-emerald-300 px-2 py-0.5 rounded border border-emerald-700 font-mono">
+                唯讀防竄改
+              </span>
+            </div>
+            <p className="text-slate-300 leading-relaxed text-[11px]">
+              由底層 SQLite 資料庫自動記錄所有操作軌跡。可隨時查詢「哪個帳號於何時登入、在何處執行了什麼操作」，包含登入身分、帳號建立與調整、階梯式刪除回收、深度封存、物理抹除及重要單據過帳，保障工程責任歸屬。
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={refreshAuditLogs}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-600 flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+          title="重新整理最新日誌"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>重新整理</span>
+        </button>
+      </div>
+
+      {/* 稽核日誌篩選工具列 */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3 text-xs">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+          {/* 搜尋框 */}
+          <div className="relative flex-1 max-w-md">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={auditSearchTerm}
+              onChange={(e) => setAuditSearchTerm(e.target.value)}
+              placeholder="搜尋操作者、帳號、目標對象或細節..."
+              className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 動作類型過濾 */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px] font-medium">事件動作：</span>
+              <select
+                value={auditActionFilter}
+                onChange={(e) => setAuditActionFilter(e.target.value)}
+                className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="ALL">全部事件類型</option>
+                <option value="LOGIN">登入與切換 (LOGIN)</option>
+                <option value="CREATE">新增建立 (CREATE)</option>
+                <option value="UPDATE">更新與特許 (UPDATE)</option>
+                <option value="DELETE">刪除與封存 (DELETE / ARCHIVE)</option>
+                <option value="PASSWORD">密碼重設與變更</option>
+              </select>
+            </div>
+
+            {/* 操作人員過濾 */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px] font-medium">經辦人員：</span>
+              <select
+                value={auditUserFilter}
+                onChange={(e) => setAuditUserFilter(e.target.value)}
+                className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="ALL">所有同仁帳號</option>
+                {allUsers.map(u => (
+                  <option key={u.id} value={u.fullName}>
+                    {u.fullName} (@{u.username})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* 筆數統計 */}
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px] text-slate-500">
+          <span>
+            共檢索出 <strong className="text-slate-900 font-mono">{filteredAuditLogs.length}</strong> 筆日誌紀錄（最新優先排序）
+          </span>
+          <span className="text-slate-400 font-mono">SQLite 資料表：audit_logs</span>
+        </div>
+      </div>
+
+      {/* 稽核日誌表格 */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-slate-100/80 text-slate-600 font-semibold border-b border-slate-200">
+                <th className="py-3 px-3.5 whitespace-nowrap">時間戳記</th>
+                <th className="py-3 px-3 whitespace-nowrap">操作人員 / 帳號</th>
+                <th className="py-3 px-3 whitespace-nowrap text-center">事件類型</th>
+                <th className="py-3 px-3 whitespace-nowrap">操作標的</th>
+                <th className="py-3 px-3">詳細操作內容與異動摘要</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">來源位址</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredAuditLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                    <ScrollText className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-60" />
+                    <div>查無符合條件的稽核日誌紀錄</div>
+                  </td>
+                </tr>
+              ) : (
+                filteredAuditLogs.map(log => {
+                  // 事件動作樣式對應
+                  const isLogin = log.action.includes('LOGIN');
+                  const isCreate = log.action === 'CREATE';
+                  const isDelete = log.action.includes('DELETE') || log.action.includes('PURGE');
+                  const isUpdate = log.action.includes('UPDATE') || log.action.includes('STAGE') || log.action.includes('RESTORE');
+
+                  let badgeColor = 'bg-slate-100 text-slate-700 border-slate-200';
+                  if (isLogin) badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold';
+                  else if (isCreate) badgeColor = 'bg-blue-50 text-blue-700 border-blue-200 font-bold';
+                  else if (isDelete) badgeColor = 'bg-rose-50 text-rose-700 border-rose-200 font-bold';
+                  else if (isUpdate) badgeColor = 'bg-amber-50 text-amber-700 border-amber-200 font-bold';
+
+                  // 解析 afterJson
+                  let parsedAfter: any = null;
+                  try {
+                    if (log.afterJson) parsedAfter = JSON.parse(log.afterJson);
+                  } catch (_) {}
+
+                  return (
+                    <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                      {/* 時間戳記 */}
+                      <td className="py-2.5 px-3.5 font-mono text-[11px] text-slate-600 whitespace-nowrap">
+                        {log.createdAt}
+                      </td>
+
+                      {/* 操作同仁 */}
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <div className="font-bold text-slate-800">{log.userName}</div>
+                        <div className="font-mono text-[10px] text-slate-400">{log.userId}</div>
+                      </td>
+
+                      {/* 事件類型 */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded text-[10px] border ${badgeColor}`}>
+                          {log.action}
+                        </span>
+                      </td>
+
+                      {/* 目標模組 */}
+                      <td className="py-2.5 px-3 whitespace-nowrap font-mono text-[11px] text-indigo-700">
+                        <span className="font-bold">{log.targetTable}</span>
+                        {log.targetId && <span className="text-slate-400 text-[10px] ml-1">({log.targetId})</span>}
+                      </td>
+
+                      {/* 詳細內容 */}
+                      <td className="py-2.5 px-3">
+                        {parsedAfter && typeof parsedAfter === 'object' ? (
+                          <div className="flex flex-wrap gap-1 items-center">
+                            {Object.entries(parsedAfter).map(([k, v]) => (
+                              <span
+                                key={k}
+                                className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono text-[10px] border border-slate-200"
+                              >
+                                <span className="text-slate-500">{k}:</span>{' '}
+                                <strong className="text-slate-900">
+                                  {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}
+                                </strong>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="font-mono text-[11px] text-slate-600">
+                            {log.afterJson || log.beforeJson || '操作成功'}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* 來源 IP */}
+                      <td className="py-2.5 px-3 text-right font-mono text-[10px] text-slate-400 whitespace-nowrap">
+                        {log.ipAddress || '127.0.0.1'}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )}
 
       {/* ======================================================== */}
       {/* 4. 編輯 / 新增帳號正中間對話框 (Centered Form Modal)       */}
@@ -1404,7 +2105,16 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                         name="role"
                         value="USER"
                         checked={formData.role === 'USER'}
-                        onChange={() => setFormData({ ...formData, role: 'USER' })}
+                        onChange={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            role: 'USER',
+                            groupIds: prev.groupIds && prev.groupIds.length > 0 ? prev.groupIds : ['GRP-ENG'],
+                            canManageUsers: false,
+                            canManageSystemConfigs: false,
+                            canManageAdmins: false
+                          }));
+                        }}
                         className="hidden"
                       />
                       <Users className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -1416,17 +2126,17 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
                     <label
                       className={`p-3 rounded-lg border flex items-center gap-2 transition-all ${
-                        !operatorCanManageAdmins
+                        !operatorCanManageAdmins && !operatorCanManageUsers
                           ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400'
                           : formData.role === 'ADMIN'
                           ? 'bg-indigo-50 border-indigo-400 text-indigo-900 font-bold cursor-pointer'
                           : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 cursor-pointer'
                       }`}
                       onClick={() => {
-                        if (!operatorCanManageAdmins) {
+                        if (!operatorCanManageAdmins && !operatorCanManageUsers) {
                           setAlertModal({
                             title: '階層權限受限',
-                            message: '您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】，無法指派或建立同階 Admin 帳號！',
+                            message: '您尚未取得 Superadmin 授予之【帳號管理人特許】或【同階管理特許】，無法指派或建立同階 Admin 帳號！',
                           });
                         }
                       }}
@@ -1435,10 +2145,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                         type="radio"
                         name="role"
                         value="ADMIN"
-                        disabled={!operatorCanManageAdmins}
+                        disabled={!operatorCanManageAdmins && !operatorCanManageUsers}
                         checked={formData.role === 'ADMIN'}
                         onChange={() => {
-                          if (operatorCanManageAdmins) {
+                          if (operatorCanManageAdmins || operatorCanManageUsers) {
                             setFormData({ ...formData, role: 'ADMIN' });
                           }
                         }}
@@ -1448,10 +2158,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       <div>
                         <div className="flex items-center gap-1">
                           <span>系統管理員 (ADMIN)</span>
-                          {!operatorCanManageAdmins && <Lock className="w-3 h-3 text-slate-400" />}
+                          {!operatorCanManageAdmins && !operatorCanManageUsers && <Lock className="w-3 h-3 text-slate-400" />}
                         </div>
                         <div className="text-[10px] font-normal text-slate-500">
-                          {operatorCanManageAdmins ? '帳號維護與審計日誌查閱' : '需 Superadmin 授權同階管理特許'}
+                          {operatorCanManageAdmins || operatorCanManageUsers ? '帳號維護與審計日誌查閱' : '需 Superadmin 授權特許'}
                         </div>
                       </div>
                     </label>
@@ -1459,8 +2169,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                 )}
               </div>
 
-              {/* Superadmin 專屬特許授權區 (當角色為 ADMIN 時呈現) */}
-              {formData.role === 'ADMIN' && (
+              {/* Superadmin 專屬特許授權區 (僅限 Superadmin 呈現；非 Superadmin 人員畫面完全隱藏特許區塊) */}
+              {isSuperadmin && formData.role === 'ADMIN' && (
                 <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg space-y-3">
                   <div className="font-bold text-slate-800 flex items-center gap-1.5 border-b border-amber-200/60 pb-1.5">
                     <ShieldCheck className="w-4 h-4 text-amber-600" />
@@ -2034,6 +2744,255 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                 關閉矩陣總表
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 8. 置中防呆刪除確認彈窗 (Centered Delete Confirm Modal, z-[80]) */}
+      {/*    徹底替換 iframe 環境中失效的 window.confirm，提供清晰資料防呆 */}
+      {/* ======================================================== */}
+      {deleteConfirmUser && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-rose-200 w-full max-w-md overflow-hidden animate-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-amber-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-white" />
+                <h3 className="font-bold text-sm">第一階段：移入待刪除回收站 (7日冷卻)</h3>
+              </div>
+              <button
+                onClick={() => setDeleteConfirmUser(null)}
+                className="text-amber-200 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 text-xs">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-3">
+                <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-950">
+                    您確定要將同仁【{deleteConfirmUser.fullName}】移入待刪除回收站嗎？
+                  </p>
+                  <p className="text-amber-800 leading-relaxed text-[11px]">
+                    移入後該同仁帳號將自【同仁主檔】移除並停用登入，享有 <span className="font-bold text-amber-950 underline decoration-amber-400">7 天冷卻保護期</span>。冷卻期內可隨時在「待刪除回收站」一鍵復原。若 7 天屆滿，系統將自動移交 Superadmin 深度封存區。
+                  </p>
+                </div>
+              </div>
+
+              {/* 帳號詳情卡片 */}
+              <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-2 text-slate-700 text-xs">
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                  <span className="text-slate-400">同仁姓名：</span>
+                  <span className="font-bold text-slate-800">{deleteConfirmUser.fullName}</span>
+                </div>
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                  <span className="text-slate-400">登入帳號：</span>
+                  <span className="font-mono text-indigo-700 font-bold">@{deleteConfirmUser.username}</span>
+                </div>
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                  <span className="text-slate-400">身分層級：</span>
+                  <span className={`font-bold px-1.5 py-0.2 rounded text-[11px] ${
+                    deleteConfirmUser.role === 'ADMIN' ? 'bg-indigo-100 text-indigo-800' : 'bg-emerald-100 text-emerald-800'
+                  }`}>
+                    {deleteConfirmUser.role === 'ADMIN' ? '系統管理員 (ADMIN)' : '業務同仁 (USER)'}
+                  </span>
+                </div>
+                {deleteConfirmUser.title && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">職務職稱：</span>
+                    <span className="text-slate-700">{deleteConfirmUser.title}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmUser(null)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>移入待刪回收站 (7日冷卻)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 提前移交 Superadmin 深度封存區確認彈窗 (Centered Modal, z-[80]) */}
+      {/* ======================================================== */}
+      {advanceArchiveConfirmUser && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-300 w-full max-w-md overflow-hidden animate-in zoom-in-95">
+            <div className="px-5 py-4 bg-slate-800 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Archive className="w-5 h-5 text-indigo-400" />
+                <h3 className="font-bold text-sm">確認提前送往 Superadmin 深度封存區</h3>
+              </div>
+              <button
+                onClick={() => setAdvanceArchiveConfirmUser(null)}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4 text-xs">
+              <p className="text-slate-700 leading-relaxed">
+                確定要將同仁【<span className="font-bold text-slate-900">{advanceArchiveConfirmUser.fullName}</span>】(@{advanceArchiveConfirmUser.username}) 提前二次刪除送往 Superadmin 深度封存區嗎？
+              </p>
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[11px] leading-relaxed space-y-1">
+                <div className="font-bold flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-700" />
+                  <span>權限移交提醒</span>
+                </div>
+                <p>
+                  送交封存後，該筆同仁資料將自「待刪除回收站」移除，一般 Admin 視角將<strong>徹底隱藏且無法再執行復原</strong>，僅唯獨 Superadmin 擁有終極救援與物理清除之權力。
+                </p>
+              </div>
+            </div>
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setAdvanceArchiveConfirmUser(null)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleAdvanceArchive}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>確認送往封存區</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* Superadmin 永久物理粉碎清除確認對話框 (Centered Modal, z-[80]) */}
+      {/* ======================================================== */}
+      {purgeConfirmUser && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-rose-300 w-full max-w-md overflow-hidden animate-in zoom-in-95">
+            <div className="px-5 py-4 bg-rose-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Flame className="w-5 h-5 text-white" />
+                <h3 className="font-bold text-sm">Superadmin 終極物理粉碎清除</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setPurgeConfirmUser(null);
+                  setPurgeConfirmInput('');
+                }}
+                className="text-rose-200 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4 text-xs">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-900 space-y-1.5 leading-relaxed">
+                <div className="font-bold flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4 text-rose-600" />
+                  <span>危險操作：資料庫實體不可逆抹除</span>
+                </div>
+                <p className="text-[11px] text-rose-800">
+                  您即將從資料庫中<strong>永久刪除</strong>同仁【<span className="font-bold">{purgeConfirmUser.fullName}</span>】(@{purgeConfirmUser.username}) 之使用者實體記錄。本動作無法撤銷！
+                </p>
+                <p className="text-[11px] text-rose-800">
+                  依系統單據血緣防護設計，歷史單據將純淨保留其姓名純文字快照，單據內容絕不留白。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1.5 text-xs">
+                  請輸入安全確認詞以解鎖清除：<span className="font-mono text-rose-600 select-all font-bold">確認永久物理清除</span>
+                </label>
+                <input
+                  type="text"
+                  value={purgeConfirmInput}
+                  onChange={(e) => setPurgeConfirmInput(e.target.value)}
+                  placeholder="請在此輸入「確認永久物理清除」..."
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white"
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setPurgeConfirmUser(null);
+                  setPurgeConfirmInput('');
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={purgeConfirmInput.trim() !== '確認永久物理清除'}
+                onClick={handlePermanentPurge}
+                className={`px-4 py-2 rounded-lg text-xs font-bold text-white shadow-sm transition-all flex items-center gap-1.5 ${
+                  purgeConfirmInput.trim() === '確認永久物理清除'
+                    ? 'bg-rose-600 hover:bg-rose-700 cursor-pointer'
+                    : 'bg-slate-300 cursor-not-allowed opacity-60'
+                }`}
+              >
+                <Flame className="w-3.5 h-3.5" />
+                <span>執行永久物理粉碎清除</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 9. 刪除後一鍵復原 Toast (Undo Restore Notification, z-[90]) */}
+      {/* ======================================================== */}
+      {undoToast && (
+        <div className="fixed bottom-6 right-6 z-[90] flex items-center gap-3 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl border border-slate-700 animate-in slide-in-from-bottom-5">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🗑️</span>
+            <div className="text-xs">
+              <p className="font-bold">
+                已刪除同仁【{undoToast.user.fullName}】帳號
+              </p>
+              <p className="text-[11px] text-slate-400">
+                防呆復原倒數：<span className="font-mono text-amber-400 font-bold">{undoToast.countdown}s</span>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 ml-2">
+            <button
+              onClick={handleUndoRestore}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm active:scale-95"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>一鍵復原 ({undoToast.countdown}s)</span>
+            </button>
+            <button
+              onClick={() => setUndoToast(null)}
+              className="text-slate-400 hover:text-white p-1 transition-colors cursor-pointer"
+              title="關閉提示"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}

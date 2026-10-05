@@ -129,6 +129,11 @@ function initializeTables(db: Database) {
       passwordHash TEXT DEFAULT '888888',
       isPasswordReset INTEGER DEFAULT 0,
       lastLoginAt TEXT,
+      deleteStage TEXT DEFAULT 'ACTIVE',
+      stageDeletedAt TEXT,
+      purgeDueAt TEXT,
+      deletedBy TEXT,
+      stageNotes TEXT,
       createdAt TEXT,
       updatedAt TEXT
     );
@@ -488,6 +493,23 @@ function initializeTables(db: Database) {
       notes TEXT
     );
   `);
+
+  // 安全增量升級既有 users 表之多階段刪除生命週期欄位
+  try {
+    db.run("ALTER TABLE users ADD COLUMN deleteStage TEXT DEFAULT 'ACTIVE';");
+  } catch (_) {}
+  try {
+    db.run("ALTER TABLE users ADD COLUMN stageDeletedAt TEXT;");
+  } catch (_) {}
+  try {
+    db.run("ALTER TABLE users ADD COLUMN purgeDueAt TEXT;");
+  } catch (_) {}
+  try {
+    db.run("ALTER TABLE users ADD COLUMN deletedBy TEXT;");
+  } catch (_) {}
+  try {
+    db.run("ALTER TABLE users ADD COLUMN stageNotes TEXT;");
+  } catch (_) {}
 }
 
 // 建立營造工程真實範例資料
@@ -640,12 +662,18 @@ export function seedInitialData(db: Database) {
       ('CHK-04', 'RC-990011', 'RECEIVABLE', 'COMP-01', '富鼎置地開發建設股份有限公司', 17850000, '2026-02-20', '2026-03-15', '國泰世華銀行', 'CLEARED', NULL, '合約訂金票據已全數兌現入帳');
   `);
 
-  // 9. 審計日誌
+  // 9. 審計日誌 (含登入、身分異動、特許授權與單據操作)
   db.run(`
     INSERT INTO audit_logs (id, userId, userName, action, targetTable, targetId, beforeJson, afterJson, ipAddress, createdAt)
     VALUES
-      ('LOG-01', 'USR-01', '系統管理員 (黃副總)', 'POST', 'purchase_orders', 'PO-01', '{"status":"APPROVED"}', '{"status":"POSTED","counterpartyNameSnapshot":"台灣水泥股份有限公司 (台北營業所)"}', '192.168.1.100', '2026-03-01 10:15:00'),
-      ('LOG-02', 'USR-02', '財務主管 (陳會計)', 'POST', 'valuations', 'VAL-01', '{"status":"SUBMITTED"}', '{"status":"POSTED","netPayableAmount":3550000}', '192.168.1.108', '2026-03-28 16:40:00');
+      ('LOG-01', 'USR-001', '黃副總經理', 'LOGIN', 'users', 'USR-001', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.1.50","device":"Chrome / MacOS (工務處電腦)"}', '192.168.1.50', '2026-03-31 08:30:15'),
+      ('LOG-02', 'USR-002', '陳資訊主任', 'LOGIN', 'users', 'USR-002', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.1.62","device":"Chrome / Windows (資訊處)"}', '192.168.1.62', '2026-03-31 09:05:22'),
+      ('LOG-03', 'USR-002', '陳資訊主任', 'CREATE', 'users', 'USR-005', NULL, '{"username":"wang.proc","fullName":"王採購專員","role":"USER","group":"GRP-PROC"}', '192.168.1.62', '2026-03-31 09:30:00'),
+      ('LOG-04', 'USR-003', '林工務主任', 'LOGIN', 'users', 'USR-003', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.20.15","device":"iPad Pro (南港工地現場)"}', '192.168.20.15', '2026-03-31 10:12:00'),
+      ('LOG-05', 'USR-001', '黃副總經理', 'POST', 'purchase_orders', 'PO-01', '{"status":"APPROVED"}', '{"status":"POSTED","counterpartyNameSnapshot":"台灣水泥股份有限公司 (台北營業所)"}', '192.168.1.50', '2026-03-31 10:15:00'),
+      ('LOG-06', 'USR-004', '張會計長', 'LOGIN', 'users', 'USR-004', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.1.75","device":"Chrome / Windows (財務室)"}', '192.168.1.75', '2026-03-31 11:20:00'),
+      ('LOG-07', 'USR-004', '張會計長', 'POST', 'valuations', 'VAL-01', '{"status":"SUBMITTED"}', '{"status":"POSTED","netPayableAmount":3550000}', '192.168.1.75', '2026-03-31 14:40:00'),
+      ('LOG-08', 'USR-001', '黃副總經理', 'UPDATE', 'users', 'USR-002', '{"canManageUsers":0}', '{"canManageUsers":1,"note":"Superadmin 特許陳主任擔任帳號專人"}', '192.168.1.50', '2026-03-31 15:10:00');
   `);
 }
 
@@ -1136,16 +1164,16 @@ export function getAllSystemConfigs(): SystemConfig[] {
   }));
 }
 
-// 讀取審計日誌
-export function getAllAuditLogs(): AuditLog[] {
+// 讀取審計日誌 (預設支援最多 300 筆，最新優先)
+export function getAllAuditLogs(limit: number = 300): AuditLog[] {
   if (!dbInstance) return [];
-  const res = dbInstance.exec(`SELECT * FROM audit_logs ORDER BY createdAt DESC LIMIT 50;`);
+  const res = dbInstance.exec(`SELECT * FROM audit_logs ORDER BY createdAt DESC LIMIT ${limit};`);
   if (!res.length) return [];
   return res[0].values.map(v => ({
     id: String(v[0]),
     userId: String(v[1]),
     userName: String(v[2]),
-    action: v[3] as AuditLog['action'],
+    action: String(v[3]),
     targetTable: String(v[4]),
     targetId: String(v[5]),
     beforeJson: v[6] ? String(v[6]) : undefined,
@@ -1207,11 +1235,12 @@ export function getCashFlowMetrics(): CashFlowMetrics {
 export function logAudit(
   db: Database,
   userName: string,
-  action: AuditLog['action'],
+  action: AuditLog['action'] | string,
   targetTable: string,
   targetId: string,
   before?: object,
-  after?: object
+  after?: object,
+  userId?: string
 ) {
   const id = `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const beforeJson = before ? JSON.stringify(before).replace(/'/g, "''") : null;
@@ -1220,9 +1249,24 @@ export function logAudit(
 
   db.run(`
     INSERT INTO audit_logs (id, userId, userName, action, targetTable, targetId, beforeJson, afterJson, ipAddress, createdAt)
-    VALUES ('${id}', 'USR-ACTIVE', '${userName}', '${action}', '${targetTable}', '${targetId}', 
-      ${beforeJson ? `'${beforeJson}'` : 'NULL'}, ${afterJson ? `'${afterJson}'` : 'NULL'}, '127.0.0.1', '${now}');
+    VALUES ('${id}', '${userId || 'USR-ACTIVE'}', '${userName.replace(/'/g, "''")}', '${action}', '${targetTable}', '${targetId}', 
+      ${beforeJson ? `'${beforeJson}'` : 'NULL'}, ${afterJson ? `'${afterJson}'` : 'NULL'}, '127.0.0.1 (內網)', '${now}');
   `);
+}
+
+// 供外部元件呼叫寫入操作日誌 (例如登入或身分切換、系統事件)
+export function recordAuditLog(
+  userName: string,
+  action: string,
+  targetTable: string,
+  targetId: string,
+  details?: object,
+  userId?: string
+) {
+  if (!dbInstance) return;
+  logAudit(dbInstance, userName, action, targetTable, targetId, undefined, details, userId);
+  saveDatabaseSnapshot();
+  notifyListeners();
 }
 
 // 12 大營造工程核心模組字典
@@ -1432,11 +1476,43 @@ export function ensureDatabaseIntegrity(db: Database) {
   }
 }
 
-// 讀取所有人員帳號
+// 自動將逾期 7 天之冷卻同仁轉入 Superadmin 封存區
+export function autoArchiveExpiredUsers(): void {
+  if (!dbInstance) return;
+  try {
+    const nowIso = new Date().toISOString();
+    const check = dbInstance.exec(`
+      SELECT id, fullName, username FROM users 
+      WHERE deleteStage = 'PENDING_DELETE' AND purgeDueAt IS NOT NULL AND purgeDueAt <= '${nowIso}';
+    `);
+    if (check.length > 0 && check[0].values.length > 0) {
+      for (const row of check[0].values) {
+        const uId = String(row[0]);
+        const uName = String(row[1]);
+        dbInstance.run(`
+          UPDATE users 
+          SET deleteStage = 'ARCHIVED', 
+              stageNotes = '7日冷卻期屆滿，系統自動轉入 Superadmin 封存區'
+          WHERE id = '${uId}';
+        `);
+        logAudit(dbInstance, '系統排程', 'UPDATE', 'users', uId, 
+          { action: 'AUTO_ARCHIVE_EXPIRED', user: uName }, 
+          { deleteStage: 'ARCHIVED' }
+        );
+      }
+      saveDatabaseSnapshot();
+    }
+  } catch (e) {
+    console.error('autoArchiveExpiredUsers error', e);
+  }
+}
+
+// 讀取所有人員帳號 (自動執行冷卻逾期審查與讀取三態生命週期欄位)
 export function getAllUsers(): User[] {
   if (!dbInstance) return [];
+  autoArchiveExpiredUsers();
   const res = dbInstance.exec(`
-    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, lastLoginAt, createdAt, updatedAt 
+    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, lastLoginAt, createdAt, updatedAt, deleteStage, stageDeletedAt, purgeDueAt, deletedBy, stageNotes 
     FROM users 
     ORDER BY CASE role WHEN 'SUPERADMIN' THEN 1 WHEN 'ADMIN' THEN 2 ELSE 3 END, id ASC;
   `);
@@ -1472,7 +1548,12 @@ export function getAllUsers(): User[] {
       isPasswordReset: Boolean(v[15]),
       lastLoginAt: v[16] ? String(v[16]) : undefined,
       createdAt: String(v[17] || ''),
-      updatedAt: String(v[18] || '')
+      updatedAt: String(v[18] || ''),
+      deleteStage: (v[19] || 'ACTIVE') as User['deleteStage'],
+      stageDeletedAt: v[20] ? String(v[20]) : undefined,
+      purgeDueAt: v[21] ? String(v[21]) : undefined,
+      deletedBy: v[22] ? String(v[22]) : undefined,
+      stageNotes: v[23] ? String(v[23]) : undefined
     };
   });
 }
@@ -1686,9 +1767,15 @@ export function updateUser(
   operatorRole: 'SUPERADMIN' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
-  operatorCanManageAdmins?: boolean
+  operatorCanManageAdmins?: boolean,
+  currentOperatorId?: string
 ): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  // 安全防呆：禁止操作者將當前登入之自身帳號停用（防範自殺式停權）
+  if (currentOperatorId && currentOperatorId === updateData.id && updateData.status === 'DISABLED') {
+    throw new Error('【安全防呆防護】系統嚴禁將當前正在登入操作中之自身帳號設為停用！');
+  }
 
   // 帳號管理專人權限檢核
   if (operatorRole !== 'SUPERADMIN' && !operatorCanManageUsers) {
@@ -1878,18 +1965,23 @@ export function toggleUserStatus(
   operatorRole: 'SUPERADMIN' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
-  operatorCanManageAdmins?: boolean
+  operatorCanManageAdmins?: boolean,
+  currentOperatorId?: string
 ): void {
-  updateUser({ id: userId, status: newStatus }, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
+  if (currentOperatorId && currentOperatorId === userId && newStatus === 'DISABLED') {
+    throw new Error('【安全防呆防護】系統嚴禁將當前正在登入操作中之自身帳號設為停用！');
+  }
+  updateUser({ id: userId, status: newStatus }, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins, currentOperatorId);
 }
 
-// 刪除使用者帳號 (含帳號管理專人、Superadmin 防呆保護與同階特許查核)
-export function deleteUser(
+// 第一階段：移入待刪除回收站（7 日冷卻期）
+export function markUserPendingDelete(
   userId: string,
   operatorRole: 'SUPERADMIN' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
-  operatorCanManageAdmins?: boolean
+  operatorCanManageAdmins?: boolean,
+  reason?: string
 ): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
 
@@ -1898,22 +1990,216 @@ export function deleteUser(
     throw new Error('無帳號管理專人權限：刪除同仁帳號需由 Superadmin 特別指定之專人 Admin 始得操作！');
   }
 
-  const check = dbInstance.exec(`SELECT id, role, fullName FROM users WHERE id = '${userId}';`);
+  const check = dbInstance.exec(`SELECT id, role, fullName, username, deleteStage FROM users WHERE id = '${userId}';`);
   if (!check.length || !check[0].values.length) {
     throw new Error('帳號不存在！');
   }
 
   const role = check[0].values[0][1] as string;
+  const fullName = check[0].values[0][2] as string;
+  const username = check[0].values[0][3] as string;
+  const currentStage = check[0].values[0][4] as string;
+
   if (role === 'SUPERADMIN') {
     throw new Error('【憲法金身防護】系統唯一最高管理員 (Superadmin) 具備永久保護，嚴禁刪除！');
   }
 
   if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins && !operatorCanManageUsers) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】或【帳號管理人特許】，無法刪除同階 Admin 帳號！');
+    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】或【帳號管理人特許】，無法刪除同階 Admin 帳號！');
+  }
+
+  if (currentStage === 'PENDING_DELETE') {
+    throw new Error('此同仁帳號已在待刪除回收站中！');
+  }
+  if (currentStage === 'ARCHIVED') {
+    throw new Error('此同仁帳號已在深度封存區中！');
+  }
+
+  const nowIso = new Date().toISOString();
+  // 7 天冷卻期
+  const purgeDueAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const cleanReason = (reason || '管理員執行第一階段刪除，移入7日冷卻回收站').replace(/'/g, "''");
+
+  dbInstance.run(`
+    UPDATE users 
+    SET deleteStage = 'PENDING_DELETE',
+        stageDeletedAt = '${nowIso}',
+        purgeDueAt = '${purgeDueAt}',
+        deletedBy = '${operatorName.replace(/'/g, "''")}',
+        stageNotes = '${cleanReason}',
+        status = 'DISABLED'
+    WHERE id = '${userId}';
+  `);
+
+  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
+    { action: 'STAGE1_DELETE_PENDING', fullName, username }, 
+    { deleteStage: 'PENDING_DELETE', purgeDueAt }
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 刪除使用者帳號 (向下相容：自動呼叫第一階段刪除冷卻流程)
+export function deleteUser(
+  userId: string,
+  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorName: string,
+  operatorCanManageUsers?: boolean,
+  operatorCanManageAdmins?: boolean
+): void {
+  markUserPendingDelete(userId, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins, '第一階段刪除至待刪除回收站');
+}
+
+// 待刪除回收站：一鍵復原回啟用主檔 (Admin 與 Superadmin 均可操作)
+export function restorePendingUser(
+  userId: string,
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const check = dbInstance.exec(`SELECT id, role, fullName, username, deleteStage FROM users WHERE id = '${userId}';`);
+  if (!check.length || !check[0].values.length) {
+    throw new Error('帳號不存在！');
+  }
+
+  const fullName = check[0].values[0][2] as string;
+  const username = check[0].values[0][3] as string;
+
+  dbInstance.run(`
+    UPDATE users 
+    SET deleteStage = 'ACTIVE',
+        stageDeletedAt = NULL,
+        purgeDueAt = NULL,
+        deletedBy = NULL,
+        stageNotes = NULL,
+        status = 'ACTIVE'
+    WHERE id = '${userId}';
+  `);
+
+  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
+    { action: 'RESTORE_FROM_PENDING', fullName, username }, 
+    { deleteStage: 'ACTIVE', status: 'ACTIVE' }
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 待刪除回收站：提前手動二次刪除，轉入 Superadmin 專屬封存區
+export function advanceUserToArchive(
+  userId: string,
+  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorName: string,
+  operatorCanManageUsers?: boolean,
+  operatorCanManageAdmins?: boolean
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  if (operatorRole !== 'SUPERADMIN' && !operatorCanManageUsers) {
+    throw new Error('無帳號管理專人權限：操作需由 Superadmin 特別指定之專人 Admin 始得操作！');
+  }
+
+  const check = dbInstance.exec(`SELECT id, role, fullName, username, deleteStage FROM users WHERE id = '${userId}';`);
+  if (!check.length || !check[0].values.length) {
+    throw new Error('帳號不存在！');
+  }
+
+  const role = check[0].values[0][1] as string;
+  const fullName = check[0].values[0][2] as string;
+  const username = check[0].values[0][3] as string;
+
+  if (role === 'SUPERADMIN') {
+    throw new Error('【憲法金身防護】系統唯一最高管理員嚴禁封存！');
+  }
+
+  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins && !operatorCanManageUsers) {
+    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之特許權限，無法變更同階 Admin 狀態！');
+  }
+
+  const nowIso = new Date().toISOString();
+
+  dbInstance.run(`
+    UPDATE users 
+    SET deleteStage = 'ARCHIVED',
+        stageDeletedAt = '${nowIso}',
+        deletedBy = '${operatorName.replace(/'/g, "''")}',
+        stageNotes = '由管理員手動提前二次刪除，移交 Superadmin 深度封存區',
+        status = 'DISABLED'
+    WHERE id = '${userId}';
+  `);
+
+  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
+    { action: 'STAGE2_MANUAL_ADVANCE_ARCHIVE', fullName, username }, 
+    { deleteStage: 'ARCHIVED' }
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 深度封存區：Superadmin 終極救援復原回啟用主檔 (僅限 Superadmin)
+export function superadminRestoreArchivedUser(
+  userId: string,
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const check = dbInstance.exec(`SELECT id, role, fullName, username, deleteStage FROM users WHERE id = '${userId}';`);
+  if (!check.length || !check[0].values.length) {
+    throw new Error('帳號不存在！');
+  }
+
+  const fullName = check[0].values[0][2] as string;
+  const username = check[0].values[0][3] as string;
+
+  dbInstance.run(`
+    UPDATE users 
+    SET deleteStage = 'ACTIVE',
+        stageDeletedAt = NULL,
+        purgeDueAt = NULL,
+        deletedBy = NULL,
+        stageNotes = NULL,
+        status = 'ACTIVE'
+    WHERE id = '${userId}';
+  `);
+
+  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
+    { action: 'SUPERADMIN_RESTORE_ARCHIVED', fullName, username }, 
+    { deleteStage: 'ACTIVE', status: 'ACTIVE' }
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 深度封存區：Superadmin 終極安全詞物理粉碎清除 (物理實體 DELETE，不可逆)
+export function superadminPermanentPurge(
+  userId: string,
+  operatorName: string,
+  confirmText: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  if (confirmText.trim() !== '確認永久物理清除') {
+    throw new Error('安全防呆校驗失敗：安全確認詞不相符，無法執行永久物理清除！請輸入「確認永久物理清除」以資確認。');
+  }
+
+  const check = dbInstance.exec(`SELECT id, role, fullName, username, deleteStage FROM users WHERE id = '${userId}';`);
+  if (!check.length || !check[0].values.length) {
+    throw new Error('帳號不存在！');
+  }
+
+  const role = check[0].values[0][1] as string;
+  const fullName = check[0].values[0][2] as string;
+  const username = check[0].values[0][3] as string;
+
+  if (role === 'SUPERADMIN') {
+    throw new Error('【憲法金身防護】系統唯一最高管理員 (Superadmin) 具備永久保護，嚴禁清除！');
   }
 
   dbInstance.run(`DELETE FROM users WHERE id = '${userId}';`);
-  logAudit(dbInstance, operatorName, 'DELETE', 'users', userId, { deletedUser: check[0].values[0][2] }, undefined);
+
+  logAudit(dbInstance, operatorName, 'DELETE', 'users', userId, 
+    { action: 'STAGE3_PHYSICAL_PURGE', fullName, username }, 
+    undefined
+  );
   saveDatabaseSnapshot();
   notifyListeners();
 }

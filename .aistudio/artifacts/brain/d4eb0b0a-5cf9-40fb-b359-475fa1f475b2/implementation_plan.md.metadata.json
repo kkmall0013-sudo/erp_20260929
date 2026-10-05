@@ -1,6 +1,6 @@
 {
-  "summary":  "帳號刪除防呆確認與復原機制、Admin降級User特許自動歸零、以及非Superadmin完全隱藏特許區之修正實作規劃方案",
-  "updatedAt":  "2026-10-02T03:02:36.005005480Z",
+  "summary":  "修復「Admin 停用自己帳號後自動切換為 Superadmin」之資安防呆漏洞：\n1. 帳號管理介面與資料庫層面全面禁止「停用當前登入之自身帳號」（自殺式停權）。\n2. 修復 AuthContext 靜默回退漏洞，徹底杜絕同仁被停用時自動降級切換至 Superadmin 的權限提升異常。",
+  "updatedAt":  "2026-10-02T09:01:01.632275101Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

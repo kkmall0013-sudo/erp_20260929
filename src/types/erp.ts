@@ -59,6 +59,11 @@ export interface User {
   passwordHash?: string; // 密碼字串或雜湊
   isPasswordReset?: boolean; // 是否為重設後之初始預設密碼標記
   lastLoginAt?: string;
+  deleteStage?: 'ACTIVE' | 'PENDING_DELETE' | 'ARCHIVED'; // 帳號生命週期三態：正常啟用、待刪除冷卻中、深度封存中
+  stageDeletedAt?: string; // 進入待刪除/封存狀態時間戳 (ISO)
+  purgeDueAt?: string; // 7日冷卻截止時間 (ISO)
+  deletedBy?: string; // 執行刪除或移交操作者姓名
+  stageNotes?: string; // 刪除或封存備註
   createdAt: string;
   updatedAt: string;
 }
@@ -114,7 +119,7 @@ export interface AuditLog {
   id: string;
   userId: string;
   userName: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'POST' | 'VOID';
+  action: string; // 'CREATE' | 'UPDATE' | 'DELETE' | 'POST' | 'VOID' | 'LOGIN' | 'SWITCH_USER' | 'PASSWORD_RESET' 等全模組事件
   targetTable: string;
   targetId: string;
   beforeJson?: string;

@@ -4,7 +4,8 @@ import {
   getAllUsers,
   getAllUserGroups,
   getAllGroupPermissions,
-  subscribeToDatabase
+  subscribeToDatabase,
+  recordAuditLog
 } from '../db/sqlite';
 
 interface AuthContextType {
@@ -51,16 +52,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, [reloadAuth]);
 
-  // 當前使用者
+  // 當前使用者 (安全防護：嚴禁靜默提權回退至 Superadmin)
   const currentUser = useMemo(() => {
     if (!allUsers.length) return null;
-    const found = allUsers.find(u => u.id === currentUserId && u.status === 'ACTIVE');
-    return found || allUsers[0] || null;
+    // 優先精準鎖定當前儲存之使用者 ID（即使遭停權也如實保留其帳號實體，絕不自動提權或回退至 Superadmin）
+    const matched = allUsers.find(u => u.id === currentUserId);
+    if (matched) {
+      return matched;
+    }
+    // 若帳號已被完全物理永久抹除 (不存在於資料庫)，則安全回退至第一位正常在職者
+    const firstActive = allUsers.find(u => u.status === 'ACTIVE');
+    return firstActive || null;
   }, [allUsers, currentUserId]);
 
   // 當前使用者所屬全部群組 (支援多重業務群組矩陣)
   const currentGroups = useMemo<UserGroup[]>(() => {
-    if (!currentUser || currentUser.role !== 'USER') return [];
+    if (!currentUser || currentUser.role !== 'USER' || currentUser.status !== 'ACTIVE') return [];
     const ids = currentUser.groupIds && currentUser.groupIds.length > 0
       ? currentUser.groupIds
       : (currentUser.groupId ? [currentUser.groupId] : []);
@@ -72,9 +79,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return currentGroups[0] || null;
   }, [currentGroups]);
 
-  const isSuperadmin = currentUser?.role === 'SUPERADMIN';
-  const isAdmin = currentUser?.role === 'ADMIN';
-  const isUser = currentUser?.role === 'USER';
+  const isSuperadmin = currentUser?.role === 'SUPERADMIN' && currentUser?.status === 'ACTIVE';
+  const isAdmin = currentUser?.role === 'ADMIN' && currentUser?.status === 'ACTIVE';
+  const isUser = currentUser?.role === 'USER' && currentUser?.status === 'ACTIVE';
 
   // 核准金額上限 (多群組取最大上限，賦予同仁最大授權)
   const approvalLimit = useMemo(() => {
@@ -86,15 +93,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return 0;
   }, [isSuperadmin, isAdmin, currentGroups]);
 
-  // 切換模擬身分
+  // 切換模擬身分與登入
   const switchUser = useCallback((userId: string) => {
     setCurrentUserId(userId);
     localStorage.setItem('engineering_erp_active_user_id', userId);
-  }, []);
+
+    const target = allUsers.find(u => u.id === userId);
+    if (target) {
+      recordAuditLog(
+        target.fullName,
+        'LOGIN',
+        'users',
+        target.id,
+        {
+          action: 'LOGIN_SUCCESS',
+          username: target.username,
+          fullName: target.fullName,
+          role: target.role,
+          title: target.title || '無職稱',
+          time: new Date().toLocaleString()
+        },
+        target.id
+      );
+    }
+  }, [allUsers]);
 
   // 權限判斷函式 (PBAC 多群組矩陣聯集解析)
   const can = useCallback((moduleKey: ModuleKey, action: 'read' | 'write' | 'approve' | 'export'): boolean => {
     if (!currentUser) return false;
+
+    // 停權帳號（DISABLED）：全面封鎖所有模組權限
+    if (currentUser.status === 'DISABLED') return false;
 
     // Superadmin: 擁有所有模組的無條件最高權限
     if (currentUser.role === 'SUPERADMIN') return true;

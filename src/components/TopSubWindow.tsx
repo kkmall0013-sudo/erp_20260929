@@ -289,7 +289,7 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
             {currentUser?.fullName ? currentUser.fullName.slice(0, 1) : '帳'}
           </div>
 
-          <div className="relative">
+          <div className="relative flex items-center gap-1">
             <select
               value={currentUser?.id || ''}
               onChange={(e) => switchUser(e.target.value)}
@@ -298,10 +298,15 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
             >
               {allUsers.map(u => (
                 <option key={u.id} value={u.id}>
-                  {u.fullName} ({u.role}{u.role === 'SUPERADMIN' ? ' 👑' : ''}{u.role === 'ADMIN' && u.canManageUsers ? ' 🔑' : ''}{u.role === 'ADMIN' && u.canManageSystemConfigs ? ' 🛡️' : ''}{u.role === 'ADMIN' && u.canManageAdmins ? ' ⚡' : ''})
+                  {u.fullName} ({u.role}{u.status === 'DISABLED' ? ' [停用]' : ''}{u.role === 'SUPERADMIN' ? ' 👑' : ''}{u.role === 'ADMIN' && u.canManageUsers ? ' 🔑' : ''}{u.role === 'ADMIN' && u.canManageSystemConfigs ? ' 🛡️' : ''}{u.role === 'ADMIN' && u.canManageAdmins ? ' ⚡' : ''})
                 </option>
               ))}
             </select>
+            {currentUser?.status === 'DISABLED' && (
+              <span className="px-1.5 py-0.2 rounded bg-rose-900/90 text-rose-200 border border-rose-700 text-[10px] font-bold whitespace-nowrap">
+                已停用
+              </span>
+            )}
           </div>
 
           {/* 修改個人密碼按鈕 */}
