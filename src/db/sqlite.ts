@@ -662,18 +662,18 @@ export function seedInitialData(db: Database) {
       ('CHK-04', 'RC-990011', 'RECEIVABLE', 'COMP-01', '富鼎置地開發建設股份有限公司', 17850000, '2026-02-20', '2026-03-15', '國泰世華銀行', 'CLEARED', NULL, '合約訂金票據已全數兌現入帳');
   `);
 
-  // 9. 審計日誌 (含登入、身分異動、特許授權與單據操作)
+  // 9. 審計日誌 (純中文高可讀性格式，僅記錄實際修改差異，不使用代號)
   db.run(`
     INSERT INTO audit_logs (id, userId, userName, action, targetTable, targetId, beforeJson, afterJson, ipAddress, createdAt)
     VALUES
-      ('LOG-01', 'USR-001', '黃副總經理', 'LOGIN', 'users', 'USR-001', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.1.50","device":"Chrome / MacOS (工務處電腦)"}', '192.168.1.50', '2026-03-31 08:30:15'),
-      ('LOG-02', 'USR-002', '陳資訊主任', 'LOGIN', 'users', 'USR-002', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.1.62","device":"Chrome / Windows (資訊處)"}', '192.168.1.62', '2026-03-31 09:05:22'),
-      ('LOG-03', 'USR-002', '陳資訊主任', 'CREATE', 'users', 'USR-005', NULL, '{"username":"wang.proc","fullName":"王採購專員","role":"USER","group":"GRP-PROC"}', '192.168.1.62', '2026-03-31 09:30:00'),
-      ('LOG-04', 'USR-003', '林工務主任', 'LOGIN', 'users', 'USR-003', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.20.15","device":"iPad Pro (南港工地現場)"}', '192.168.20.15', '2026-03-31 10:12:00'),
-      ('LOG-05', 'USR-001', '黃副總經理', 'POST', 'purchase_orders', 'PO-01', '{"status":"APPROVED"}', '{"status":"POSTED","counterpartyNameSnapshot":"台灣水泥股份有限公司 (台北營業所)"}', '192.168.1.50', '2026-03-31 10:15:00'),
-      ('LOG-06', 'USR-004', '張會計長', 'LOGIN', 'users', 'USR-004', NULL, '{"action":"LOGIN_SUCCESS","ip":"192.168.1.75","device":"Chrome / Windows (財務室)"}', '192.168.1.75', '2026-03-31 11:20:00'),
-      ('LOG-07', 'USR-004', '張會計長', 'POST', 'valuations', 'VAL-01', '{"status":"SUBMITTED"}', '{"status":"POSTED","netPayableAmount":3550000}', '192.168.1.75', '2026-03-31 14:40:00'),
-      ('LOG-08', 'USR-001', '黃副總經理', 'UPDATE', 'users', 'USR-002', '{"canManageUsers":0}', '{"canManageUsers":1,"note":"Superadmin 特許陳主任擔任帳號專人"}', '192.168.1.50', '2026-03-31 15:10:00');
+      ('LOG-01', '最高管理者', '黃副總經理', '登入系統', '同仁帳號', '黃副總經理', NULL, '{"權限身分":"最高管理者","登入設備":"工務處電腦"}', '公司內網', '2026-03-31 08:30:15'),
+      ('LOG-02', '系統管理員', '陳資訊主任', '登入系統', '同仁帳號', '陳資訊主任', NULL, '{"權限身分":"系統管理員","登入設備":"資訊處電腦"}', '公司內網', '2026-03-31 09:05:22'),
+      ('LOG-03', '系統管理員', '陳資訊主任', '新增資料', '同仁帳號', '王採購專員', NULL, '{"同仁姓名":"王採購專員","權限角色":"一般同仁","所屬業務群組":"採購發包組"}', '公司內網', '2026-03-31 09:30:00'),
+      ('LOG-04', '一般同仁', '林工務主任', '登入系統', '同仁帳號', '林工務主任', NULL, '{"權限身分":"一般同仁","登入設備":"南港工地現場平板"}', '工地內網', '2026-03-31 10:12:00'),
+      ('LOG-05', '最高管理者', '黃副總經理', '單據過帳', '採購單', '南港案預拌混凝土採購單', '{"單據狀態":"已核准"}', '{"單據狀態":"已過帳"}', '公司內網', '2026-03-31 10:15:00'),
+      ('LOG-06', '一般同仁', '張會計長', '登入系統', '同仁帳號', '張會計長', NULL, '{"權限身分":"一般同仁","登入設備":"財務室電腦"}', '公司內網', '2026-03-31 11:20:00'),
+      ('LOG-07', '一般同仁', '張會計長', '單據過帳', '估驗計價單', '連續壁工程第一期估驗單', '{"單據狀態":"已送審"}', '{"單據狀態":"已過帳"}', '公司內網', '2026-03-31 14:40:00'),
+      ('LOG-08', '最高管理者', '黃副總經理', '修改資料', '同仁帳號', '陳資訊主任', '{"帳號管理專人特許":"關閉"}', '{"帳號管理專人特許":"開啟"}', '公司內網', '2026-03-31 15:10:00');
   `);
 }
 
@@ -825,17 +825,81 @@ export function getAllCompanies(): Company[] {
   });
 }
 
-// 儲存或更新公司法人/集團/個人實體
+// 儲存或更新公司法人/集團/個人實體 (僅記錄有修改之欄位，並以中文記錄)
 export function saveCompany(company: Partial<Company> & { id: string; name: string; companyCode: string }, operatorName: string = '系統管理員'): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
   const now = new Date().toISOString().substring(0, 10);
   const phonesJson = company.phones ? JSON.stringify(company.phones).replace(/'/g, "''") : '[]';
   const personnelJson = company.keyPersonnel ? JSON.stringify(company.keyPersonnel).replace(/'/g, "''") : '[]';
 
-  const check = dbInstance.exec(`SELECT count(*) FROM companies WHERE id = '${company.id}';`);
-  const exists = check.length && Number(check[0].values[0][0]) > 0;
+  const formatEntityCn = (t?: string) => t === 'GROUP' ? '集團母體' : t === 'PERSONAL' ? '個人帳戶' : '公司法人';
+  const formatPhonesCn = (arr?: PhoneItem[]) => (arr && arr.length > 0) ? arr.map(p => `${p.type || '電話'}:${p.number}`).join('、') : '未填寫';
+  const formatPersonnelCn = (arr?: KeyPerson[]) => (arr && arr.length > 0) ? arr.map(k => `${k.title}:${k.name}`).join('、') : '未填寫';
 
-  if (exists) {
+  const existingList = getAllCompanies();
+  const oldComp = existingList.find(c => c.id === company.id);
+
+  if (oldComp) {
+    const beforeDiff: Record<string, string> = {};
+    const afterDiff: Record<string, string> = {};
+
+    if (company.name !== undefined && company.name !== oldComp.name) {
+      beforeDiff['公司全銜'] = oldComp.name;
+      afterDiff['公司全銜'] = company.name;
+    }
+    if ((company.shortName || '') !== (oldComp.shortName || '')) {
+      beforeDiff['公司簡稱'] = oldComp.shortName || '未填寫';
+      afterDiff['公司簡稱'] = company.shortName || '未填寫';
+    }
+    if ((company.entityType || 'CORPORATION') !== (oldComp.entityType || 'CORPORATION')) {
+      beforeDiff['實體類型'] = formatEntityCn(oldComp.entityType);
+      afterDiff['實體類型'] = formatEntityCn(company.entityType);
+    }
+    if ((company.taxId || '') !== (oldComp.taxId || '')) {
+      beforeDiff['統一編號'] = oldComp.taxId || '未填寫';
+      afterDiff['統一編號'] = company.taxId || '未填寫';
+    }
+    if ((company.nationalId || '') !== (oldComp.nationalId || '')) {
+      beforeDiff['身分證字號'] = oldComp.nationalId || '未填寫';
+      afterDiff['身分證字號'] = company.nationalId || '未填寫';
+    }
+    if ((company.representative || '') !== (oldComp.representative || '')) {
+      beforeDiff['負責人'] = oldComp.representative || '未填寫';
+      afterDiff['負責人'] = company.representative || '未填寫';
+    }
+    if ((company.documentPrefix || '') !== (oldComp.documentPrefix || '')) {
+      beforeDiff['單據字軌'] = oldComp.documentPrefix || '未填寫';
+      afterDiff['單據字軌'] = company.documentPrefix || '未填寫';
+    }
+    if ((company.email || '') !== (oldComp.email || '')) {
+      beforeDiff['聯絡信箱'] = oldComp.email || '未填寫';
+      afterDiff['聯絡信箱'] = company.email || '未填寫';
+    }
+    if ((company.registeredAddress || '') !== (oldComp.registeredAddress || '')) {
+      beforeDiff['登記地址'] = oldComp.registeredAddress || '未填寫';
+      afterDiff['登記地址'] = company.registeredAddress || '未填寫';
+    }
+    if ((company.contactAddress || '') !== (oldComp.contactAddress || '')) {
+      beforeDiff['通訊地址'] = oldComp.contactAddress || '未填寫';
+      afterDiff['通訊地址'] = company.contactAddress || '未填寫';
+    }
+    if (Number(company.capitalAmount || 0) !== Number(oldComp.capitalAmount || 0)) {
+      beforeDiff['資本額'] = `NT$ ${Number(oldComp.capitalAmount || 0).toLocaleString()}`;
+      afterDiff['資本額'] = `NT$ ${Number(company.capitalAmount || 0).toLocaleString()}`;
+    }
+    const oldPhonesStr = formatPhonesCn(oldComp.phones);
+    const newPhonesStr = formatPhonesCn(company.phones);
+    if (oldPhonesStr !== newPhonesStr) {
+      beforeDiff['聯絡電話'] = oldPhonesStr;
+      afterDiff['聯絡電話'] = newPhonesStr;
+    }
+    const oldPersStr = formatPersonnelCn(oldComp.keyPersonnel);
+    const newPersStr = formatPersonnelCn(company.keyPersonnel);
+    if (oldPersStr !== newPersStr) {
+      beforeDiff['核心人員'] = oldPersStr;
+      afterDiff['核心人員'] = newPersStr;
+    }
+
     dbInstance.run(`
       UPDATE companies SET
         companyCode = '${company.companyCode}',
@@ -858,7 +922,9 @@ export function saveCompany(company: Partial<Company> & { id: string; name: stri
         updatedAt = '${now}'
       WHERE id = '${company.id}';
     `);
-    logAudit(dbInstance, operatorName, 'UPDATE', 'companies', company.id, undefined, company);
+    if (Object.keys(afterDiff).length > 0) {
+      logAudit(dbInstance, operatorName, '修改資料', '集團與公司設定', company.shortName || company.name, beforeDiff, afterDiff, operatorName);
+    }
   } else {
     dbInstance.run(`
       INSERT INTO companies (id, companyCode, name, shortName, entityType, parentId, taxId, nationalId, representative, keyPersonnel, documentPrefix, phones, email, registeredAddress, contactAddress, capitalAmount, baseCurrency, isDeleted, version, createdAt, updatedAt)
@@ -883,7 +949,12 @@ export function saveCompany(company: Partial<Company> & { id: string; name: stri
         0, 1, '${now}', '${now}'
       );
     `);
-    logAudit(dbInstance, operatorName, 'CREATE', 'companies', company.id, undefined, company);
+    logAudit(dbInstance, operatorName, '新增資料', '集團與公司設定', company.shortName || company.name, undefined, {
+      '公司全銜': company.name,
+      '公司簡稱': company.shortName || '無',
+      '實體類型': formatEntityCn(company.entityType),
+      '統一編號': company.taxId || '無'
+    }, operatorName);
   }
 
   saveDatabaseSnapshot();
@@ -904,8 +975,11 @@ export function deleteCompany(companyId: string, operatorName: string = '系統�
     throw new Error(`無法刪除：該集團下尚有 ${childCheck[0].values[0][0]} 個子公司或個人帳戶，請先將子公司移轉或刪除！`);
   }
 
+  const targetComp = getAllCompanies().find(c => c.id === companyId);
+  const compDisplayName = targetComp ? (targetComp.shortName || targetComp.name) : companyId;
+
   dbInstance.run(`UPDATE companies SET isDeleted = 1, updatedAt = '${new Date().toISOString().substring(0, 10)}' WHERE id = '${companyId}';`);
-  logAudit(dbInstance, operatorName, 'DELETE', 'companies', companyId, { id: companyId });
+  logAudit(dbInstance, operatorName, '刪除資料', '集團與公司設定', compDisplayName, { '實體狀態': '啟用中' }, { '實體狀態': '已標記刪除' }, operatorName);
   saveDatabaseSnapshot();
   notifyListeners();
 }
@@ -1246,11 +1320,12 @@ export function logAudit(
   const beforeJson = before ? JSON.stringify(before).replace(/'/g, "''") : null;
   const afterJson = after ? JSON.stringify(after).replace(/'/g, "''") : null;
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const safeUser = (userId || userName || '系統操作員').replace(/'/g, "''");
 
   db.run(`
     INSERT INTO audit_logs (id, userId, userName, action, targetTable, targetId, beforeJson, afterJson, ipAddress, createdAt)
-    VALUES ('${id}', '${userId || 'USR-ACTIVE'}', '${userName.replace(/'/g, "''")}', '${action}', '${targetTable}', '${targetId}', 
-      ${beforeJson ? `'${beforeJson}'` : 'NULL'}, ${afterJson ? `'${afterJson}'` : 'NULL'}, '127.0.0.1 (內網)', '${now}');
+    VALUES ('${id}', '${safeUser}', '${userName.replace(/'/g, "''")}', '${action}', '${targetTable}', '${targetId.replace(/'/g, "''")}', 
+      ${beforeJson ? `'${beforeJson}'` : 'NULL'}, ${afterJson ? `'${afterJson}'` : 'NULL'}, '公司內網', '${now}');
   `);
 }
 
@@ -1474,6 +1549,75 @@ export function ensureDatabaseIntegrity(db: Database) {
   } catch (e) {
     console.error('Superadmin integrity check failed', e);
   }
+
+  // 自動清理舊版含英文代號之日誌，並將既有種子審計日誌升級為高可讀性純中文差異格式
+  try {
+    db.run(`
+      DELETE FROM audit_logs 
+      WHERE action IN ('LOGIN','CREATE','UPDATE','DELETE','POST','VOID','PASSWORD_RESET','SELF_PASSWORD_CHANGE','STAGE_PENDING_DELETE','STAGE_ARCHIVE','RESTORE_USER','SUPERADMIN_RESTORE','PERMANENT_PURGE','AUTO_ARCHIVE','TRANSFER_SUPERADMIN')
+         OR targetTable IN ('users','companies','user_groups','purchase_orders','valuations');
+    `);
+    db.run(`
+      INSERT OR REPLACE INTO audit_logs (id, userId, userName, action, targetTable, targetId, beforeJson, afterJson, ipAddress, createdAt)
+      VALUES
+        ('LOG-01', '最高管理者', '黃副總經理', '登入系統', '同仁帳號', '黃副總經理', NULL, '{"權限身分":"最高管理者","登入設備":"工務處電腦"}', '公司內網', '2026-03-31 08:30:15'),
+        ('LOG-02', '系統管理員', '陳資訊主任', '登入系統', '同仁帳號', '陳資訊主任', NULL, '{"權限身分":"系統管理員","登入設備":"資訊處電腦"}', '公司內網', '2026-03-31 09:05:22'),
+        ('LOG-03', '系統管理員', '陳資訊主任', '新增資料', '同仁帳號', '王採購專員', NULL, '{"同仁姓名":"王採購專員","權限角色":"一般同仁","所屬業務群組":"採購發包組"}', '公司內網', '2026-03-31 09:30:00'),
+        ('LOG-04', '一般同仁', '林工務主任', '登入系統', '同仁帳號', '林工務主任', NULL, '{"權限身分":"一般同仁","登入設備":"南港工地現場平板"}', '工地內網', '2026-03-31 10:12:00'),
+        ('LOG-05', '最高管理者', '黃副總經理', '單據過帳', '採購單', '南港案預拌混凝土採購單', '{"單據狀態":"已核准"}', '{"單據狀態":"已過帳"}', '公司內網', '2026-03-31 10:15:00'),
+        ('LOG-06', '一般同仁', '張會計長', '登入系統', '同仁帳號', '張會計長', NULL, '{"權限身分":"一般同仁","登入設備":"財務室電腦"}', '公司內網', '2026-03-31 11:20:00'),
+        ('LOG-07', '一般同仁', '張會計長', '單據過帳', '估驗計價單', '連續壁工程第一期估驗單', '{"單據狀態":"已送審"}', '{"單據狀態":"已過帳"}', '公司內網', '2026-03-31 14:40:00'),
+        ('LOG-08', '最高管理者', '黃副總經理', '修改資料', '同仁帳號', '陳資訊主任', '{"帳號管理專人特許":"關閉"}', '{"帳號管理專人特許":"開啟"}', '公司內網', '2026-03-31 15:10:00');
+    `);
+  } catch (e) {}
+}
+
+// 中文名稱轉換輔助函式 (避免在審計日誌中出現英文代號)
+function formatRoleCn(role?: string): string {
+  if (role === 'SUPERADMIN') return '最高管理者';
+  if (role === 'ADMIN') return '系統管理員';
+  return '一般同仁';
+}
+
+function formatStatusCn(status?: string): string {
+  if (status === 'DISABLED') return '已停用';
+  return '啟用中';
+}
+
+function resolveGroupNamesCn(groupIds?: string[]): string {
+  if (!groupIds || groupIds.length === 0) return '無';
+  const fallbackMap: Record<string, string> = {
+    'GRP-ENG': '工務組',
+    'GRP-ACC': '財務會計組',
+    'GRP-PROC': '採購發包組',
+    'GRP-SALES': '專案業務組',
+  };
+  const allGroups = getAllUserGroups();
+  return groupIds
+    .map(gid => {
+      const found = allGroups.find(g => g.id === gid);
+      return found ? found.groupName : (fallbackMap[gid] || gid);
+    })
+    .join('、');
+}
+
+function resolveCompanyNamesCn(companyIds?: string[]): string {
+  if (!companyIds || companyIds.length === 0) return '無';
+  const fallbackMap: Record<string, string> = {
+    'GRP-01': '大巨集團',
+    'COMP-01': '大巨營造',
+    'COMP-02': '宏達機電',
+    'BOSS-01': '林董私帳',
+    'COMP-GROUP': '大巨集團',
+    'COMP-BOSS': '林董私帳',
+  };
+  const allComps = getAllCompanies();
+  return companyIds
+    .map(cid => {
+      const found = allComps.find(c => c.id === cid);
+      return found ? (found.shortName || found.name) : (fallbackMap[cid] || cid);
+    })
+    .join('、');
 }
 
 // 自動將逾期 7 天之冷卻同仁轉入 Superadmin 封存區
@@ -1495,9 +1639,15 @@ export function autoArchiveExpiredUsers(): void {
               stageNotes = '7日冷卻期屆滿，系統自動轉入 Superadmin 封存區'
           WHERE id = '${uId}';
         `);
-        logAudit(dbInstance, '系統排程', 'UPDATE', 'users', uId, 
-          { action: 'AUTO_ARCHIVE_EXPIRED', user: uName }, 
-          { deleteStage: 'ARCHIVED' }
+        logAudit(
+          dbInstance,
+          '系統排程',
+          '自動封存',
+          '同仁帳號',
+          uName,
+          { '帳號生命週期': '待刪除回收站 (7日冷卻)' },
+          { '帳號生命週期': '深度封存區 (冷卻期滿自動移交)' },
+          '系統排程'
         );
       }
       saveDatabaseSnapshot();
@@ -1581,6 +1731,7 @@ export function changeSelfPassword(
   }
 
   const user = check[0].values[0];
+  const fullName = String(user[2]);
   const dbPass = String(user[3] || '888888');
 
   if (dbPass !== currentPassword) {
@@ -1593,7 +1744,16 @@ export function changeSelfPassword(
     UPDATE users SET passwordHash = '${cleanPass}', isPasswordReset = 0, updatedAt = '${now}' WHERE id = '${userId}';
   `);
 
-  logAudit(dbInstance, String(user[2]), 'UPDATE', 'users', userId, { action: 'CHANGE_SELF_PASSWORD' }, undefined);
+  logAudit(
+    dbInstance,
+    fullName,
+    '修改個人密碼',
+    '同仁帳號',
+    fullName,
+    { '登入密碼': '原個人密碼' },
+    { '登入密碼': '已自主更新為新密碼' },
+    fullName
+  );
   saveDatabaseSnapshot();
   notifyListeners();
 }
@@ -1711,16 +1871,21 @@ export function createUser(
     VALUES ('${id}', '${newUser.username.replace(/'/g, "''")}', '${newUser.fullName.replace(/'/g, "''")}', '${(newUser.email || '').replace(/'/g, "''")}', '${newUser.role}', ${canManageUserMgr}, ${canManageConfigs}, ${canManagePeers}, ${primaryGroupId}, ${groupIdsJson}, 'ACTIVE', ${title}, ${compsJson}, '${defComp}', '${pass}', 0, '${now}', '${now}');
   `);
 
-  logAudit(dbInstance, operatorName, 'CREATE', 'users', id, undefined, {
-    username: newUser.username,
-    fullName: newUser.fullName,
-    role: newUser.role,
-    canManageUsers: Boolean(canManageUserMgr),
-    canManageSystemConfigs: Boolean(canManageConfigs),
-    canManageAdmins: Boolean(canManagePeers),
-    groupId: selectedGroupIds[0],
-    groupIds: selectedGroupIds
-  });
+  const createSummary: Record<string, string> = {
+    '同仁姓名': newUser.fullName,
+    '權限角色': formatRoleCn(newUser.role),
+    '職務職稱': newUser.title || '未填寫',
+    '授權營運法人': resolveCompanyNamesCn(comps),
+  };
+  if (newUser.role === 'USER') {
+    createSummary['所屬業務群組'] = resolveGroupNamesCn(selectedGroupIds);
+  } else {
+    if (canManageUserMgr) createSummary['帳號管理專人特許'] = '開啟';
+    if (canManageConfigs) createSummary['全域核心參數特許'] = '開啟';
+    if (canManagePeers) createSummary['同階管理員維護特許'] = '開啟';
+  }
+
+  logAudit(dbInstance, operatorName, '新增資料', '同仁帳號', newUser.fullName, undefined, createSummary, operatorName);
 
   saveDatabaseSnapshot();
   notifyListeners();
@@ -1747,7 +1912,7 @@ export function createUser(
   };
 }
 
-// 更新使用者帳號 (含帳號管理專人、階層原則與 canManageAdmins 防呆保護)
+// 更新使用者帳號 (含帳號管理專人、階層原則與 canManageAdmins 防呆保護，且僅記錄實際有修改之欄位)
 export function updateUser(
   updateData: {
     id: string;
@@ -1782,13 +1947,34 @@ export function updateUser(
     throw new Error('無帳號管理專人權限：系統帳號維護需由 Superadmin 特別指定之專人 Admin 始得操作！');
   }
 
-  // 取得原目標帳號
-  const currentRes = dbInstance.exec(`SELECT id, username, fullName, role, status FROM users WHERE id = '${updateData.id}';`);
+  // 取得原目標帳號完整資料以便精準比對修改差異
+  const currentRes = dbInstance.exec(`
+    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId 
+    FROM users WHERE id = '${updateData.id}';
+  `);
   if (!currentRes.length || !currentRes[0].values.length) {
     throw new Error('找不到指定帳號！');
   }
 
-  const targetRole = currentRes[0].values[0][3] as string;
+  const oldRow = currentRes[0].values[0];
+  const oldFullName = String(oldRow[2] || '');
+  const oldEmail = String(oldRow[3] || '');
+  const targetRole = String(oldRow[4] || 'USER');
+  const oldCanManageUsers = Boolean(oldRow[5]);
+  const oldCanManageConfigs = Boolean(oldRow[6]);
+  const oldCanManageAdmins = Boolean(oldRow[7]);
+  let oldGroupIds: string[] = [];
+  try {
+    if (oldRow[9]) oldGroupIds = JSON.parse(String(oldRow[9]));
+  } catch (e) {}
+  if (oldGroupIds.length === 0 && oldRow[8]) oldGroupIds = [String(oldRow[8])];
+  const oldStatus = String(oldRow[10] || 'ACTIVE');
+  const oldTitle = String(oldRow[11] || '');
+  let oldAllowedComps: string[] = ['COMP-01'];
+  try {
+    if (oldRow[12]) oldAllowedComps = JSON.parse(String(oldRow[12]));
+  } catch (e) {}
+  const oldDefaultComp = String(oldRow[13] || 'COMP-01');
 
   // 憲法防呆：一般 Admin 不得變更 Superadmin 帳號
   if (targetRole === 'SUPERADMIN' && operatorRole !== 'SUPERADMIN') {
@@ -1824,28 +2010,90 @@ export function updateUser(
   const now = new Date().toISOString().substring(0, 10);
   updates.push(`updatedAt = '${now}'`);
 
-  if (updateData.fullName !== undefined) updates.push(`fullName = '${updateData.fullName.replace(/'/g, "''")}'`);
-  if (updateData.email !== undefined) updates.push(`email = '${updateData.email.replace(/'/g, "''")}'`);
-  if (updateData.title !== undefined) updates.push(`title = '${updateData.title.replace(/'/g, "''")}'`);
-  if (updateData.status !== undefined) updates.push(`status = '${updateData.status}'`);
-  if (updateData.role !== undefined) updates.push(`role = '${updateData.role}'`);
+  // 準備記錄有實際修改之欄位 (純中文對照)
+  const beforeDiff: Record<string, string> = {};
+  const afterDiff: Record<string, string> = {};
+
+  if (updateData.fullName !== undefined) {
+    const trimmed = updateData.fullName.trim();
+    updates.push(`fullName = '${trimmed.replace(/'/g, "''")}'`);
+    if (trimmed !== oldFullName) {
+      beforeDiff['同仁姓名'] = oldFullName;
+      afterDiff['同仁姓名'] = trimmed;
+    }
+  }
+  if (updateData.email !== undefined) {
+    const trimmed = updateData.email.trim();
+    updates.push(`email = '${trimmed.replace(/'/g, "''")}'`);
+    if (trimmed !== oldEmail) {
+      beforeDiff['電子信箱'] = oldEmail || '未填寫';
+      afterDiff['電子信箱'] = trimmed || '未填寫';
+    }
+  }
+  if (updateData.title !== undefined) {
+    const trimmed = updateData.title.trim();
+    updates.push(`title = '${trimmed.replace(/'/g, "''")}'`);
+    if (trimmed !== oldTitle) {
+      beforeDiff['職務職稱'] = oldTitle || '未填寫';
+      afterDiff['職務職稱'] = trimmed || '未填寫';
+    }
+  }
+  if (updateData.status !== undefined) {
+    updates.push(`status = '${updateData.status}'`);
+    if (updateData.status !== oldStatus) {
+      beforeDiff['帳號狀態'] = formatStatusCn(oldStatus);
+      afterDiff['帳號狀態'] = formatStatusCn(updateData.status);
+    }
+  }
+  if (updateData.role !== undefined) {
+    updates.push(`role = '${updateData.role}'`);
+    if (updateData.role !== targetRole) {
+      beforeDiff['權限角色'] = formatRoleCn(targetRole);
+      afterDiff['權限角色'] = formatRoleCn(updateData.role);
+    }
+  }
 
   // 角色變更與特許授權防護：
+  const effectiveRole = updateData.role !== undefined ? updateData.role : targetRole;
   if (updateData.role === 'USER') {
     // 當同仁身分被設定/降級為 USER 時，原子化自動收回並歸零所有管理特許項目
     updates.push(`canManageUsers = 0`);
     updates.push(`canManageSystemConfigs = 0`);
     updates.push(`canManageAdmins = 0`);
+    if (oldCanManageUsers) {
+      beforeDiff['帳號管理專人特許'] = '開啟';
+      afterDiff['帳號管理專人特許'] = '關閉 (隨降級自動收回)';
+    }
+    if (oldCanManageConfigs) {
+      beforeDiff['全域核心參數特許'] = '開啟';
+      afterDiff['全域核心參數特許'] = '關閉 (隨降級自動收回)';
+    }
+    if (oldCanManageAdmins) {
+      beforeDiff['同階管理員維護特許'] = '開啟';
+      afterDiff['同階管理員維護特許'] = '關閉 (隨降級自動收回)';
+    }
   } else if (operatorRole === 'SUPERADMIN') {
     // 唯獨系統最高 Superadmin 才有權限開啟或調整 Admin 進階特許
     if (updateData.canManageUsers !== undefined) {
       updates.push(`canManageUsers = ${updateData.canManageUsers ? 1 : 0}`);
+      if (Boolean(updateData.canManageUsers) !== oldCanManageUsers) {
+        beforeDiff['帳號管理專人特許'] = oldCanManageUsers ? '開啟' : '關閉';
+        afterDiff['帳號管理專人特許'] = updateData.canManageUsers ? '開啟' : '關閉';
+      }
     }
     if (updateData.canManageSystemConfigs !== undefined) {
       updates.push(`canManageSystemConfigs = ${updateData.canManageSystemConfigs ? 1 : 0}`);
+      if (Boolean(updateData.canManageSystemConfigs) !== oldCanManageConfigs) {
+        beforeDiff['全域核心參數特許'] = oldCanManageConfigs ? '開啟' : '關閉';
+        afterDiff['全域核心參數特許'] = updateData.canManageSystemConfigs ? '開啟' : '關閉';
+      }
     }
     if (updateData.canManageAdmins !== undefined) {
       updates.push(`canManageAdmins = ${updateData.canManageAdmins ? 1 : 0}`);
+      if (Boolean(updateData.canManageAdmins) !== oldCanManageAdmins) {
+        beforeDiff['同階管理員維護特許'] = oldCanManageAdmins ? '開啟' : '關閉';
+        afterDiff['同階管理員維護特許'] = updateData.canManageAdmins ? '開啟' : '關閉';
+      }
     }
   } else {
     // 非 Superadmin 操作者：若試圖開啟特許則強制攔截，若未試圖開啟則自動忽略防禦性阻擋
@@ -1856,9 +2104,19 @@ export function updateUser(
 
   if (updateData.allowedCompanies !== undefined) {
     updates.push(`allowedCompanies = '${JSON.stringify(updateData.allowedCompanies)}'`);
+    const oldCompKey = [...oldAllowedComps].sort().join(',');
+    const newCompKey = [...updateData.allowedCompanies].sort().join(',');
+    if (oldCompKey !== newCompKey) {
+      beforeDiff['授權營運法人'] = resolveCompanyNamesCn(oldAllowedComps);
+      afterDiff['授權營運法人'] = resolveCompanyNamesCn(updateData.allowedCompanies);
+    }
   }
   if (updateData.defaultCompanyId !== undefined) {
     updates.push(`defaultCompanyId = '${updateData.defaultCompanyId}'`);
+    if (updateData.defaultCompanyId !== oldDefaultComp) {
+      beforeDiff['預設登入法人'] = resolveCompanyNamesCn([oldDefaultComp]);
+      afterDiff['預設登入法人'] = resolveCompanyNamesCn([updateData.defaultCompanyId]);
+    }
   }
   
   if (updateData.groupIds !== undefined) {
@@ -1869,19 +2127,41 @@ export function updateUser(
     } else {
       updates.push(`groupId = NULL`);
     }
+    const oldGrpKey = [...oldGroupIds].sort().join(',');
+    const newGrpKey = [...updateData.groupIds].sort().join(',');
+    if (oldGrpKey !== newGrpKey && (effectiveRole === 'USER' || targetRole === 'USER')) {
+      beforeDiff['所屬業務群組'] = resolveGroupNamesCn(oldGroupIds);
+      afterDiff['所屬業務群組'] = resolveGroupNamesCn(updateData.groupIds);
+    }
   } else if (updateData.groupId !== undefined) {
     updates.push(updateData.groupId ? `groupId = '${updateData.groupId}'` : `groupId = NULL`);
     updates.push(updateData.groupId ? `groupIds = '["${updateData.groupId}"]'` : `groupIds = '[]'`);
+    const newArr = updateData.groupId ? [updateData.groupId] : [];
+    const oldGrpKey = [...oldGroupIds].sort().join(',');
+    const newGrpKey = [...newArr].sort().join(',');
+    if (oldGrpKey !== newGrpKey && (effectiveRole === 'USER' || targetRole === 'USER')) {
+      beforeDiff['所屬業務群組'] = resolveGroupNamesCn(oldGroupIds);
+      afterDiff['所屬業務群組'] = resolveGroupNamesCn(newArr);
+    }
   }
 
   dbInstance.run(`
     UPDATE users SET ${updates.join(', ')} WHERE id = '${updateData.id}';
   `);
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', updateData.id, 
-    { fullName: currentRes[0].values[0][2], role: targetRole }, 
-    updateData
-  );
+  // 僅在實際有欄位發生變更時才寫入審計日誌
+  if (Object.keys(afterDiff).length > 0) {
+    logAudit(
+      dbInstance,
+      operatorName,
+      '修改資料',
+      '同仁帳號',
+      updateData.fullName?.trim() || oldFullName,
+      beforeDiff,
+      afterDiff,
+      operatorName
+    );
+  }
 
   saveDatabaseSnapshot();
   notifyListeners();
@@ -1939,6 +2219,7 @@ export function resetUserPassword(
   }
 
   const role = check[0].values[0][1] as string;
+  const fullName = String(check[0].values[0][2]);
   if (role === 'SUPERADMIN' && operatorRole !== 'SUPERADMIN') {
     throw new Error('憲法保護防禦：一般 Admin 無權重設系統最高 Superadmin 密碼！');
   }
@@ -1953,7 +2234,16 @@ export function resetUserPassword(
     UPDATE users SET passwordHash = '${cleanPass}', isPasswordReset = 1, updatedAt = '${now}' WHERE id = '${userId}';
   `);
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, { action: 'RESET_PASSWORD' }, { targetUser: check[0].values[0][2] });
+  logAudit(
+    dbInstance,
+    operatorName,
+    '重設密碼',
+    '同仁帳號',
+    fullName,
+    { '密碼狀態': '原密碼' },
+    { '密碼狀態': '已由管理員重設密碼' },
+    operatorName
+  );
   saveDatabaseSnapshot();
   notifyListeners();
 }
@@ -1997,7 +2287,6 @@ export function markUserPendingDelete(
 
   const role = check[0].values[0][1] as string;
   const fullName = check[0].values[0][2] as string;
-  const username = check[0].values[0][3] as string;
   const currentStage = check[0].values[0][4] as string;
 
   if (role === 'SUPERADMIN') {
@@ -2031,9 +2320,15 @@ export function markUserPendingDelete(
     WHERE id = '${userId}';
   `);
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
-    { action: 'STAGE1_DELETE_PENDING', fullName, username }, 
-    { deleteStage: 'PENDING_DELETE', purgeDueAt }
+  logAudit(
+    dbInstance,
+    operatorName,
+    '移入回收站',
+    '同仁帳號',
+    fullName,
+    { '帳號狀態': '啟用中 (正常在職)' },
+    { '帳號狀態': '已停用 (移入待刪除回收站 7 日冷卻)' },
+    operatorName
   );
   saveDatabaseSnapshot();
   notifyListeners();
@@ -2063,7 +2358,6 @@ export function restorePendingUser(
   }
 
   const fullName = check[0].values[0][2] as string;
-  const username = check[0].values[0][3] as string;
 
   dbInstance.run(`
     UPDATE users 
@@ -2076,9 +2370,15 @@ export function restorePendingUser(
     WHERE id = '${userId}';
   `);
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
-    { action: 'RESTORE_FROM_PENDING', fullName, username }, 
-    { deleteStage: 'ACTIVE', status: 'ACTIVE' }
+  logAudit(
+    dbInstance,
+    operatorName,
+    '復原帳號',
+    '同仁帳號',
+    fullName,
+    { '帳號狀態': '待刪除回收站 (已停用)' },
+    { '帳號狀態': '啟用中 (正常在職)' },
+    operatorName
   );
   saveDatabaseSnapshot();
   notifyListeners();
@@ -2105,7 +2405,6 @@ export function advanceUserToArchive(
 
   const role = check[0].values[0][1] as string;
   const fullName = check[0].values[0][2] as string;
-  const username = check[0].values[0][3] as string;
 
   if (role === 'SUPERADMIN') {
     throw new Error('【憲法金身防護】系統唯一最高管理員嚴禁封存！');
@@ -2127,9 +2426,15 @@ export function advanceUserToArchive(
     WHERE id = '${userId}';
   `);
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
-    { action: 'STAGE2_MANUAL_ADVANCE_ARCHIVE', fullName, username }, 
-    { deleteStage: 'ARCHIVED' }
+  logAudit(
+    dbInstance,
+    operatorName,
+    '移入封存區',
+    '同仁帳號',
+    fullName,
+    { '帳號狀態': '待刪除回收站 (7日冷卻)' },
+    { '帳號狀態': '深度封存區 (提前二次刪除封存)' },
+    operatorName
   );
   saveDatabaseSnapshot();
   notifyListeners();
@@ -2148,7 +2453,6 @@ export function superadminRestoreArchivedUser(
   }
 
   const fullName = check[0].values[0][2] as string;
-  const username = check[0].values[0][3] as string;
 
   dbInstance.run(`
     UPDATE users 
@@ -2161,9 +2465,15 @@ export function superadminRestoreArchivedUser(
     WHERE id = '${userId}';
   `);
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, 
-    { action: 'SUPERADMIN_RESTORE_ARCHIVED', fullName, username }, 
-    { deleteStage: 'ACTIVE', status: 'ACTIVE' }
+  logAudit(
+    dbInstance,
+    operatorName,
+    '終極救回帳號',
+    '同仁帳號',
+    fullName,
+    { '帳號狀態': '深度封存區 (已停用)' },
+    { '帳號狀態': '啟用中 (正常在職)' },
+    operatorName
   );
   saveDatabaseSnapshot();
   notifyListeners();
@@ -2188,7 +2498,6 @@ export function superadminPermanentPurge(
 
   const role = check[0].values[0][1] as string;
   const fullName = check[0].values[0][2] as string;
-  const username = check[0].values[0][3] as string;
 
   if (role === 'SUPERADMIN') {
     throw new Error('【憲法金身防護】系統唯一最高管理員 (Superadmin) 具備永久保護，嚴禁清除！');
@@ -2196,9 +2505,15 @@ export function superadminPermanentPurge(
 
   dbInstance.run(`DELETE FROM users WHERE id = '${userId}';`);
 
-  logAudit(dbInstance, operatorName, 'DELETE', 'users', userId, 
-    { action: 'STAGE3_PHYSICAL_PURGE', fullName, username }, 
-    undefined
+  logAudit(
+    dbInstance,
+    operatorName,
+    '永久物理清除',
+    '同仁帳號',
+    fullName,
+    { '帳號狀態': '深度封存區' },
+    { '帳號狀態': '已從資料庫永久抹除' },
+    operatorName
   );
   saveDatabaseSnapshot();
   notifyListeners();
@@ -2228,11 +2543,16 @@ export function restoreUser(
     VALUES ('${user.id}', '${user.username.replace(/'/g, "''")}', '${user.fullName.replace(/'/g, "''")}', '${(user.email || '').replace(/'/g, "''")}', '${user.role}', ${user.canManageUsers ? 1 : 0}, ${user.canManageSystemConfigs ? 1 : 0}, ${user.canManageAdmins ? 1 : 0}, ${primaryGroupId}, ${groupIdsJson}, '${user.status || 'ACTIVE'}', ${title}, ${compsJson}, '${user.defaultCompanyId || 'COMP-01'}', '${pass}', ${user.isPasswordReset ? 1 : 0}, '${user.createdAt || now}', '${now}');
   `);
 
-  logAudit(dbInstance, operatorName, 'CREATE', 'users', user.id, undefined, {
-    action: 'RESTORE_USER',
-    restoredUser: user.fullName,
-    username: user.username
-  });
+  logAudit(
+    dbInstance,
+    operatorName,
+    '復原帳號',
+    '同仁帳號',
+    user.fullName,
+    { '帳號狀態': '待刪除回收站' },
+    { '帳號狀態': '啟用中 (正常在職)' },
+    operatorName
+  );
 
   saveDatabaseSnapshot();
   notifyListeners();
@@ -2278,9 +2598,15 @@ export function transferSuperadmin(
     throw e;
   }
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', targetUserId, 
-    { action: 'TRANSFER_SUPERADMIN', previousSuperadmin: oldName },
-    { newSuperadmin: newName }
+  logAudit(
+    dbInstance,
+    operatorName,
+    '最高權限交接',
+    '同仁帳號',
+    newName,
+    { '唯一最高管理者': oldName },
+    { '唯一最高管理者': newName },
+    operatorName
   );
 
   saveDatabaseSnapshot();
@@ -2328,7 +2654,20 @@ export function createGroup(
     `);
   }
 
-  logAudit(dbInstance, operatorName, 'CREATE', 'user_groups', id, undefined, { groupName: group.groupName, approvalLimit: group.approvalLimit });
+  logAudit(
+    dbInstance,
+    operatorName,
+    '新增資料',
+    '權限群組',
+    group.groupName,
+    undefined,
+    {
+      '群組名稱': group.groupName,
+      '核准金額上限': `NT$ ${Number(group.approvalLimit || 0).toLocaleString()}`,
+      '匯出報表權限': group.canExport ? '允許' : '禁止',
+    },
+    operatorName
+  );
   saveDatabaseSnapshot();
   notifyListeners();
 
@@ -2345,7 +2684,7 @@ export function createGroup(
   };
 }
 
-// 更新群組與模組權限矩陣
+// 更新群組與模組權限矩陣 (僅記錄有修改之群組屬性與模組權限，全中文呈現)
 export function updateGroup(
   group: {
     id: string;
@@ -2365,6 +2704,40 @@ export function updateGroup(
 ): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
 
+  const oldGroup = getAllUserGroups().find(g => g.id === group.id);
+  const oldPerms = getAllGroupPermissions(group.id);
+  const beforeDiff: Record<string, string> = {};
+  const afterDiff: Record<string, string> = {};
+
+  if (oldGroup) {
+    if (group.groupName !== undefined && group.groupName !== oldGroup.groupName) {
+      beforeDiff['群組名稱'] = oldGroup.groupName;
+      afterDiff['群組名稱'] = group.groupName;
+    }
+    if (group.description !== undefined && group.description !== oldGroup.description) {
+      beforeDiff['職責說明'] = oldGroup.description || '無';
+      afterDiff['職責說明'] = group.description || '無';
+    }
+    if (group.approvalLimit !== undefined && Number(group.approvalLimit) !== Number(oldGroup.approvalLimit)) {
+      beforeDiff['核准金額上限'] = `NT$ ${Number(oldGroup.approvalLimit).toLocaleString()}`;
+      afterDiff['核准金額上限'] = `NT$ ${Number(group.approvalLimit).toLocaleString()}`;
+    }
+    if (group.canExport !== undefined && Boolean(group.canExport) !== Boolean(oldGroup.canExport)) {
+      beforeDiff['全域匯出權限'] = oldGroup.canExport ? '允許' : '禁止';
+      afterDiff['全域匯出權限'] = group.canExport ? '允許' : '禁止';
+    }
+  }
+
+  const formatPermActionsCn = (p?: { canRead: boolean; canWrite: boolean; canApprove: boolean; canExport: boolean }) => {
+    if (!p) return '無權限';
+    const list: string[] = [];
+    if (p.canRead) list.push('檢視');
+    if (p.canWrite) list.push('編輯');
+    if (p.canApprove) list.push('審批');
+    if (p.canExport) list.push('匯出');
+    return list.length > 0 ? list.join('、') : '無權限';
+  };
+
   const now = new Date().toISOString().substring(0, 10);
   const updates: string[] = [`updatedAt = '${now}'`];
 
@@ -2377,6 +2750,15 @@ export function updateGroup(
 
   if (permissions) {
     for (const p of permissions) {
+      const oldP = oldPerms.find(item => item.moduleKey === p.moduleKey);
+      const oldPermStr = formatPermActionsCn(oldP);
+      const newPermStr = formatPermActionsCn(p);
+      if (oldPermStr !== newPermStr) {
+        const modName = SYSTEM_MODULES.find(m => m.key === p.moduleKey)?.name || p.moduleKey;
+        beforeDiff[`${modName}權限`] = oldPermStr;
+        afterDiff[`${modName}權限`] = newPermStr;
+      }
+
       const check = dbInstance.exec(`SELECT id FROM group_module_permissions WHERE groupId = '${group.id}' AND moduleKey = '${p.moduleKey}';`);
       if (check.length && check[0].values.length) {
         dbInstance.run(`
@@ -2394,7 +2776,10 @@ export function updateGroup(
     }
   }
 
-  logAudit(dbInstance, operatorName, 'UPDATE', 'user_groups', group.id, undefined, group);
+  if (Object.keys(afterDiff).length > 0) {
+    const grpDisplayName = group.groupName || oldGroup?.groupName || group.id;
+    logAudit(dbInstance, operatorName, '修改資料', '權限群組', grpDisplayName, beforeDiff, afterDiff, operatorName);
+  }
   saveDatabaseSnapshot();
   notifyListeners();
 }
@@ -2412,6 +2797,7 @@ export function deleteGroup(groupId: string, operatorName: string): void {
     throw new Error('【憲法安全保護】系統預設四大核心業務群組（工務、財務、採購、業務）禁止刪除！');
   }
 
+  const grpName = String(check[0].values[0][1]);
   const allUsers = getAllUsers();
   const members = allUsers.filter(u => u.groupId === groupId || (u.groupIds && u.groupIds.includes(groupId)));
   if (members.length > 0) {
@@ -2421,7 +2807,7 @@ export function deleteGroup(groupId: string, operatorName: string): void {
   dbInstance.run(`DELETE FROM group_module_permissions WHERE groupId = '${groupId}';`);
   dbInstance.run(`DELETE FROM user_groups WHERE id = '${groupId}';`);
 
-  logAudit(dbInstance, operatorName, 'DELETE', 'user_groups', groupId, { groupName: check[0].values[0][1] }, undefined);
+  logAudit(dbInstance, operatorName, '刪除資料', '權限群組', grpName, { '群組名稱': grpName }, { '群組狀態': '已刪除' }, operatorName);
   saveDatabaseSnapshot();
   notifyListeners();
 }
@@ -2434,14 +2820,28 @@ export function assignUserGroup(userId: string, groupId: string, operatorName: s
 // 指派同仁所屬多群組矩陣
 export function assignUserGroups(userId: string, groupIds: string[], operatorName: string): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const targetUser = getAllUsers().find(u => u.id === userId);
+  const oldGroupIds = targetUser?.groupIds || (targetUser?.groupId ? [targetUser.groupId] : []);
   const now = new Date().toISOString().substring(0, 10);
   const primary = groupIds.length > 0 ? `'${groupIds[0]}'` : 'NULL';
   const jsonStr = JSON.stringify(groupIds);
   dbInstance.run(`
     UPDATE users SET groupId = ${primary}, groupIds = '${jsonStr}', updatedAt = '${now}' WHERE id = '${userId}';
   `);
-  logAudit(dbInstance, operatorName, 'UPDATE', 'users', userId, undefined, { assignedGroupIds: groupIds });
+  if ([...oldGroupIds].sort().join(',') !== [...groupIds].sort().join(',')) {
+    logAudit(
+      dbInstance,
+      operatorName,
+      '修改資料',
+      '同仁帳號',
+      targetUser?.fullName || userId,
+      { '所屬業務群組': resolveGroupNamesCn(oldGroupIds) },
+      { '所屬業務群組': resolveGroupNamesCn(groupIds) },
+      operatorName
+    );
+  }
   saveDatabaseSnapshot();
   notifyListeners();
 }
+
 

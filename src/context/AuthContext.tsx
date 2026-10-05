@@ -100,20 +100,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const target = allUsers.find(u => u.id === userId);
     if (target) {
+      const roleCn = target.role === 'SUPERADMIN' ? '最高管理者' : target.role === 'ADMIN' ? '系統管理員' : '一般同仁';
       recordAuditLog(
         target.fullName,
-        'LOGIN',
-        'users',
-        target.id,
+        '登入系統',
+        '同仁帳號',
+        target.fullName,
         {
-          action: 'LOGIN_SUCCESS',
-          username: target.username,
-          fullName: target.fullName,
-          role: target.role,
-          title: target.title || '無職稱',
-          time: new Date().toLocaleString()
+          '權限身分': roleCn,
+          '職務職稱': target.title || '無職稱',
         },
-        target.id
+        roleCn
       );
     }
   }, [allUsers]);

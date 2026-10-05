@@ -844,28 +844,173 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     });
   }, [activeUsers, searchTerm, roleFilter, statusFilter, privilegeFilter]);
 
+  // 審計日誌純中文轉譯輔助函式（確保完全不顯示英文代號或系統代碼）
+  const translateAuditAction = (action: string): string => {
+    const map: Record<string, string> = {
+      LOGIN: '登入系統',
+      SWITCH_USER: '切換身分登入',
+      CREATE: '新增資料',
+      UPDATE: '修改資料',
+      DELETE: '刪除資料',
+      POST: '單據過帳',
+      VOID: '單據作廢',
+      PASSWORD_RESET: '重設密碼',
+      SELF_PASSWORD_CHANGE: '修改個人密碼',
+      STAGE_PENDING_DELETE: '移入回收站',
+      STAGE_ARCHIVE: '移入封存區',
+      AUTO_ARCHIVE: '自動封存',
+      RESTORE_USER: '復原帳號',
+      SUPERADMIN_RESTORE: '終極救回帳號',
+      PERMANENT_PURGE: '永久物理清除',
+      TRANSFER_SUPERADMIN: '最高權限交接',
+    };
+    return map[action] || action;
+  };
+
+  const translateAuditTable = (table: string): string => {
+    const map: Record<string, string> = {
+      users: '同仁帳號',
+      user_groups: '權限群組',
+      group_module_permissions: '模組權限矩陣',
+      companies: '集團與公司設定',
+      purchase_orders: '採購單',
+      valuations: '估驗計價單',
+      quotations: '報價單',
+      projects: '專案工程',
+      subcontracts: '發包合約',
+      system_configs: '系統參數',
+    };
+    return map[table] || table;
+  };
+
+  const translateAuditTarget = (targetId: string): string => {
+    if (!targetId) return '';
+    // 移除括號內英文代號如 (PO-01)、(VAL-01)
+    const cleaned = targetId.replace(/\s*\([A-Za-z0-9_-]+\)/g, '').trim();
+    const matchedUser = allUsers.find(u => u.id === cleaned || u.username === cleaned);
+    if (matchedUser) return matchedUser.fullName;
+    const matchedGroup = allGroups.find(g => g.id === cleaned || g.groupCode === cleaned);
+    if (matchedGroup) return matchedGroup.groupName;
+    const matchedComp = companies.find(c => c.id === cleaned || c.companyCode === cleaned);
+    if (matchedComp) return matchedComp.shortName || matchedComp.name;
+    return cleaned;
+  };
+
+  const translateAuditKey = (key: string): string => {
+    const map: Record<string, string> = {
+      username: '登入帳號',
+      fullName: '同仁姓名',
+      role: '權限角色',
+      status: '帳號狀態',
+      title: '職務職稱',
+      email: '電子信箱',
+      groupId: '所屬業務群組',
+      groupIds: '所屬業務群組',
+      allowedCompanies: '授權營運法人',
+      defaultCompanyId: '預設登入法人',
+      canManageUsers: '帳號管理專人特許',
+      canManageSystemConfigs: '全域核心參數特許',
+      canManageAdmins: '同階管理員維護特許',
+      event: '事件說明',
+      device: '登入設備',
+      vendor: '供應商名稱',
+      netPayable: '實付淨額',
+      deleteStage: '帳號狀態',
+      reason: '操作原因',
+    };
+    return map[key] || key;
+  };
+
+  const translateAuditValue = (val: unknown): string => {
+    if (val === null || val === undefined) return '無';
+    if (typeof val === 'boolean') return val ? '開啟' : '關閉';
+    if (Array.isArray(val)) {
+      if (val.length === 0) return '無';
+      return val.map(item => translateAuditValue(item)).join('、');
+    }
+    const str = String(val);
+    const valMap: Record<string, string> = {
+      SUPERADMIN: '最高管理者',
+      ADMIN: '系統管理員',
+      USER: '一般同仁',
+      ACTIVE: '啟用中',
+      DISABLED: '已停用',
+      PENDING_DELETE: '待刪除回收站',
+      ARCHIVED: '深度封存區',
+      POSTED: '已過帳',
+      APPROVED: '已核准',
+      SUBMITTED: '已送審',
+      DRAFT: '草稿',
+      true: '開啟',
+      false: '關閉',
+      'GRP-ENG': '工務組',
+      'GRP-ACC': '財務會計組',
+      'GRP-PROC': '採購發包組',
+      'GRP-SALES': '專案業務組',
+      'GRP-01': '大巨集團',
+      'COMP-01': '大巨營造',
+      'COMP-02': '宏達機電',
+      'BOSS-01': '林董私帳',
+    };
+    if (valMap[str]) return valMap[str];
+    const matchedUser = allUsers.find(u => u.id === str);
+    if (matchedUser) return matchedUser.fullName;
+    const matchedGroup = allGroups.find(g => g.id === str);
+    if (matchedGroup) return matchedGroup.groupName;
+    const matchedComp = companies.find(c => c.id === str);
+    if (matchedComp) return matchedComp.shortName || matchedComp.name;
+    return str;
+  };
+
   // 篩選後的稽核日誌列表
   const filteredAuditLogs = useMemo(() => {
     return auditLogs.filter(log => {
+      const actionCn = translateAuditAction(log.action);
+      const tableCn = translateAuditTable(log.targetTable);
+      const targetCn = translateAuditTarget(log.targetId);
+
       // 關鍵字搜尋
       if (auditSearchTerm.trim()) {
         const t = auditSearchTerm.toLowerCase();
         const matchUser = log.userName.toLowerCase().includes(t) || log.userId.toLowerCase().includes(t);
-        const matchTable = log.targetTable.toLowerCase().includes(t);
-        const matchId = log.targetId.toLowerCase().includes(t);
-        const matchAction = log.action.toLowerCase().includes(t);
+        const matchTable = tableCn.toLowerCase().includes(t) || log.targetTable.toLowerCase().includes(t);
+        const matchId = targetCn.toLowerCase().includes(t) || log.targetId.toLowerCase().includes(t);
+        const matchAction = actionCn.toLowerCase().includes(t) || log.action.toLowerCase().includes(t);
         const matchAfter = (log.afterJson || '').toLowerCase().includes(t);
         const matchBefore = (log.beforeJson || '').toLowerCase().includes(t);
         if (!matchUser && !matchTable && !matchId && !matchAction && !matchAfter && !matchBefore) return false;
       }
 
-      // 動作類型篩選
+      // 動作類型篩選 (同時相容中文與舊版代號)
       if (auditActionFilter !== 'ALL') {
-        if (auditActionFilter === 'LOGIN' && !log.action.includes('LOGIN')) return false;
-        if (auditActionFilter === 'CREATE' && log.action !== 'CREATE') return false;
-        if (auditActionFilter === 'UPDATE' && !log.action.includes('UPDATE') && !log.action.includes('STAGE') && !log.action.includes('RESTORE')) return false;
-        if (auditActionFilter === 'DELETE' && !log.action.includes('DELETE') && !log.action.includes('PURGE')) return false;
-        if (auditActionFilter === 'PASSWORD' && !log.action.includes('PASSWORD')) return false;
+        if (auditActionFilter === 'LOGIN' && !actionCn.includes('登入') && !log.action.includes('LOGIN')) return false;
+        if (auditActionFilter === 'CREATE' && !actionCn.includes('新增') && log.action !== 'CREATE') return false;
+        if (
+          auditActionFilter === 'UPDATE' &&
+          !actionCn.includes('修改') &&
+          !actionCn.includes('過帳') &&
+          !actionCn.includes('復原') &&
+          !actionCn.includes('救回') &&
+          !actionCn.includes('交接') &&
+          !log.action.includes('UPDATE') &&
+          !log.action.includes('POST') &&
+          !log.action.includes('RESTORE')
+        ) {
+          return false;
+        }
+        if (
+          auditActionFilter === 'DELETE' &&
+          !actionCn.includes('刪除') &&
+          !actionCn.includes('回收') &&
+          !actionCn.includes('封存') &&
+          !actionCn.includes('清除') &&
+          !log.action.includes('DELETE') &&
+          !log.action.includes('PURGE') &&
+          !log.action.includes('STAGE')
+        ) {
+          return false;
+        }
+        if (auditActionFilter === 'PASSWORD' && !actionCn.includes('密碼') && !log.action.includes('PASSWORD')) return false;
       }
 
       // 操作人員篩選
@@ -875,7 +1020,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
       return true;
     });
-  }, [auditLogs, auditSearchTerm, auditActionFilter, auditUserFilter]);
+  }, [auditLogs, auditSearchTerm, auditActionFilter, auditUserFilter, allUsers, allGroups, companies]);
 
   return (
     <div className="space-y-6">
@@ -1802,13 +1947,13 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           <ScrollText className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
           <div className="space-y-1 text-xs">
             <div className="font-bold text-white flex items-center gap-2">
-              <span>全域系統安全與操作稽核日誌 (Superadmin 專屬追蹤)</span>
-              <span className="text-[10px] bg-emerald-900/80 text-emerald-300 px-2 py-0.5 rounded border border-emerald-700 font-mono">
-                唯讀防竄改
+              <span>全域系統安全與操作稽核日誌（最高管理者專屬追蹤）</span>
+              <span className="text-[10px] bg-emerald-900/80 text-emerald-300 px-2 py-0.5 rounded border border-emerald-700">
+                唯讀防竄改・純中文差異紀錄
               </span>
             </div>
             <p className="text-slate-300 leading-relaxed text-[11px]">
-              由底層 SQLite 資料庫自動記錄所有操作軌跡。可隨時查詢「哪個帳號於何時登入、在何處執行了什麼操作」，包含登入身分、帳號建立與調整、階梯式刪除回收、深度封存、物理抹除及重要單據過帳，保障工程責任歸屬。
+              系統自動以純中文記錄所有關鍵操作軌跡，不顯示系統代號；針對資料修改事件，僅精準記錄「有實際修改的項目（修改前 ➔ 修改後）」，一目了然掌握何人、何時、修改了哪個具體項目。
             </p>
           </div>
         </div>
@@ -1832,7 +1977,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
               type="text"
               value={auditSearchTerm}
               onChange={(e) => setAuditSearchTerm(e.target.value)}
-              placeholder="搜尋操作者、帳號、目標對象或細節..."
+              placeholder="搜尋操作人員、異動對象或修改內容關鍵字..."
               className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white"
             />
           </div>
@@ -1840,35 +1985,38 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           <div className="flex flex-wrap items-center gap-2">
             {/* 動作類型過濾 */}
             <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 text-[11px] font-medium">事件動作：</span>
+              <span className="text-slate-500 text-[11px] font-medium">操作動作：</span>
               <select
                 value={auditActionFilter}
                 onChange={(e) => setAuditActionFilter(e.target.value)}
                 className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500"
               >
-                <option value="ALL">全部事件類型</option>
-                <option value="LOGIN">登入與切換 (LOGIN)</option>
-                <option value="CREATE">新增建立 (CREATE)</option>
-                <option value="UPDATE">更新與特許 (UPDATE)</option>
-                <option value="DELETE">刪除與封存 (DELETE / ARCHIVE)</option>
+                <option value="ALL">全部操作類型</option>
+                <option value="LOGIN">登入系統與切換身分</option>
+                <option value="CREATE">新增建立資料</option>
+                <option value="UPDATE">修改資料與單據過帳</option>
+                <option value="DELETE">刪除、回收與封存</option>
                 <option value="PASSWORD">密碼重設與變更</option>
               </select>
             </div>
 
             {/* 操作人員過濾 */}
             <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 text-[11px] font-medium">經辦人員：</span>
+              <span className="text-slate-500 text-[11px] font-medium">操作人員：</span>
               <select
                 value={auditUserFilter}
                 onChange={(e) => setAuditUserFilter(e.target.value)}
                 className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500"
               >
-                <option value="ALL">所有同仁帳號</option>
-                {allUsers.map(u => (
-                  <option key={u.id} value={u.fullName}>
-                    {u.fullName} (@{u.username})
-                  </option>
-                ))}
+                <option value="ALL">全部同仁</option>
+                {allUsers.map(u => {
+                  const roleLabel = u.role === 'SUPERADMIN' ? '最高管理者' : u.role === 'ADMIN' ? '系統管理員' : '一般同仁';
+                  return (
+                    <option key={u.id} value={u.fullName}>
+                      {u.fullName}（{roleLabel}）
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>
@@ -1877,9 +2025,9 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
         {/* 筆數統計 */}
         <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px] text-slate-500">
           <span>
-            共檢索出 <strong className="text-slate-900 font-mono">{filteredAuditLogs.length}</strong> 筆日誌紀錄（最新優先排序）
+            共檢索出 <strong className="text-slate-900 font-bold">{filteredAuditLogs.length}</strong> 筆操作紀錄（最新時間優先排序）
           </span>
-          <span className="text-slate-400 font-mono">SQLite 資料表：audit_logs</span>
+          <span className="text-emerald-700 font-medium">僅記錄實際修改差異項目・全中文直觀呈現</span>
         </div>
       </div>
 
@@ -1889,12 +2037,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-100/80 text-slate-600 font-semibold border-b border-slate-200">
-                <th className="py-3 px-3.5 whitespace-nowrap">時間戳記</th>
-                <th className="py-3 px-3 whitespace-nowrap">操作人員 / 帳號</th>
-                <th className="py-3 px-3 whitespace-nowrap text-center">事件類型</th>
-                <th className="py-3 px-3 whitespace-nowrap">操作標的</th>
-                <th className="py-3 px-3">詳細操作內容與異動摘要</th>
-                <th className="py-3 px-3 whitespace-nowrap text-right">來源位址</th>
+                <th className="py-3 px-3.5 whitespace-nowrap">紀錄時間</th>
+                <th className="py-3 px-3 whitespace-nowrap">操作人員</th>
+                <th className="py-3 px-3 whitespace-nowrap text-center">操作動作</th>
+                <th className="py-3 px-3 whitespace-nowrap">異動項目與對象</th>
+                <th className="py-3 px-3">修改內容明細（僅記錄實際異動部分）</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">操作來源</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1902,16 +2050,20 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-slate-400">
                     <ScrollText className="w-8 h-8 text-slate-300 mx-auto mb-2 opacity-60" />
-                    <div>查無符合條件的稽核日誌紀錄</div>
+                    <div>查無符合條件的操作稽核紀錄</div>
                   </td>
                 </tr>
               ) : (
                 filteredAuditLogs.map(log => {
+                  const actionCn = translateAuditAction(log.action);
+                  const tableCn = translateAuditTable(log.targetTable);
+                  const targetCn = translateAuditTarget(log.targetId);
+
                   // 事件動作樣式對應
-                  const isLogin = log.action.includes('LOGIN');
-                  const isCreate = log.action === 'CREATE';
-                  const isDelete = log.action.includes('DELETE') || log.action.includes('PURGE');
-                  const isUpdate = log.action.includes('UPDATE') || log.action.includes('STAGE') || log.action.includes('RESTORE');
+                  const isLogin = actionCn.includes('登入');
+                  const isCreate = actionCn.includes('新增');
+                  const isDelete = actionCn.includes('刪除') || actionCn.includes('回收') || actionCn.includes('封存') || actionCn.includes('清除');
+                  const isUpdate = actionCn.includes('修改') || actionCn.includes('過帳') || actionCn.includes('復原') || actionCn.includes('救回') || actionCn.includes('交接') || actionCn.includes('密碼');
 
                   let badgeColor = 'bg-slate-100 text-slate-700 border-slate-200';
                   if (isLogin) badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold';
@@ -1919,64 +2071,132 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                   else if (isDelete) badgeColor = 'bg-rose-50 text-rose-700 border-rose-200 font-bold';
                   else if (isUpdate) badgeColor = 'bg-amber-50 text-amber-700 border-amber-200 font-bold';
 
-                  // 解析 afterJson
-                  let parsedAfter: any = null;
+                  // 解析操作人員之中文身分角色（絕不顯示 USR-xxx 代號）
+                  const operatorObj = allUsers.find(u => u.fullName === log.userName || u.id === log.userId);
+                  const operatorRoleCn = operatorObj
+                    ? (operatorObj.role === 'SUPERADMIN' ? '最高管理者' : operatorObj.role === 'ADMIN' ? '系統管理員' : '一般同仁')
+                    : (log.userId && !/^[A-Za-z0-9_-]+$/.test(log.userId) && log.userId !== log.userName ? log.userId : '系統操作員');
+
+                  // 解析 beforeJson 與 afterJson，僅擷取有修改的差異項目並轉為純中文
+                  let parsedBefore: Record<string, unknown> | null = null;
+                  let parsedAfter: Record<string, unknown> | null = null;
+                  try {
+                    if (log.beforeJson) parsedBefore = JSON.parse(log.beforeJson);
+                  } catch (_) {}
                   try {
                     if (log.afterJson) parsedAfter = JSON.parse(log.afterJson);
                   } catch (_) {}
 
+                  // 建立要顯示的差異清單或屬性清單
+                  const diffEntries: { label: string; beforeVal?: string; afterVal: string; isDiff: boolean }[] = [];
+                  if (parsedBefore && parsedAfter && typeof parsedBefore === 'object' && typeof parsedAfter === 'object') {
+                    const allKeys = Array.from(new Set([...Object.keys(parsedBefore), ...Object.keys(parsedAfter)]));
+                    for (const k of allKeys) {
+                      if (k === 'username' || k === '登入帳號' || k === 'id' || k === 'updatedAt') continue;
+                      const bVal = parsedBefore[k] !== undefined ? translateAuditValue(parsedBefore[k]) : undefined;
+                      const aVal = parsedAfter[k] !== undefined ? translateAuditValue(parsedAfter[k]) : '無';
+                      // 若有修改前與修改後，僅顯示實際有異動的欄位
+                      if (bVal !== undefined && bVal !== aVal) {
+                        diffEntries.push({
+                          label: translateAuditKey(k),
+                          beforeVal: bVal,
+                          afterVal: aVal,
+                          isDiff: true,
+                        });
+                      } else if (bVal === undefined) {
+                        diffEntries.push({
+                          label: translateAuditKey(k),
+                          afterVal: aVal,
+                          isDiff: false,
+                        });
+                      }
+                    }
+                  } else if (parsedAfter && typeof parsedAfter === 'object') {
+                    for (const [k, v] of Object.entries(parsedAfter)) {
+                      if (k === 'username' || k === '登入帳號' || k === 'id' || k === 'updatedAt') continue;
+                      diffEntries.push({
+                        label: translateAuditKey(k),
+                        afterVal: translateAuditValue(v),
+                        isDiff: false,
+                      });
+                    }
+                  }
+
+                  // 來源位置純中文化
+                  const ipDisplay = !log.ipAddress || log.ipAddress.includes('127.0.0.1') || log.ipAddress.includes('192.168.1.')
+                    ? '公司內網'
+                    : log.ipAddress.includes('192.168.20.')
+                    ? '工地內網'
+                    : log.ipAddress;
+
                   return (
                     <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
-                      {/* 時間戳記 */}
-                      <td className="py-2.5 px-3.5 font-mono text-[11px] text-slate-600 whitespace-nowrap">
+                      {/* 紀錄時間 */}
+                      <td className="py-3 px-3.5 text-[11px] text-slate-600 whitespace-nowrap">
                         {log.createdAt}
                       </td>
 
-                      {/* 操作同仁 */}
-                      <td className="py-2.5 px-3 whitespace-nowrap">
+                      {/* 操作人員 */}
+                      <td className="py-3 px-3 whitespace-nowrap">
                         <div className="font-bold text-slate-800">{log.userName}</div>
-                        <div className="font-mono text-[10px] text-slate-400">{log.userId}</div>
+                        <div className="text-[10px] text-slate-400">{operatorRoleCn}</div>
                       </td>
 
-                      {/* 事件類型 */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded text-[10px] border ${badgeColor}`}>
-                          {log.action}
+                      {/* 操作動作 */}
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                        <span className={`px-2.5 py-0.5 rounded text-[11px] border ${badgeColor}`}>
+                          {actionCn}
                         </span>
                       </td>
 
-                      {/* 目標模組 */}
-                      <td className="py-2.5 px-3 whitespace-nowrap font-mono text-[11px] text-indigo-700">
-                        <span className="font-bold">{log.targetTable}</span>
-                        {log.targetId && <span className="text-slate-400 text-[10px] ml-1">({log.targetId})</span>}
+                      {/* 異動項目與對象 */}
+                      <td className="py-3 px-3 whitespace-nowrap text-xs">
+                        <span className="inline-block bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded text-[10px] font-bold mr-1.5">
+                          {tableCn}
+                        </span>
+                        <span className="font-bold text-slate-800">{targetCn}</span>
                       </td>
 
-                      {/* 詳細內容 */}
-                      <td className="py-2.5 px-3">
-                        {parsedAfter && typeof parsedAfter === 'object' ? (
-                          <div className="flex flex-wrap gap-1 items-center">
-                            {Object.entries(parsedAfter).map(([k, v]) => (
-                              <span
-                                key={k}
-                                className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono text-[10px] border border-slate-200"
-                              >
-                                <span className="text-slate-500">{k}:</span>{' '}
-                                <strong className="text-slate-900">
-                                  {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}
-                                </strong>
-                              </span>
-                            ))}
+                      {/* 修改內容明細（僅顯示有修改的部分） */}
+                      <td className="py-3 px-3">
+                        {diffEntries.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 items-center">
+                            {diffEntries.map((item, idx) =>
+                              item.isDiff ? (
+                                <div
+                                  key={`${item.label}-${idx}`}
+                                  className="inline-flex items-center gap-1.5 bg-amber-50/70 text-slate-800 px-2.5 py-1 rounded-md text-[11px] border border-amber-200/90 shadow-2xs"
+                                >
+                                  <span className="font-bold text-slate-700">{item.label}：</span>
+                                  <span className="text-slate-500 line-through decoration-slate-400 bg-white px-1.5 py-0.2 rounded border border-slate-200">
+                                    {item.beforeVal}
+                                  </span>
+                                  <span className="text-amber-600 font-bold">➔</span>
+                                  <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                                    {item.afterVal}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span
+                                  key={`${item.label}-${idx}`}
+                                  className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[11px] border border-slate-200"
+                                >
+                                  <span className="text-slate-500">{item.label}：</span>
+                                  <strong className="text-slate-900">{item.afterVal}</strong>
+                                </span>
+                              )
+                            )}
                           </div>
                         ) : (
-                          <span className="font-mono text-[11px] text-slate-600">
-                            {log.afterJson || log.beforeJson || '操作成功'}
+                          <span className="text-[11px] text-slate-600">
+                            {actionCn}完成
                           </span>
                         )}
                       </td>
 
-                      {/* 來源 IP */}
-                      <td className="py-2.5 px-3 text-right font-mono text-[10px] text-slate-400 whitespace-nowrap">
-                        {log.ipAddress || '127.0.0.1'}
+                      {/* 操作來源 */}
+                      <td className="py-3 px-3 text-right text-[11px] text-slate-500 whitespace-nowrap">
+                        {ipDisplay}
                       </td>
                     </tr>
                   );
