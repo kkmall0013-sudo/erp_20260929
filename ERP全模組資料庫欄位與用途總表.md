@@ -75,6 +75,38 @@ PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄
 | `requestedBy` | 發起產製的使用者 ID。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
+### AnnualArchiveSnapshot｜年度唯讀封存快照
+
+> **架構定位**：每年底系統結算後產出之獨立 SQLite 唯讀封存切片（如 `ERP_ARCHIVE_2025.sqlite`）。平時主庫保留完整資料，此快照檔案供：① 免啟動主系統之靜態離線查閱；② 新機遷移選擇性載入指定年份；③ 災難復原基底。
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 封存紀錄識別碼 (UUID)。 |
+| `archiveYear` | 封存之所屬西元年份（例如 `2025`）。 |
+| `archiveFileName` | 封存檔案實體名稱（例如 `ERP_ARCHIVE_2025.sqlite`）。 |
+| `relativePath` | 檔案存放相對路徑（例如 `archives/ERP_ARCHIVE_2025.sqlite`）。 |
+| `recordCount` | 該年度封存之資料總列數（涵蓋案場、單據、發票、支票等）。 |
+| `fileSizeBytes` | 封存檔案實體大小（位元組）。 |
+| `fileHash` | SHA-256 雜湊碼指紋，用於去重與防止離線檔案遭受竄改。 |
+| `isSealed` | 唯讀鎖死標記（固定為 `1`，表示歷史死資料，禁止任何寫入）。 |
+| `sealedAt` | 封存鎖死建立完成時間戳記（毫秒級 ISO-8601）。 |
+| `sealedBy` | 執行封存授權操作之最高管理員 ID。 |
+| `description` | 封存備註說明（如「2025 年度完工驗收與已結算單據封存」）。 |
+
+### 全系統通用實體規範：三柱版本與毫秒時間戳記 (Idempotent Standard)
+
+全系統所有資料表（含單據、主檔、明細）除自身業務欄位外，**強制標配以下底層欄位**：
+1. `id`：全域唯一主鍵（UUID v4 或毫秒業務流水碼，如 `TX-20261005095200-832-A1`）。
+   - **實體身分獨立防衝突**：同一毫秒內產生的兩筆同額支出（如兩筆 5,000 元），其 `id` 絕對不同，系統視為合法獨立實體，絕不誤判或誤刪。
+2. `version`：整數版次號（樂觀鎖，初始為 1，每次更新累加 +1）。
+3. `createdAt`：毫秒級時間戳記（ISO-8601，如 `2026-10-05T09:52:00.832Z`）。
+4. `updatedAt`：毫秒級最後更新時間戳記。
+5. **資料庫還原狀態機判定**：
+   - `id` 不存在 ➔ `INSERT` 新增。
+   - `id` 已存在且備份檔 `version == 主庫 version` ➔ `SKIP` 跳過不重複寫入。
+   - `id` 已存在且備份檔 `version > 主庫 version` ➔ `UPDATE` 覆蓋更新（修正版）。
+   - `id` 已存在且備份檔 `version < 主庫 version` ➔ `IGNORE` 略過（主庫資料更新）。
+
 ### 憲法 FileUploadMetaSchema｜附件上傳驗證輸入（非持久化模型）
 
 | 欄位 | 用途 |
@@ -949,21 +981,27 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 
 ### SystemFile｜Vault 實體檔案
 
+> **檔案與資料庫分離鐵律**：
+> - 資料庫內嚴禁以 BLOB 二進位欄位儲存任何大檔案，確保資料庫本體永遠維持數十 MB 極速運行。
+> - 資料庫僅存放中繼資料 (Metadata)、SHA-256 完整性雜湊值與**相對存放路徑 (`storagePath`)**。
+> - 搬案移機時，僅需複製程式根目錄下之 `storage/` 資料夾，所有相對路徑 100% 保持有效。
+
 | 欄位 | 用途 |
 |---|---|
-| `id` | 檔案識別碼。 |
+| `id` | 檔案識別碼 (UUID)。 |
 | `companyId` | 檔案歸屬法人。 |
 | `originalName`、`savedName` | 原始檔名及實體儲存名；後者 UUID 化且唯一。 |
-| `fileHash` | SHA-256 指紋，用於去重及完整性校驗。 |
+| `fileHash` | SHA-256 指紋，用於防篡改校驗及實體去重（同雜湊檔案不重複佔用空間）。 |
 | `mimeType` | 實際 MIME 類型，用於檔案安全檢查。 |
 | `sizeBytes` | 檔案大小（位元組）。 |
-| `storagePath` | Vault 實體相對路徑。 |
+| `storagePath` | **實體相對路徑**（如 `storage/public_docs/2026/10/uuid.pdf` 或 `storage/secure_vault/2026/10/uuid.enc`）。 |
+| `isEncrypted` | **機敏文件加密標記**（`BOOLEAN`；`true` 表示敏感文件，採 AES-256-GCM 實體加密存放，讀取時串流解密；`false` 則依分類存放於公開/非敏感目錄）。 |
 | `parentFileId` | 前一版本檔案 ID，建立版本堆疊。 |
 | `isObsolete` | 舊版或作廢附件標記。 |
 | `status` | 檔案健康狀態，例如正常或遺失。 |
 | `isDeleted` | 軟刪除標記。 |
 | `version` | 樂觀鎖版本。 |
-| `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+| `createdAt`、`updatedAt` | 建立及最近更新時間（毫秒級 ISO-8601）。 |
 
 ### ExternalFolderLink｜Workspace 外部資料夾
 

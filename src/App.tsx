@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { TopSubWindow } from './components/TopSubWindow';
 import { LeftSubWindow, LeftNavId } from './components/LeftSubWindow';
 import { RightSubWindow } from './components/RightSubWindow';
+import { DatabaseManagementModal } from './components/DatabaseManagementModal';
 import { AuthProvider } from './context/AuthContext';
 
 import {
@@ -40,6 +41,9 @@ export const App: React.FC = () => {
 
   // 浮動提示 Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // 資料庫管理與歷史封存中心彈窗
+  const [isDbCenterOpen, setIsDbCenterOpen] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -171,6 +175,7 @@ export const App: React.FC = () => {
           onImportSql={handleImportSql}
           onResetDatabase={handleResetDatabase}
           onOpenFlowchart={() => setActiveNavId('FLOWCHART')}
+          onOpenDatabaseCenter={() => setIsDbCenterOpen(true)}
         />
 
         {/* 下半部主體分割：LEFT 與 RIGHT 子視窗 */}
@@ -195,6 +200,14 @@ export const App: React.FC = () => {
             onReloadData={reloadData}
           />
         </div>
+
+        {/* 資料庫管理與歷史封存中心 Modal */}
+        <DatabaseManagementModal
+          isOpen={isDbCenterOpen}
+          onClose={() => setIsDbCenterOpen(false)}
+          onDataChanged={reloadData}
+          showToast={showToast}
+        />
 
         {/* 浮動提示 Toast */}
         {toastMessage && (

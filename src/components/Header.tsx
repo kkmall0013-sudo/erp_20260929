@@ -11,6 +11,7 @@ interface HeaderProps {
   onQuickBackupSqlite: () => void;
   isSubWindowOpen?: boolean;
   onToggleSubWindow?: () => void;
+  onOpenDatabaseCenter?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({
   onQuickBackupSqlite,
   isSubWindowOpen = true,
   onToggleSubWindow,
+  onOpenDatabaseCenter,
 }) => {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
   const { currentUser, currentGroup, currentGroups, allUsers, switchUser } = useAuth();
@@ -78,6 +80,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Columns2 className="w-3.5 h-3.5 text-indigo-300" />
             <span className="font-semibold">{isSubWindowOpen ? '已開左子視窗' : '展開子視窗'}</span>
+          </button>
+        )}
+
+        {/* 資料庫管理與封存中心按鈕 */}
+        {onOpenDatabaseCenter && (
+          <button
+            onClick={onOpenDatabaseCenter}
+            title="開啟資料庫管理與歷史封存中心 (支援模組化備份、年度封存與資料檢視)"
+            className="px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 shadow-sm border bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 hover:text-white cursor-pointer"
+          >
+            <Database className="w-3.5 h-3.5 text-amber-400" />
+            <span className="font-semibold">資料庫中心</span>
           </button>
         )}
 

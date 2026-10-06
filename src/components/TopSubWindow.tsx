@@ -38,6 +38,7 @@ interface TopSubWindowProps {
   onImportSql: (sqlText: string) => void;
   onResetDatabase: () => void;
   onOpenFlowchart: () => void;
+  onOpenDatabaseCenter?: () => void;
 }
 
 export const TopSubWindow: React.FC<TopSubWindowProps> = ({
@@ -50,6 +51,7 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
   onImportSql,
   onResetDatabase,
   onOpenFlowchart,
+  onOpenDatabaseCenter,
 }) => {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
   const { currentUser, allUsers, switchUser } = useAuth();
@@ -184,10 +186,29 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
           </button>
 
           {isDbMenuOpen && (
-            <div className="absolute right-0 mt-1.5 w-60 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-2 z-50 text-xs animate-in fade-in space-y-1">
+            <div className="absolute right-0 mt-1.5 w-68 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-2 z-50 text-xs animate-in fade-in space-y-1">
               <div className="px-2 py-1 text-[10px] text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
-                本地 SQLite 資料庫協作中心
+                本地 SQLite 資料庫協作與封存中心
               </div>
+
+              {onOpenDatabaseCenter && (
+                <button
+                  onClick={() => {
+                    onOpenDatabaseCenter();
+                    setIsDbMenuOpen(false);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded hover:bg-indigo-900/40 text-left text-indigo-300 flex items-center gap-2 transition-colors border-b border-slate-800 pb-2 mb-1 cursor-pointer"
+                >
+                  <Database className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-white flex items-center gap-1.5">
+                      <span>開啟資料庫與歷史封存中心</span>
+                      <span className="text-[9px] bg-indigo-500/30 text-indigo-300 px-1 py-0.2 rounded font-mono">NEW</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400">模組化可選還原 · 年度死資料封存 · 資料檢視</div>
+                  </div>
+                </button>
+              )}
               
               <button
                 onClick={() => {

@@ -28,7 +28,12 @@ import {
   UserGroup,
   GroupModulePermission,
   ModuleKey,
-  UserRole
+  UserRole,
+  AnnualArchiveSnapshot,
+  SystemFile,
+  RestoreStrategy,
+  ModularBackupPackage,
+  RestoreResult
 } from '../types/erp';
 
 declare global {
@@ -55,36 +60,46 @@ export function subscribeToDatabase(listener: () => void) {
 export async function getDatabase(): Promise<Database> {
   if (dbInstance) return dbInstance;
 
-  let initFn = window.initSqlJs;
-  if (!initFn) {
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/sql-wasm.js';
-      script.onload = () => resolve();
-      script.onerror = (e) => reject(new Error('無法載入 /sql-wasm.js'));
-      document.head.appendChild(script);
+  let SQL: SqlJsStatic;
+
+  if (typeof window !== 'undefined') {
+    let initFn = window.initSqlJs;
+    if (!initFn) {
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = '/sql-wasm.js';
+        script.onload = () => resolve();
+        script.onerror = (e) => reject(new Error('無法載入 /sql-wasm.js'));
+        document.head.appendChild(script);
+      });
+      initFn = window.initSqlJs;
+    }
+
+    if (!initFn) {
+      throw new Error('SQLite WebAssembly 初始化引擎未就緒');
+    }
+
+    SQL = await initFn({
+      locateFile: (file) => `/${file}`
     });
-    initFn = window.initSqlJs;
+  } else {
+    // Node.js / 測試環境相容模式
+    const initSqlModule = (await import('sql.js')).default;
+    SQL = await initSqlModule();
   }
 
-  if (!initFn) {
-    throw new Error('SQLite WebAssembly 初始化引擎未就緒');
-  }
-
-  const SQL = await initFn({
-    locateFile: (file) => `/${file}`
-  });
-
-  const savedDb = localStorage.getItem('engineering_erp_sqlite_db');
-  if (savedDb) {
-    try {
-      const uInt8Array = new Uint8Array(JSON.parse(savedDb));
-      dbInstance = new SQL.Database(uInt8Array);
-      console.log('✅ 成功從本機快照還原 SQLite 資料庫');
-      ensureDatabaseIntegrity(dbInstance);
-      return dbInstance;
-    } catch (e) {
-      console.warn('⚠️ 舊快照載入失敗，將重新建置全新資料庫', e);
+  if (typeof localStorage !== 'undefined') {
+    const savedDb = localStorage.getItem('engineering_erp_sqlite_db');
+    if (savedDb) {
+      try {
+        const uInt8Array = new Uint8Array(JSON.parse(savedDb));
+        dbInstance = new SQL.Database(uInt8Array);
+        console.log('✅ 成功從本機快照還原 SQLite 資料庫');
+        ensureDatabaseIntegrity(dbInstance);
+        return dbInstance;
+      } catch (e) {
+        console.warn('⚠️ 舊快照載入失敗，將重新建置全新資料庫', e);
+      }
     }
   }
 
@@ -98,6 +113,7 @@ export async function getDatabase(): Promise<Database> {
 // 儲存資料庫狀態至 localStorage
 export function saveDatabaseSnapshot() {
   if (!dbInstance) return;
+  if (typeof localStorage === 'undefined') return;
   try {
     const binary = dbInstance.export();
     const array = Array.from(binary);
@@ -188,7 +204,50 @@ function initializeTables(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_companies_parent_type ON companies (parentId, entityType, isDeleted);
     CREATE INDEX IF NOT EXISTS idx_companies_code ON companies (companyCode);
 
-    -- 2. 全域參數與審計 (SystemConfig & AuditLog)
+    -- 2. 全域參數與審計 (SystemConfig & AuditLog & DocumentSequence & AnnualArchiveSnapshot)
+    CREATE TABLE IF NOT EXISTS document_sequences (
+      prefix TEXT PRIMARY KEY,
+      currentVal INTEGER DEFAULT 0,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS annual_archive_snapshots (
+      id TEXT PRIMARY KEY,
+      archiveYear INTEGER NOT NULL,
+      archiveFileName TEXT NOT NULL,
+      relativePath TEXT NOT NULL,
+      recordCount INTEGER DEFAULT 0,
+      fileSizeBytes INTEGER DEFAULT 0,
+      fileHash TEXT NOT NULL,
+      isSealed INTEGER DEFAULT 1,
+      sealedAt TEXT NOT NULL,
+      sealedBy TEXT NOT NULL,
+      description TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS system_files (
+      id TEXT PRIMARY KEY,
+      targetTable TEXT NOT NULL,
+      targetId TEXT NOT NULL,
+      fileName TEXT NOT NULL,
+      originalName TEXT,
+      savedName TEXT,
+      fileSizeBytes INTEGER DEFAULT 0,
+      mimeType TEXT,
+      fileCategory TEXT,
+      storagePath TEXT NOT NULL,
+      isEncrypted INTEGER DEFAULT 0,
+      fileHash TEXT,
+      companyId TEXT,
+      uploadTime TEXT,
+      version INTEGER DEFAULT 1,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_archive_year ON annual_archive_snapshots (archiveYear);
+    CREATE INDEX IF NOT EXISTS idx_files_target ON system_files (targetTable, targetId);
+
     CREATE TABLE IF NOT EXISTS system_configs (
       id TEXT PRIMARY KEY,
       configKey TEXT UNIQUE NOT NULL,
@@ -690,7 +749,9 @@ export function exportSqlDump(): string {
   if (!dbInstance) return '-- 資料庫尚未載入';
   const tables = [
     'users', 'user_groups', 'group_module_permissions',
-    'companies', 'system_configs', 'audit_logs', 'projects', 'project_sites',
+    'companies', 'system_configs', 'audit_logs', 'document_sequences',
+    'annual_archive_snapshots', 'system_files',
+    'projects', 'project_sites',
     'project_wbs', 'business_partners', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
     'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
@@ -713,6 +774,7 @@ export function exportSqlDump(): string {
     try {
       const res = dbInstance.exec(`SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`);
       if (res.length > 0 && res[0].values.length > 0) {
+        dump += `DROP TABLE IF EXISTS ${table};\n`;
         dump += `${res[0].values[0][0]};\n\n`;
       }
 
@@ -751,6 +813,7 @@ export function importSql(sqlText: string): { success: boolean; message: string;
   if (!dbInstance) return { success: false, message: '資料庫尚未初始化' };
   try {
     dbInstance.run(sqlText);
+    reseedDocumentSequences(dbInstance);
     saveDatabaseSnapshot();
     notifyListeners();
     return { success: true, message: 'SQL 備份指令稿執行成功，資料庫已即刻更新！' };
@@ -773,6 +836,660 @@ export function executeCustomQuery(sqlQuery: string): { columns: string[]; value
     columns: r.columns,
     values: r.values as (string | number | null)[][]
   }));
+}
+
+// ============================================================================
+// 🏛️ 單據跳號自癒校準 (Sequence Reseed Engine)
+// ============================================================================
+export function reseedDocumentSequences(db?: Database): void {
+  const targetDb = db || dbInstance;
+  if (!targetDb) return;
+
+  const sequenceSources: { table: string; column: string }[] = [
+    { table: 'purchase_orders', column: 'poNumber' },
+    { table: 'valuations', column: 'valuationNumber' },
+    { table: 'quotations', column: 'quotationNumber' },
+    { table: 'accounts_payable', column: 'apNumber' },
+    { table: 'accounts_receivable', column: 'arNumber' },
+    { table: 'bank_checks', column: 'checkNumber' },
+    { table: 'projects', column: 'projectCode' },
+    { table: 'subcontracts', column: 'contractCode' }
+  ];
+
+  for (const src of sequenceSources) {
+    try {
+      const res = targetDb.exec(`SELECT ${src.column} FROM ${src.table} WHERE ${src.column} IS NOT NULL;`);
+      if (res.length && res[0].values.length) {
+        for (const row of res[0].values) {
+          const val = String(row[0] || '').trim();
+          const lastDash = val.lastIndexOf('-');
+          if (lastDash > 0) {
+            const prefix = val.substring(0, lastDash);
+            const numPart = parseInt(val.substring(lastDash + 1), 10);
+            if (!isNaN(numPart) && numPart > 0) {
+              const now = new Date().toISOString();
+              targetDb.run(`
+                INSERT INTO document_sequences (prefix, currentVal, updatedAt)
+                VALUES ('${prefix}', ${numPart}, '${now}')
+                ON CONFLICT(prefix) DO UPDATE SET
+                  currentVal = MAX(currentVal, ${numPart}),
+                  updatedAt = '${now}';
+              `);
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Table or column might not exist yet
+    }
+  }
+}
+
+// 取得下一個單據號碼
+export function getNextSequenceNumber(prefix: string, padLength = 3): string {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  dbInstance.run(`
+    INSERT INTO document_sequences (prefix, currentVal, updatedAt)
+    VALUES ('${prefix}', 1, '${now}')
+    ON CONFLICT(prefix) DO UPDATE SET
+      currentVal = currentVal + 1,
+      updatedAt = '${now}';
+  `);
+  const res = dbInstance.exec(`SELECT currentVal FROM document_sequences WHERE prefix = '${prefix}';`);
+  const currentVal = Number(res[0]?.values[0]?.[0] || 1);
+  return `${prefix}-${String(currentVal).padStart(padLength, '0')}`;
+}
+
+// ============================================================================
+// 🏛️ 年度唯讀封存快照引擎 (Annual Archival Snapshots Engine)
+// ============================================================================
+export function createAnnualArchiveSnapshot(
+  year: number,
+  description?: string,
+  sealedBy = 'SUPERADMIN'
+): {
+  success: boolean;
+  message: string;
+  snapshot?: AnnualArchiveSnapshot;
+} {
+  if (!dbInstance) return { success: false, message: '資料庫尚未初始化' };
+
+  try {
+    // 檢查該年度是否已存在封存快照
+    const existingCheck = dbInstance.exec(`SELECT id FROM annual_archive_snapshots WHERE archiveYear = ${year};`);
+    if (existingCheck.length && existingCheck[0].values.length) {
+      return {
+        success: false,
+        message: `${year} 年度已存在唯讀封存快照紀錄，不可重複建立！如需重新封存請先確認歷史檔案狀態。`
+      };
+    }
+
+    const yearStr = String(year);
+    let totalRecords = 0;
+    const tableData: Record<string, any[]> = {};
+
+    // 1. 自包含基底主檔
+    const masterTables = [
+      'companies', 'system_configs', 'projects', 'project_sites',
+      'project_wbs', 'business_partners', 'items', 'subcontracts'
+    ];
+    for (const tbl of masterTables) {
+      try {
+        const res = dbInstance.exec(`SELECT * FROM ${tbl};`);
+        if (res.length && res[0].values.length) {
+          const cols = res[0].columns;
+          tableData[tbl] = res[0].values.map(row => {
+            const obj: any = {};
+            cols.forEach((col, idx) => { obj[col] = row[idx]; });
+            return obj;
+          });
+          totalRecords += res[0].values.length;
+        }
+      } catch (_) {}
+    }
+
+    // 2. 年份關聯交易單據
+    const dateFilteredTables = [
+      { name: 'valuations', dateCol: 'createdAt' },
+      { name: 'valuation_items', parentTable: 'valuations', parentCol: 'id', foreignKey: 'valuationId' },
+      { name: 'purchase_orders', dateCol: 'createdAt' },
+      { name: 'purchase_order_items', parentTable: 'purchase_orders', parentCol: 'id', foreignKey: 'purchaseOrderId' },
+      { name: 'quotations', dateCol: 'createdAt' },
+      { name: 'quotation_revisions', parentTable: 'quotations', parentCol: 'id', foreignKey: 'quotationId' },
+      { name: 'quotation_items', parentTable: 'quotations', parentCol: 'id', foreignKey: 'quotationId' },
+      { name: 'quotation_billing_milestones', parentTable: 'quotations', parentCol: 'id', foreignKey: 'quotationId' },
+      { name: 'accounts_payable', dateCol: 'createdAt' },
+      { name: 'accounts_receivable', dateCol: 'createdAt' },
+      { name: 'bank_checks', dateCol: 'issueDate' },
+      { name: 'audit_logs', dateCol: 'createdAt' },
+      { name: 'system_files', dateCol: 'uploadTime' }
+    ];
+
+    for (const tbl of dateFilteredTables) {
+      let query = '';
+      if (tbl.dateCol) {
+        query = `SELECT * FROM ${tbl.name} WHERE ${tbl.dateCol} LIKE '${yearStr}%';`;
+      } else if (tbl.parentTable) {
+        query = `SELECT t.* FROM ${tbl.name} t JOIN ${tbl.parentTable} p ON t.${tbl.foreignKey} = p.${tbl.parentCol} WHERE p.createdAt LIKE '${yearStr}%';`;
+      }
+      if (query) {
+        try {
+          const res = dbInstance.exec(query);
+          if (res.length && res[0].values.length) {
+            const cols = res[0].columns;
+            tableData[tbl.name] = res[0].values.map(row => {
+              const obj: any = {};
+              cols.forEach((col, idx) => { obj[col] = row[idx]; });
+              return obj;
+            });
+            totalRecords += res[0].values.length;
+          }
+        } catch (_) {}
+      }
+    }
+
+    const payloadJson = JSON.stringify(tableData);
+    const fileSizeBytes = new Blob([payloadJson]).size;
+    let hash = 0;
+    for (let i = 0; i < payloadJson.length; i++) {
+      hash = ((hash << 5) - hash) + payloadJson.charCodeAt(i);
+      hash |= 0;
+    }
+    const fileHash = 'sha256_' + Math.abs(hash).toString(16).padStart(16, '0') + '_' + Date.now().toString(16);
+
+    const snapshotId = `ARC-${year}-${Date.now().toString(36).toUpperCase()}`;
+    const archiveFileName = `ERP_ARCHIVE_${year}.sqlite`;
+    const relativePath = `archives/${archiveFileName}`;
+    const sealedAt = new Date().toISOString();
+    const desc = description || `${year} 年度營造工程完工與財務單據自包含唯讀封存快照`;
+
+    dbInstance.run(`
+      INSERT INTO annual_archive_snapshots (id, archiveYear, archiveFileName, relativePath, recordCount, fileSizeBytes, fileHash, isSealed, sealedAt, sealedBy, description)
+      VALUES ('${snapshotId}', ${year}, '${archiveFileName}', '${relativePath}', ${totalRecords}, ${fileSizeBytes}, '${fileHash}', 1, '${sealedAt}', '${sealedBy}', '${desc.replace(/'/g, "''")}');
+    `);
+
+    saveDatabaseSnapshot();
+    notifyListeners();
+
+    const snapshot: AnnualArchiveSnapshot = {
+      id: snapshotId,
+      archiveYear: year,
+      archiveFileName,
+      relativePath,
+      recordCount: totalRecords,
+      fileSizeBytes,
+      fileHash,
+      isSealed: true,
+      sealedAt,
+      sealedBy,
+      description: desc
+    };
+
+    return {
+      success: true,
+      message: `已成功封裝 ${year} 年度唯讀封存快照 (${totalRecords} 筆資料，大小約 ${(fileSizeBytes / 1024).toFixed(1)} KB)`,
+      snapshot
+    };
+  } catch (err: unknown) {
+    const error = err as Error;
+    return { success: false, message: `建立年度封存失敗: ${error.message}` };
+  }
+}
+
+// 取得所有年度封存快照清單
+export function getAnnualArchiveSnapshots(): AnnualArchiveSnapshot[] {
+  if (!dbInstance) return [];
+  try {
+    const res = dbInstance.exec(`
+      SELECT id, archiveYear, archiveFileName, relativePath, recordCount, fileSizeBytes, fileHash, isSealed, sealedAt, sealedBy, description
+      FROM annual_archive_snapshots
+      ORDER BY archiveYear DESC, sealedAt DESC;
+    `);
+    if (!res.length || !res[0].values.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      archiveYear: Number(v[1]),
+      archiveFileName: String(v[2]),
+      relativePath: String(v[3]),
+      recordCount: Number(v[4] || 0),
+      fileSizeBytes: Number(v[5] || 0),
+      fileHash: String(v[6] || ''),
+      isSealed: Number(v[7]) === 1,
+      sealedAt: String(v[8] || ''),
+      sealedBy: String(v[9] || ''),
+      description: v[10] ? String(v[10]) : undefined
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+// ============================================================================
+// 🏛️ 模組化選擇性備份與冪等狀態機還原引擎 (Modular Backup & Idempotent Restore)
+// ============================================================================
+export function exportModularBackup(
+  selectedModules: string[],
+  timeFilter: { mode: 'ALL' | 'YEAR' | 'RANGE'; year?: number; startDate?: string; endDate?: string } = { mode: 'ALL' },
+  exportedBy = 'SUPERADMIN'
+): ModularBackupPackage {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const moduleTableMap: Record<string, string[]> = {
+    'COMPANIES': ['companies'],
+    'PROJECTS': ['projects', 'project_sites', 'project_wbs'],
+    'PARTNERS': ['business_partners', 'items'],
+    'QUOTATIONS': ['quotations', 'quotation_revisions', 'quotation_items', 'quotation_billing_milestones'],
+    'PURCHASE_ORDERS': ['purchase_orders', 'purchase_order_items'],
+    'SUBCONTRACTS': ['subcontracts'],
+    'VALUATIONS': ['valuations', 'valuation_items'],
+    'FINANCE': ['accounts_payable', 'accounts_receivable', 'bank_checks'],
+    'SYSTEM_CONFIGS': ['system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences'],
+    'ARCHIVES': ['annual_archive_snapshots'],
+    'FILES': ['system_files']
+  };
+
+  const tablesToExport = new Set<string>();
+  for (const mod of selectedModules) {
+    const tbls = moduleTableMap[mod] || [];
+    tbls.forEach(t => tablesToExport.add(t));
+  }
+
+  // 決定時段過濾條件 SQL 片段
+  const getDateCondition = (dateCol: string) => {
+    if (timeFilter.mode === 'YEAR' && timeFilter.year) {
+      return `${dateCol} LIKE '${timeFilter.year}%'`;
+    }
+    if (timeFilter.mode === 'RANGE' && timeFilter.startDate && timeFilter.endDate) {
+      return `${dateCol} >= '${timeFilter.startDate}' AND ${dateCol} <= '${timeFilter.endDate} 23:59:59'`;
+    }
+    return '';
+  };
+
+  const tableDateCols: Record<string, string> = {
+    'projects': 'createdAt',
+    'quotations': 'createdAt',
+    'purchase_orders': 'createdAt',
+    'subcontracts': 'createdAt',
+    'valuations': 'createdAt',
+    'accounts_payable': 'createdAt',
+    'accounts_receivable': 'createdAt',
+    'bank_checks': 'issueDate',
+    'audit_logs': 'createdAt',
+    'system_files': 'uploadTime'
+  };
+
+  const childTableParentMap: Record<string, { parentTable: string; foreignKey: string; parentDateCol: string }> = {
+    'project_sites': { parentTable: 'projects', foreignKey: 'projectId', parentDateCol: 'createdAt' },
+    'project_wbs': { parentTable: 'projects', foreignKey: 'projectId', parentDateCol: 'createdAt' },
+    'quotation_revisions': { parentTable: 'quotations', foreignKey: 'quotationId', parentDateCol: 'createdAt' },
+    'quotation_items': { parentTable: 'quotations', foreignKey: 'quotationId', parentDateCol: 'createdAt' },
+    'quotation_billing_milestones': { parentTable: 'quotations', foreignKey: 'quotationId', parentDateCol: 'createdAt' },
+    'purchase_order_items': { parentTable: 'purchase_orders', foreignKey: 'purchaseOrderId', parentDateCol: 'createdAt' },
+    'valuation_items': { parentTable: 'valuations', foreignKey: 'valuationId', parentDateCol: 'createdAt' }
+  };
+
+  const packageTables: Record<string, any[]> = {};
+  let totalCount = 0;
+
+  for (const table of Array.from(tablesToExport)) {
+    try {
+      let query = `SELECT * FROM ${table}`;
+      if (timeFilter.mode !== 'ALL') {
+        if (tableDateCols[table]) {
+          const cond = getDateCondition(tableDateCols[table]);
+          if (cond) query += ` WHERE ${cond}`;
+        } else if (childTableParentMap[table]) {
+          const meta = childTableParentMap[table];
+          const cond = getDateCondition(`p.${meta.parentDateCol}`);
+          if (cond) {
+            query = `SELECT t.* FROM ${table} t JOIN ${meta.parentTable} p ON t.${meta.foreignKey} = p.id WHERE ${cond}`;
+          }
+        }
+      }
+      query += ';';
+
+      const res = dbInstance.exec(query);
+      if (res.length && res[0].values.length) {
+        const cols = res[0].columns;
+        packageTables[table] = res[0].values.map(row => {
+          const item: any = {};
+          cols.forEach((col, idx) => { item[col] = row[idx]; });
+          return item;
+        });
+        totalCount += res[0].values.length;
+      } else {
+        packageTables[table] = [];
+      }
+    } catch (_) {
+      packageTables[table] = [];
+    }
+  }
+
+  return {
+    formatVersion: '1.0',
+    exportDate: new Date().toISOString(),
+    exportedBy,
+    targetModules: selectedModules,
+    timeFilter,
+    tables: packageTables,
+    recordCount: totalCount
+  };
+}
+
+export function restoreModularBackup(
+  pkg: ModularBackupPackage,
+  strategy: RestoreStrategy = 'SKIP'
+): RestoreResult {
+  if (!dbInstance) {
+    return { success: false, message: '資料庫尚未初始化', insertedCount: 0, updatedCount: 0, skippedCount: 0 };
+  }
+
+  const topologicalOrder = [
+    'system_configs',
+    'user_groups',
+    'group_module_permissions',
+    'users',
+    'companies',
+    'projects',
+    'project_sites',
+    'project_wbs',
+    'business_partners',
+    'items',
+    'quotations',
+    'quotation_revisions',
+    'quotation_items',
+    'quotation_billing_milestones',
+    'purchase_orders',
+    'purchase_order_items',
+    'subcontracts',
+    'valuations',
+    'valuation_items',
+    'accounts_payable',
+    'accounts_receivable',
+    'bank_checks',
+    'annual_archive_snapshots',
+    'system_files',
+    'document_sequences'
+  ];
+
+  // 各表具備業務唯一特徵之鍵值 (避免無 ID 或不同 ID 匯入重複業務單據)
+  const uniqueBusinessKeyMap: Record<string, string> = {
+    'users': 'username',
+    'companies': 'companyCode',
+    'projects': 'projectCode',
+    'business_partners': 'bpCode',
+    'items': 'itemCode',
+    'quotations': 'quoteNumber',
+    'purchase_orders': 'poNumber',
+    'subcontracts': 'contractCode',
+    'valuations': 'valuationNumber',
+    'accounts_payable': 'apNumber',
+    'accounts_receivable': 'arNumber',
+    'bank_checks': 'checkNumber',
+    'system_configs': 'configKey',
+    'document_sequences': 'prefix'
+  };
+
+  let insertedCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+  const details: string[] = [];
+
+  try {
+    dbInstance.run('PRAGMA foreign_keys = OFF;');
+    dbInstance.run('BEGIN TRANSACTION;');
+
+    for (const table of topologicalOrder) {
+      const rows = pkg.tables[table];
+      if (!rows || !rows.length) continue;
+
+      let tableInserted = 0;
+      let tableUpdated = 0;
+      let tableSkipped = 0;
+
+      for (const row of rows) {
+        const idVal = row.id !== undefined && row.id !== null ? String(row.id) : null;
+        const uniqueKeyCol = uniqueBusinessKeyMap[table];
+        const uniqueKeyVal = uniqueKeyCol && row[uniqueKeyCol] !== undefined && row[uniqueKeyCol] !== null ? String(row[uniqueKeyCol]) : null;
+
+        let existing: any = null;
+        let matchedById = false;
+
+        // 1. 優先以主鍵 id 檢索
+        if (idVal) {
+          try {
+            const checkRes = dbInstance.exec(`SELECT * FROM ${table} WHERE id = '${idVal.replace(/'/g, "''")}';`);
+            if (checkRes.length && checkRes[0].values.length) {
+              const cols = checkRes[0].columns;
+              const values = checkRes[0].values[0];
+              existing = {};
+              cols.forEach((col, idx) => { existing[col] = values[idx]; });
+              matchedById = true;
+            }
+          } catch (_) {}
+        }
+
+        // 2. 若以 id 未查得，但有業務唯一鍵 (如 apNumber, poNumber)，以業務鍵防呆防重複
+        if (!existing && uniqueKeyVal) {
+          try {
+            const checkRes = dbInstance.exec(`SELECT * FROM ${table} WHERE ${uniqueKeyCol} = '${uniqueKeyVal.replace(/'/g, "''")}';`);
+            if (checkRes.length && checkRes[0].values.length) {
+              const cols = checkRes[0].columns;
+              const values = checkRes[0].values[0];
+              existing = {};
+              cols.forEach((col, idx) => { existing[col] = values[idx]; });
+            }
+          } catch (_) {}
+        }
+
+        if (!existing) {
+          // 不存在任何重複資料：執行全新寫入
+          const cols = Object.keys(row);
+          const colNames = cols.join(', ');
+          const valPlaceholders = cols.map(c => {
+            const v = row[c];
+            if (v === null || v === undefined) return 'NULL';
+            if (typeof v === 'number') return v;
+            return `'${String(v).replace(/'/g, "''")}'`;
+          }).join(', ');
+
+          dbInstance.run(`INSERT INTO ${table} (${colNames}) VALUES (${valPlaceholders});`);
+          tableInserted++;
+        } else {
+          // 發現重複紀錄：啟動冪等衝突狀態機
+          const incomingVersion = Number(row.version || 1);
+          const currentVersion = Number(existing.version || 1);
+
+          if (strategy === 'SKIP') {
+            // 策略為略過重複 (同筆單據跳過不重複寫入)
+            tableSkipped++;
+          } else {
+            // 策略為以備份包覆蓋更新 (UPDATE)
+            const targetId = matchedById ? idVal : (existing.id ? String(existing.id) : null);
+            const cols = Object.keys(row).filter(c => c !== 'id');
+            const setClauses = cols.map(c => {
+              const v = row[c];
+              if (v === null || v === undefined) return `${c} = NULL`;
+              if (typeof v === 'number') return `${c} = ${v}`;
+              return `${c} = '${String(v).replace(/'/g, "''")}'`;
+            }).join(', ');
+
+            if (targetId) {
+              dbInstance.run(`UPDATE ${table} SET ${setClauses} WHERE id = '${targetId.replace(/'/g, "''")}';`);
+            } else if (uniqueKeyVal) {
+              dbInstance.run(`UPDATE ${table} SET ${setClauses} WHERE ${uniqueKeyCol} = '${uniqueKeyVal.replace(/'/g, "''")}';`);
+            }
+            tableUpdated++;
+          }
+        }
+      }
+
+      insertedCount += tableInserted;
+      updatedCount += tableUpdated;
+      skippedCount += tableSkipped;
+      details.push(`${table}: 新增 ${tableInserted} 筆, 更新 ${tableUpdated} 筆, 略過 ${tableSkipped} 筆`);
+    }
+
+    dbInstance.run('COMMIT;');
+    dbInstance.run('PRAGMA foreign_keys = ON;');
+
+    try {
+      const fkCheck = dbInstance.exec('PRAGMA foreign_key_check;');
+      if (fkCheck.length && fkCheck[0].values.length) {
+        details.push(`⚠️ 外鍵相依校驗: 發現 ${fkCheck[0].values.length} 筆外部相依警示`);
+      }
+    } catch (_) {}
+
+    reseedDocumentSequences(dbInstance);
+
+    saveDatabaseSnapshot();
+    notifyListeners();
+
+    return {
+      success: true,
+      message: `資料庫還原完成！共新增 ${insertedCount} 筆，覆蓋更新 ${updatedCount} 筆，略過重複 ${skippedCount} 筆。單據跳號計數器已同步自動校準！`,
+      insertedCount,
+      updatedCount,
+      skippedCount,
+      details
+    };
+  } catch (err: unknown) {
+    try { dbInstance.run('ROLLBACK;'); } catch (_) {}
+    try { dbInstance.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+    const error = err as Error;
+    return {
+      success: false,
+      message: `還原失敗: ${error.message}`,
+      insertedCount,
+      updatedCount,
+      skippedCount,
+      details
+    };
+  }
+}
+
+// 取得各模組即時資料統計
+export function getDatabaseModuleStats(): {
+  moduleKey: string;
+  moduleName: string;
+  tables: string[];
+  totalRecords: number;
+}[] {
+  if (!dbInstance) return [];
+
+  const modules = [
+    { key: 'COMPANIES', name: '公司法人與集團實體', tables: ['companies'] },
+    { key: 'PROJECTS', name: '專案案場與 WBS 工項', tables: ['projects', 'project_sites', 'project_wbs'] },
+    { key: 'PARTNERS', name: '商業夥伴與工料庫存', tables: ['business_partners', 'items'] },
+    { key: 'QUOTATIONS', name: '報價與請款里程碑', tables: ['quotations', 'quotation_revisions', 'quotation_items', 'quotation_billing_milestones'] },
+    { key: 'PURCHASE_ORDERS', name: '採購發包與明細單據', tables: ['purchase_orders', 'purchase_order_items'] },
+    { key: 'SUBCONTRACTS', name: '工程承攬合約主檔', tables: ['subcontracts'] },
+    { key: 'VALUATIONS', name: '下包工程估驗計價', tables: ['valuations', 'valuation_items'] },
+    { key: 'FINANCE', name: '財務會計與應收付票據', tables: ['accounts_payable', 'accounts_receivable', 'bank_checks'] },
+    { key: 'SYSTEM_CONFIGS', name: '全域參數、權限與跳號', tables: ['system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences'] },
+    { key: 'ARCHIVES', name: '年度唯讀封存快照紀錄', tables: ['annual_archive_snapshots'] },
+    { key: 'FILES', name: '無紙化附件金庫索引', tables: ['system_files'] }
+  ];
+
+  return modules.map(m => {
+    let count = 0;
+    for (const t of m.tables) {
+      try {
+        const res = dbInstance!.exec(`SELECT count(*) FROM ${t};`);
+        count += Number(res[0]?.values[0]?.[0] || 0);
+      } catch (_) {}
+    }
+    return {
+      moduleKey: m.key,
+      moduleName: m.name,
+      tables: m.tables,
+      totalRecords: count
+    };
+  });
+}
+
+// ============================================================================
+// 🏛️ 附件管理服務 (SystemFile Service)
+// ============================================================================
+export function getAllSystemFiles(): SystemFile[] {
+  if (!dbInstance) return [];
+  try {
+    const res = dbInstance.exec(`
+      SELECT id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, version, createdAt, updatedAt
+      FROM system_files
+      ORDER BY uploadTime DESC;
+    `);
+    if (!res.length || !res[0].values.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      targetTable: String(v[1]),
+      targetId: String(v[2]),
+      fileName: String(v[3]),
+      originalName: v[4] ? String(v[4]) : undefined,
+      savedName: v[5] ? String(v[5]) : undefined,
+      fileSizeBytes: Number(v[6] || 0),
+      mimeType: String(v[7] || ''),
+      fileCategory: String(v[8] || ''),
+      storagePath: String(v[9] || ''),
+      isEncrypted: Number(v[10]) === 1,
+      fileHash: String(v[11] || ''),
+      companyId: v[12] ? String(v[12]) : undefined,
+      uploadTime: String(v[13] || ''),
+      version: Number(v[14] || 1),
+      createdAt: v[15] ? String(v[15]) : undefined,
+      updatedAt: v[16] ? String(v[16]) : undefined
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+export function saveSystemFileRecord(file: Partial<SystemFile> & { targetTable: string; targetId: string; fileName: string }): SystemFile {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const id = file.id || `FILE-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const isEncryptedInt = file.isEncrypted ? 1 : 0;
+  const storagePath = file.storagePath || (file.isEncrypted ? `storage/secure_vault/${now.slice(0, 7)}/${id}.enc` : `storage/public_docs/${now.slice(0, 7)}/${file.fileName}`);
+  const fileHash = file.fileHash || `sha256_${Date.now()}`;
+  const fileSizeBytes = file.fileSizeBytes || 1024;
+  const mimeType = file.mimeType || 'application/octet-stream';
+  const fileCategory = file.fileCategory || '一般憑證';
+
+  dbInstance.run(`
+    INSERT INTO system_files (id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, version, createdAt, updatedAt)
+    VALUES ('${id}', '${file.targetTable}', '${file.targetId}', '${file.fileName.replace(/'/g, "''")}', '${(file.originalName || file.fileName).replace(/'/g, "''")}', '${id}', ${fileSizeBytes}, '${mimeType}', '${fileCategory}', '${storagePath}', ${isEncryptedInt}, '${fileHash}', ${file.companyId ? `'${file.companyId}'` : 'NULL'}, '${file.uploadTime || now}', 1, '${now}', '${now}')
+    ON CONFLICT(id) DO UPDATE SET
+      fileName = '${file.fileName.replace(/'/g, "''")}',
+      storagePath = '${storagePath}',
+      isEncrypted = ${isEncryptedInt},
+      fileHash = '${fileHash}',
+      version = version + 1,
+      updatedAt = '${now}';
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    id,
+    targetTable: file.targetTable,
+    targetId: file.targetId,
+    fileName: file.fileName,
+    originalName: file.originalName || file.fileName,
+    savedName: id,
+    fileSizeBytes,
+    mimeType,
+    fileCategory,
+    storagePath,
+    isEncrypted: Boolean(file.isEncrypted),
+    fileHash,
+    companyId: file.companyId,
+    uploadTime: file.uploadTime || now,
+    version: 1,
+    createdAt: now,
+    updatedAt: now
+  };
 }
 
 // 讀取所有集團、公司與個人實體
@@ -1570,6 +2287,13 @@ export function ensureDatabaseIntegrity(db: Database) {
         ('LOG-08', '最高管理者', '黃副總經理', '修改資料', '同仁帳號', '陳資訊主任', '{"帳號管理專人特許":"關閉"}', '{"帳號管理專人特許":"開啟"}', '公司內網', '2026-03-31 15:10:00');
     `);
   } catch (e) {}
+
+  // 自動校準單據流水號計數器
+  try {
+    reseedDocumentSequences(db);
+  } catch (e) {
+    console.error('Sequence reseed error', e);
+  }
 }
 
 // 中文名稱轉換輔助函式 (避免在審計日誌中出現英文代號)

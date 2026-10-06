@@ -426,10 +426,61 @@ export interface SystemFile {
   targetTable: string;
   targetId: string;
   fileName: string;
+  originalName?: string;
+  savedName?: string;
   fileSizeBytes: number;
   mimeType: string;
   fileCategory: string;
+  storagePath: string; // POSIX 相對路徑如 'storage/public_docs/2026/10/uuid.pdf'
+  isEncrypted: boolean; // 是否為敏感文件採 AES-256-GCM 加密存放
+  fileHash: string; // SHA-256 指紋
+  companyId?: string;
   uploadTime: string;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AnnualArchiveSnapshot {
+  id: string;
+  archiveYear: number;
+  archiveFileName: string;
+  relativePath: string;
+  recordCount: number;
+  fileSizeBytes: number;
+  fileHash: string;
+  isSealed: boolean;
+  sealedAt: string;
+  sealedBy: string;
+  description?: string;
+}
+
+export type RestoreStrategy = 'SKIP' | 'UPDATE';
+
+export interface BackupTimeFilter {
+  mode: 'ALL' | 'YEAR' | 'RANGE';
+  year?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface ModularBackupPackage {
+  formatVersion: '1.0';
+  exportDate: string;
+  exportedBy: string;
+  targetModules: string[];
+  timeFilter?: BackupTimeFilter;
+  tables: Record<string, any[]>;
+  recordCount: number;
+}
+
+export interface RestoreResult {
+  success: boolean;
+  message: string;
+  insertedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  details?: string[];
 }
 
 // 營運戰情室財務指標模型 (Phase 10 & 憲法第六篇)
