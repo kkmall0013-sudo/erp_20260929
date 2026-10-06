@@ -108,11 +108,15 @@ export interface SystemConfig {
   id: string;
   configKey: string;
   configValue: string;
+  description?: string;
   valueType: 'STRING' | 'NUMBER' | 'BOOLEAN' | 'JSON';
   validFrom: string;
   validTo?: string;
   isDeleted: boolean;
   version: number;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AuditLog {

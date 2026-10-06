@@ -3,21 +3,17 @@ import {
   Building2,
   Home,
   LayoutDashboard,
-  Calendar,
-  CalendarDays,
-  MessageSquareText,
-  TrendingUp,
   FolderGit2,
   ClipboardList,
   Receipt,
   Users2,
   Sliders,
-  Database,
   FileSpreadsheet,
   ShoppingCart,
   HardHat,
   LineChart,
-  UserCog
+  UserCog,
+  Lock
 } from 'lucide-react';
 
 export type LeftNavId =
@@ -48,8 +44,40 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
   onSelect,
   isOpen = true,
 }) => {
-  const { currentUser, isSuperadmin } = useAuth();
-  const hasUserManagementAccess = isSuperadmin || Boolean(currentUser?.canManageUsers);
+  const { currentUser, isSuperadmin, can } = useAuth();
+  const hasUserManagementAccess = (isSuperadmin || Boolean(currentUser?.canManageUsers)) && currentUser?.status === 'ACTIVE';
+
+  // 檢查導航項目是否具備模組讀取權限
+  const checkNavReadAccess = (id: LeftNavId): boolean => {
+    if (!currentUser || currentUser.status === 'DISABLED') return false;
+    switch (id) {
+      case 'COMPANY':
+        return can('COMPANIES', 'read');
+      case 'USERS':
+        return hasUserManagementAccess;
+      case 'PROJECTS':
+        return can('PROJECTS', 'read');
+      case 'PARTNERS':
+        return can('PARTNERS', 'read');
+      case 'QUOTATIONS':
+        return can('QUOTATIONS', 'read');
+      case 'PROCUREMENT':
+        return can('PURCHASE_ORDERS', 'read') || can('SUBCONTRACTS', 'read');
+      case 'VALUATIONS':
+        return can('VALUATIONS', 'read');
+      case 'FINANCE':
+        return can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('BANK_CHECKS', 'read');
+      case 'COMMAND_CENTER':
+        return can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('PROJECTS', 'read');
+      case 'SETTINGS':
+        return can('SYSTEM_CONFIGS', 'read');
+      case 'DASHBOARD':
+      case 'FLOWCHART':
+      case 'ROADMAP':
+      default:
+        return true;
+    }
+  };
 
   // 對應截圖中經典的鼎新 A1 垂直圖示功能鍵 (優先聚焦：公司設定、帳號管理)
   const navItems: {
@@ -89,31 +117,46 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
         {visibleNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeId === item.id;
+          const hasRead = checkNavReadAccess(item.id);
 
           return (
             <button
               key={item.id}
               onClick={() => onSelect(item.id)}
-              title={item.label}
-              className={`w-full py-2.5 px-1 flex flex-col items-center justify-center transition-all group relative ${
+              title={hasRead ? item.label : `${item.label} (目前帳號無讀取權限)`}
+              className={`w-full py-2.5 px-1 flex flex-col items-center justify-center transition-all group relative cursor-pointer ${
                 isActive
                   ? 'bg-slate-100 text-indigo-700 font-bold border-l-3 border-indigo-600'
+                  : !hasRead
+                  ? 'text-slate-400 opacity-75 hover:bg-rose-50/50 hover:text-rose-600'
                   : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-50'
               }`}
             >
               <div className="relative">
                 <Icon
                   className={`w-5 h-5 mb-1 transition-colors ${
-                    isActive ? 'text-indigo-600 stroke-[2.2]' : 'text-slate-500 group-hover:text-indigo-600'
+                    isActive
+                      ? 'text-indigo-600 stroke-[2.2]'
+                      : !hasRead
+                      ? 'text-slate-400 group-hover:text-rose-500'
+                      : 'text-slate-500 group-hover:text-indigo-600'
                   }`}
                 />
-                {item.badgeCount !== undefined && item.badgeCount > 0 && (
+                {!hasRead ? (
+                  <span className="w-3.5 h-3.5 rounded-full bg-rose-100 text-rose-600 border border-rose-300 flex items-center justify-center absolute -top-1 -right-1.5 shadow-2xs">
+                    <Lock className="w-2 h-2" />
+                  </span>
+                ) : item.badgeCount !== undefined && item.badgeCount > 0 ? (
                   <span className="w-2 h-2 rounded-full bg-rose-500 absolute -top-0.5 -right-0.5 ring-2 ring-white" />
-                )}
+                ) : null}
               </div>
               <span
                 className={`text-[10px] tracking-tight leading-tight text-center ${
-                  isActive ? 'text-indigo-700 font-bold' : 'text-slate-600 group-hover:text-slate-900'
+                  isActive
+                    ? 'text-indigo-700 font-bold'
+                    : !hasRead
+                    ? 'text-slate-400 group-hover:text-rose-600'
+                    : 'text-slate-600 group-hover:text-slate-900'
                 }`}
               >
                 {item.label}

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { User, Company, AuditLog } from '../types/erp';
+import { User, Company, AuditLog, ModuleKey } from '../types/erp';
 import {
   Users,
   Shield,
@@ -45,6 +45,10 @@ import {
   superadminRestoreArchivedUser,
   superadminPermanentPurge,
   getAllAuditLogs,
+  createGroup,
+  updateGroup,
+  deleteGroup,
+  toggleGroupModulePermission,
   SYSTEM_MODULES
 } from '../db/sqlite';
 
@@ -118,8 +122,16 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   const [transferTargetId, setTransferTargetId] = useState('');
   const [transferConfirmText, setTransferConfirmText] = useState('');
 
-  // 6. 12 大模組權限矩陣檢視對話框
+  // 6. 12 大模組權限矩陣檢視與互動設定對話框
   const [isMatrixModalOpen, setIsMatrixModalOpen] = useState(false);
+  const [isNewGroupFormOpen, setIsNewGroupFormOpen] = useState(false);
+  const [newGroupForm, setNewGroupForm] = useState({
+    groupCode: '',
+    groupName: '',
+    description: '',
+    approvalLimit: 1000000,
+    canExport: true,
+  });
 
   // 7. 階梯式生命週期與資安稽核視圖頁籤 (ACTIVE: 同仁主檔, TRASH: 待刪除回收站, ARCHIVE: 深度封存區, AUDIT_LOGS: Superadmin專屬系統稽核)
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'TRASH' | 'ARCHIVE' | 'AUDIT_LOGS'>('ACTIVE');
@@ -233,12 +245,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       return false;
     }
 
-    // 階層原則：一般 Admin 只能管理下一階 User，除非經 Superadmin 授權同階管理特許或具備帳號管理人特許
-    if (target.role === 'ADMIN' && !isSuperadmin && !operatorCanManageAdmins && !operatorCanManageUsers) {
+    // 階層原則：一般 Admin 只能管理下一階 User，除非經 Superadmin 授權同階管理特許 (canManageAdmins)
+    if (target.role === 'ADMIN' && target.id !== currentUser?.id && !isSuperadmin && !operatorCanManageAdmins) {
       setAlertModal({
-        title: `【階層原則受限】無法${actionName}同階管理員`,
-        message: `您尚未取得 Superadmin 授予之【帳號管理人特許】或【同階管理特許】！`,
-        details: `依系統階層防護憲法，一般系統管理員只能管理下一階層（一般同仁 User）。除非由唯一最高 Superadmin 為您開啟特許，否則無法${actionName}其他 Admin 帳號。`,
+        title: `【階層原則受限】無法${actionName}其他同階管理員`,
+        message: `您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】！`,
+        details: `依系統階層防護憲法，一般帳號管理專人 Admin 預設只能管理下一階層（一般同仁 User）。除非由唯一最高 Superadmin 為您開啟「同階管理特許」，否則無法${actionName}其他同階 Admin 帳號。`,
       });
       return false;
     }
@@ -485,7 +497,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     const operatorName = currentUser?.fullName || '系統管理員';
 
     try {
-      updateUser(diffConfirmInfo.payload, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
+      updateUser(diffConfirmInfo.payload, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins, currentUser?.id);
       showToast(`✅ 已成功更新同仁【${diffConfirmInfo.targetUser.fullName}】之帳號資料！`);
       setDiffConfirmInfo(null);
       setIsModalOpen(false);
@@ -677,8 +689,9 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     }
   };
 
-  // 待刪除回收站：一鍵復原回啟用主檔 (Admin 與 Superadmin 均可)
+  // 待刪除回收站：一鍵復原回啟用主檔 (Admin 與 Superadmin 均可，但須遵守同階防呆)
   const handleRestorePending = (user: User) => {
+    if (!checkCanManageTarget(user, '復原')) return;
     const operatorName = currentUser?.fullName || '管理員';
     try {
       restorePendingUser(user.id, operatorName);
@@ -2346,17 +2359,17 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
                     <label
                       className={`p-3 rounded-lg border flex items-center gap-2 transition-all ${
-                        !operatorCanManageAdmins && !operatorCanManageUsers
+                        !isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN'
                           ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400'
                           : formData.role === 'ADMIN'
                           ? 'bg-indigo-50 border-indigo-400 text-indigo-900 font-bold cursor-pointer'
                           : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 cursor-pointer'
                       }`}
                       onClick={() => {
-                        if (!operatorCanManageAdmins && !operatorCanManageUsers) {
+                        if (!isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN') {
                           setAlertModal({
-                            title: '階層權限受限',
-                            message: '您尚未取得 Superadmin 授予之【帳號管理人特許】或【同階管理特許】，無法指派或建立同階 Admin 帳號！',
+                            title: '【階層原則受限】無法指派同階管理員角色',
+                            message: '您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】，依規定只能建立或指派下一階層 (一般業務同仁 User)！',
                           });
                         }
                       }}
@@ -2365,10 +2378,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                         type="radio"
                         name="role"
                         value="ADMIN"
-                        disabled={!operatorCanManageAdmins && !operatorCanManageUsers}
+                        disabled={!isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN'}
                         checked={formData.role === 'ADMIN'}
                         onChange={() => {
-                          if (operatorCanManageAdmins || operatorCanManageUsers) {
+                          if (isSuperadmin || operatorCanManageAdmins || editingUser?.role === 'ADMIN') {
                             setFormData({ ...formData, role: 'ADMIN' });
                           }
                         }}
@@ -2378,10 +2391,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       <div>
                         <div className="flex items-center gap-1">
                           <span>系統管理員 (ADMIN)</span>
-                          {!operatorCanManageAdmins && !operatorCanManageUsers && <Lock className="w-3 h-3 text-slate-400" />}
+                          {!isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN' && <Lock className="w-3 h-3 text-slate-400" />}
                         </div>
                         <div className="text-[10px] font-normal text-slate-500">
-                          {operatorCanManageAdmins || operatorCanManageUsers ? '帳號維護與審計日誌查閱' : '需 Superadmin 授權特許'}
+                          {isSuperadmin || operatorCanManageAdmins ? '全系統檢視與授權管理' : '需 Superadmin 授予同階管理特許'}
                         </div>
                       </div>
                     </label>
@@ -2874,41 +2887,236 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       )}
 
       {/* ======================================================== */}
-      {/* 8. 12 大模組權限矩陣檢視彈窗 (Permissions Matrix Modal)   */}
+      {/* 8. 12 大模組權限矩陣互動配置彈窗 (Interactive PBAC Matrix) */}
       {/* ======================================================== */}
       {isMatrixModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95">
             <div className="px-6 py-4 bg-slate-800 text-white flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
                 <div>
-                  <h3 className="font-bold text-sm">12 大營造核心模組 × 四大業務群組 權限配置總表 (PBAC Matrix)</h3>
-                  <div className="text-[11px] text-slate-300">
-                    同仁指派多個群組時權限採聯集 (OR) 計算，並享有最大單筆核准額度
+                  <h3 className="font-bold text-sm flex items-center gap-2">
+                    <span>12 大營造核心模組 × 業務群組 權限即時配置矩陣 (PBAC Matrix)</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      點擊「讀 / 寫 / 審 / 出」或調整額度即刻生效
+                    </span>
+                  </h3>
+                  <div className="text-[11px] text-slate-300 mt-0.5">
+                    點擊下方各群組之【讀 (檢視)、寫 (新增修改)、審 (核准過帳)、出 (匯出列印)】即可即時開啟或擋下權限；變更將自動記錄至純中文差異稽核日誌
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => setIsMatrixModalOpen(false)}
-                className="text-slate-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {operatorCanManageUsers && (
+                  <button
+                    onClick={() => setIsNewGroupFormOpen(prev => !prev)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isNewGroupFormOpen ? '收合新增群組' : '新增自訂群組'}</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsMatrixModalOpen(false)}
+                  className="text-slate-400 hover:text-white cursor-pointer p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="border border-slate-200 rounded-lg overflow-hidden text-xs">
+            {/* 新增自訂業務權限群組表單列 */}
+            {isNewGroupFormOpen && (
+              <div className="px-6 py-3.5 bg-indigo-50/90 border-b border-indigo-200 flex flex-wrap items-end gap-3 text-xs animate-in fade-in">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">群組識別碼 *</label>
+                  <input
+                    type="text"
+                    value={newGroupForm.groupCode}
+                    onChange={e => setNewGroupForm(prev => ({ ...prev, groupCode: e.target.value.toUpperCase() }))}
+                    placeholder="如: QA_TEAM"
+                    className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs font-mono w-28"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">群組中文名稱 *</label>
+                  <input
+                    type="text"
+                    value={newGroupForm.groupName}
+                    onChange={e => setNewGroupForm(prev => ({ ...prev, groupName: e.target.value }))}
+                    placeholder="如: 品管安衛組"
+                    className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs w-36"
+                  />
+                </div>
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">職責說明</label>
+                  <input
+                    type="text"
+                    value={newGroupForm.description}
+                    onChange={e => setNewGroupForm(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="如: 工地安全衛生稽核與品質查驗"
+                    className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">單筆審核額度</label>
+                  <select
+                    value={newGroupForm.approvalLimit}
+                    onChange={e => setNewGroupForm(prev => ({ ...prev, approvalLimit: Number(e.target.value) }))}
+                    className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-mono"
+                  >
+                    <option value={0}>$0 (僅填草稿)</option>
+                    <option value={1000000}>$100萬</option>
+                    <option value={3000000}>$300萬</option>
+                    <option value={5000000}>$500萬</option>
+                    <option value={10000000}>$1,000萬</option>
+                    <option value={50000000}>$5,000萬</option>
+                  </select>
+                </div>
+                <label className="flex items-center gap-1.5 py-1 cursor-pointer font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={newGroupForm.canExport}
+                    onChange={e => setNewGroupForm(prev => ({ ...prev, canExport: e.target.checked }))}
+                    className="rounded text-indigo-600"
+                  />
+                  <span>允許匯出報表</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!newGroupForm.groupCode.trim() || !newGroupForm.groupName.trim()) {
+                      setAlertModal({ title: '欄位未填', message: '請輸入群組識別碼與群組中文名稱！' });
+                      return;
+                    }
+                    try {
+                      const defaultPerms = SYSTEM_MODULES.map(m => ({
+                        moduleKey: m.key as ModuleKey,
+                        canRead: m.key === 'PROJECTS' || m.key === 'COMPANIES',
+                        canWrite: m.key === 'PROJECTS',
+                        canApprove: false,
+                        canExport: false,
+                      }));
+                      createGroup(
+                        {
+                          groupCode: newGroupForm.groupCode.trim(),
+                          groupName: newGroupForm.groupName.trim(),
+                          description: newGroupForm.description.trim() || '自訂業務權限群組',
+                          approvalLimit: newGroupForm.approvalLimit,
+                          canExport: newGroupForm.canExport,
+                        },
+                        defaultPerms,
+                        currentUser?.fullName || '管理員'
+                      );
+                      setNewGroupForm({ groupCode: '', groupName: '', description: '', approvalLimit: 1000000, canExport: true });
+                      setIsNewGroupFormOpen(false);
+                      reloadAuth();
+                      onDataChanged();
+                      showToast(`🎉 已建立新權限群組【${newGroupForm.groupName.trim()}】，可立即在矩陣配置權限！`);
+                    } catch (err: unknown) {
+                      setAlertModal({ title: '建立群組失敗', message: (err as Error).message });
+                    }
+                  }}
+                  className="px-3.5 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold cursor-pointer shadow-2xs"
+                >
+                  建立群組
+                </button>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="border border-slate-200 rounded-lg overflow-x-auto text-xs">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                      <th className="py-2.5 px-3">模組類別</th>
-                      <th className="py-2.5 px-3">營造工程核心模組</th>
+                      <th className="py-3 px-3 w-24">模組類別</th>
+                      <th className="py-3 px-3 min-w-[190px]">營造工程核心模組</th>
                       {allGroups.map(grp => (
-                        <th key={grp.id} className="py-2.5 px-3 text-center">
-                          <div>{grp.groupName}</div>
-                          <div className="text-[10px] font-normal text-slate-500">
-                            額度: {grp.approvalLimit > 0 ? `$${(grp.approvalLimit / 10000).toLocaleString()}萬` : '$0'}
+                        <th key={grp.id} className="py-2.5 px-2.5 text-center min-w-[155px] border-l border-slate-200/80">
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="text-slate-900 font-extrabold">{grp.groupName}</span>
+                            {!grp.isSystem && operatorCanManageUsers && (
+                              <button
+                                onClick={() => {
+                                  try {
+                                    deleteGroup(grp.id, currentUser?.fullName || '管理員');
+                                    reloadAuth();
+                                    onDataChanged();
+                                    showToast(`🗑️ 已刪除自訂群組【${grp.groupName}】`);
+                                  } catch (err: unknown) {
+                                    setAlertModal({ title: '無法刪除群組', message: (err as Error).message });
+                                  }
+                                }}
+                                title="刪除此自訂群組"
+                                className="text-slate-400 hover:text-rose-600 p-0.5 rounded cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* 單筆審核額度即時調整器 */}
+                          <div className="mt-1.5 flex items-center justify-center gap-1">
+                            <span className="text-[10px] font-normal text-slate-500">審核額度:</span>
+                            <select
+                              value={grp.approvalLimit}
+                              disabled={!operatorCanManageUsers}
+                              onChange={e => {
+                                const nextLimit = Number(e.target.value);
+                                try {
+                                  updateGroup(
+                                    { id: grp.id, approvalLimit: nextLimit },
+                                    undefined,
+                                    currentUser?.fullName || '管理員'
+                                  );
+                                  reloadAuth();
+                                  onDataChanged();
+                                  showToast(`💰 已更新【${grp.groupName}】單筆審核額度為 ${nextLimit > 0 ? `NT$ ${nextLimit.toLocaleString()}` : '$0 (僅填草稿)'}`);
+                                } catch (err: unknown) {
+                                  setAlertModal({ title: '更新額度失敗', message: (err as Error).message });
+                                }
+                              }}
+                              className="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold text-indigo-700 cursor-pointer outline-none"
+                            >
+                              <option value={0}>$0 (僅草稿)</option>
+                              <option value={1000000}>$100萬</option>
+                              <option value={3000000}>$300萬</option>
+                              <option value={5000000}>$500萬</option>
+                              <option value={10000000}>$1,000萬</option>
+                              <option value={30000000}>$3,000萬</option>
+                              <option value={50000000}>$5,000萬</option>
+                              <option value={100000000}>$1億</option>
+                            </select>
+                          </div>
+
+                          {/* 群組全域匯出開關 */}
+                          <div className="mt-1 flex items-center justify-center">
+                            <button
+                              type="button"
+                              disabled={!operatorCanManageUsers}
+                              onClick={() => {
+                                try {
+                                  updateGroup(
+                                    { id: grp.id, canExport: !grp.canExport },
+                                    undefined,
+                                    currentUser?.fullName || '管理員'
+                                  );
+                                  reloadAuth();
+                                  onDataChanged();
+                                  showToast(`${!grp.canExport ? '✅ 已開放' : '🔒 已禁止'}【${grp.groupName}】全域報表匯出權限`);
+                                } catch (err: unknown) {
+                                  setAlertModal({ title: '更新失敗', message: (err as Error).message });
+                                }
+                              }}
+                              className={`text-[10px] px-1.5 py-0.2 rounded border transition-colors cursor-pointer ${
+                                grp.canExport
+                                  ? 'bg-purple-50 text-purple-700 border-purple-200 font-semibold'
+                                  : 'bg-slate-100 text-slate-400 border-slate-200'
+                              }`}
+                            >
+                              全域匯出: {grp.canExport ? '允許' : '禁止'}
+                            </button>
                           </div>
                         </th>
                       ))}
@@ -2916,7 +3124,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
                     {SYSTEM_MODULES.map(mod => (
-                      <tr key={mod.key} className="hover:bg-slate-50">
+                      <tr key={mod.key} className="hover:bg-slate-50/80">
                         <td className="py-2 px-3 text-slate-400 font-mono text-[11px]">
                           {mod.category}
                         </td>
@@ -2925,27 +3133,86 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                           <div className="text-[10px] text-slate-400">{mod.description}</div>
                         </td>
                         {allGroups.map(grp => {
-                          const p = allPermissions.find(item => item.groupId === grp.id && item.moduleKey === mod.key);
+                          const p = allPermissions.find(item => item.groupId === grp.id && item.moduleKey === mod.key) || {
+                            canRead: false,
+                            canWrite: false,
+                            canApprove: false,
+                            canExport: false,
+                          };
+                          const handleClickToggle = (field: 'canRead' | 'canWrite' | 'canApprove' | 'canExport', labelCn: string) => {
+                            if (!operatorCanManageUsers) {
+                              setAlertModal({ title: '權限不足', message: '您未具備帳號與權限管理授權，無法變更權限矩陣！' });
+                              return;
+                            }
+                            try {
+                              toggleGroupModulePermission(
+                                grp.id,
+                                mod.key as ModuleKey,
+                                field,
+                                currentUser?.fullName || '管理員'
+                              );
+                              reloadAuth();
+                              onDataChanged();
+                              showToast(`⚡ 已切換【${grp.groupName}】於「${mod.name}」之【${labelCn}】權限！`);
+                            } catch (err: unknown) {
+                              setAlertModal({ title: '切換權限失敗', message: (err as Error).message });
+                            }
+                          };
+
                           return (
-                            <td key={grp.id} className="py-2 px-3 text-center">
-                              {p ? (
-                                <div className="inline-flex items-center justify-center gap-1 font-mono text-[10px]">
-                                  <span className={`px-1 rounded ${p.canRead ? 'bg-emerald-100 text-emerald-800 font-bold' : 'text-slate-300'}`}>
-                                    讀
-                                  </span>
-                                  <span className={`px-1 rounded ${p.canWrite ? 'bg-indigo-100 text-indigo-800 font-bold' : 'text-slate-300'}`}>
-                                    寫
-                                  </span>
-                                  <span className={`px-1 rounded ${p.canApprove ? 'bg-amber-100 text-amber-800 font-bold' : 'text-slate-300'}`}>
-                                    審
-                                  </span>
-                                  <span className={`px-1 rounded ${p.canExport && grp.canExport ? 'bg-purple-100 text-purple-800 font-bold' : 'text-slate-300'}`}>
-                                    出
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-slate-300">-</span>
-                              )}
+                            <td key={grp.id} className="py-2 px-2.5 text-center border-l border-slate-100">
+                              <div className="inline-flex items-center justify-center gap-1 font-mono text-[11px]">
+                                <button
+                                  type="button"
+                                  onClick={() => handleClickToggle('canRead', '讀取檢視')}
+                                  title={`點擊切換【${grp.groupName}】對「${mod.name}」之讀取檢視 (Read) 權限`}
+                                  className={`px-1.5 py-0.5 rounded border transition-all cursor-pointer ${
+                                    p.canRead
+                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold shadow-2xs hover:bg-emerald-200'
+                                      : 'bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-500'
+                                  }`}
+                                >
+                                  讀
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleClickToggle('canWrite', '新增編輯')}
+                                  title={`點擊切換【${grp.groupName}】對「${mod.name}」之新增編輯 (Write) 權限`}
+                                  className={`px-1.5 py-0.5 rounded border transition-all cursor-pointer ${
+                                    p.canWrite
+                                      ? 'bg-indigo-100 text-indigo-800 border-indigo-300 font-bold shadow-2xs hover:bg-indigo-200'
+                                      : 'bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-500'
+                                  }`}
+                                >
+                                  寫
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleClickToggle('canApprove', '單據核准')}
+                                  title={`點擊切換【${grp.groupName}】對「${mod.name}」之單據核准 (Approve) 權限`}
+                                  className={`px-1.5 py-0.5 rounded border transition-all cursor-pointer ${
+                                    p.canApprove
+                                      ? 'bg-amber-100 text-amber-800 border-amber-300 font-bold shadow-2xs hover:bg-amber-200'
+                                      : 'bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-500'
+                                  }`}
+                                >
+                                  審
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleClickToggle('canExport', '報表匯出')}
+                                  title={`點擊切換【${grp.groupName}】對「${mod.name}」之報表匯出 (Export) 權限`}
+                                  className={`px-1.5 py-0.5 rounded border transition-all cursor-pointer ${
+                                    p.canExport && grp.canExport
+                                      ? 'bg-purple-100 text-purple-800 border-purple-300 font-bold shadow-2xs hover:bg-purple-200'
+                                      : p.canExport && !grp.canExport
+                                      ? 'bg-amber-50 text-amber-500 border-amber-200 line-through'
+                                      : 'bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100 hover:text-slate-500'
+                                  }`}
+                                >
+                                  出
+                                </button>
+                              </div>
                             </td>
                           );
                         })}
@@ -2956,12 +3223,16 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
               </div>
             </div>
 
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end shrink-0">
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs shrink-0">
+              <div className="text-slate-500 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>智慧連動：開啟「寫/審/出」將自動開啟「讀」；關閉「讀」將自動一併收回「寫/審/出」權限。</span>
+              </div>
               <button
                 onClick={() => setIsMatrixModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-900 text-white cursor-pointer"
+                className="px-5 py-2 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white cursor-pointer"
               >
-                關閉矩陣總表
+                完成並關閉矩陣
               </button>
             </div>
           </div>

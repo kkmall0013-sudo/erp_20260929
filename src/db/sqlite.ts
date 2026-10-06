@@ -150,6 +150,7 @@ function initializeTables(db: Database) {
       purgeDueAt TEXT,
       deletedBy TEXT,
       stageNotes TEXT,
+      version INTEGER DEFAULT 1,
       createdAt TEXT,
       updatedAt TEXT
     );
@@ -162,6 +163,7 @@ function initializeTables(db: Database) {
       isSystem INTEGER DEFAULT 0,
       approvalLimit REAL DEFAULT 0,
       canExport INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
       createdAt TEXT,
       updatedAt TEXT
     );
@@ -173,7 +175,9 @@ function initializeTables(db: Database) {
       canRead INTEGER DEFAULT 0,
       canWrite INTEGER DEFAULT 0,
       canApprove INTEGER DEFAULT 0,
-      canExport INTEGER DEFAULT 0
+      canExport INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
+      updatedAt TEXT
     );
 
     -- 1. 公司法人與集團實體 (Company)
@@ -252,11 +256,15 @@ function initializeTables(db: Database) {
       id TEXT PRIMARY KEY,
       configKey TEXT UNIQUE NOT NULL,
       configValue TEXT NOT NULL,
+      description TEXT,
       valueType TEXT DEFAULT 'STRING',
       validFrom TEXT,
       validTo TEXT,
       isDeleted INTEGER DEFAULT 0,
-      version INTEGER DEFAULT 1
+      version INTEGER DEFAULT 1,
+      updatedBy TEXT,
+      createdAt TEXT,
+      updatedAt TEXT
     );
 
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -599,13 +607,13 @@ export function seedInitialData(db: Database) {
 
   // 2. 系統全域參數
   db.run(`
-    INSERT INTO system_configs (id, configKey, configValue, valueType, validFrom, isDeleted, version)
+    INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
     VALUES
-      ('CFG-01', 'TAX_RATE', '0.05', 'NUMBER', '2026-01-01', 0, 1),
-      ('CFG-02', 'FIN_TAX_TOLERANCE', '5.0', 'NUMBER', '2026-01-01', 0, 1),
-      ('CFG-03', 'DEFAULT_RETENTION_RATE', '10.0', 'NUMBER', '2026-01-01', 0, 1),
-      ('CFG-04', 'PROJECT_LOCK_MODE', 'STRICT', 'STRING', '2026-01-01', 0, 1),
-      ('CFG-05', 'NHI_RATE', '0.0211', 'NUMBER', '2026-01-01', 0, 1);
+      ('CFG-01', 'TAX_RATE', '0.05', '法定營業稅率 (預設 5%)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
+      ('CFG-02', 'FIN_TAX_TOLERANCE', '5.0', '發票稅額尾差容許值 (新台幣元)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
+      ('CFG-03', 'DEFAULT_RETENTION_RATE', '10.0', '工程估驗預設保留款扣留比例 (%)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
+      ('CFG-04', 'PROJECT_LOCK_MODE', 'STRICT', '案場超支預算防呆鎖定模式 (STRICT 嚴格阻擋 / WARN 警示放行)', 'STRING', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
+      ('CFG-05', 'NHI_RATE', '0.0211', '二代健保補充保費法定扣繳費率', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01');
   `);
 
   // 3. 商業夥伴 (業主、混凝土下包、鋼構廠、弱電機電)
@@ -1941,7 +1949,10 @@ export function getAllBankChecks(): BankCheck[] {
 // 讀取全域參數
 export function getAllSystemConfigs(): SystemConfig[] {
   if (!dbInstance) return [];
-  const res = dbInstance.exec(`SELECT * FROM system_configs WHERE isDeleted = 0;`);
+  const res = dbInstance.exec(`
+    SELECT id, configKey, configValue, valueType, validFrom, validTo, isDeleted, version, description, updatedBy, createdAt, updatedAt
+    FROM system_configs WHERE isDeleted = 0;
+  `);
   if (!res.length) return [];
   return res[0].values.map(v => ({
     id: String(v[0]),
@@ -1951,8 +1962,64 @@ export function getAllSystemConfigs(): SystemConfig[] {
     validFrom: String(v[4]),
     validTo: v[5] ? String(v[5]) : undefined,
     isDeleted: Boolean(v[6]),
-    version: Number(v[7]),
+    version: Number(v[7] || 1),
+    description: v[8] ? String(v[8]) : undefined,
+    updatedBy: v[9] ? String(v[9]) : undefined,
+    createdAt: v[10] ? String(v[10]) : undefined,
+    updatedAt: v[11] ? String(v[11]) : undefined,
   }));
+}
+
+// 更新全域核心系統參數 (需 Superadmin 或具備 canManageSystemConfigs 特許之 Admin)
+export function updateSystemConfig(
+  configId: string,
+  newValue: string,
+  operatorName: string,
+  canWriteConfig: boolean
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  if (!canWriteConfig) {
+    throw new Error('【權限防線攔截】您尚未取得「全域核心參數維護特許」，僅能唯讀檢視，無法修改系統底層參數！');
+  }
+
+  const labelMap: Record<string, string> = {
+    TAX_RATE: '法定營業稅率',
+    FIN_TAX_TOLERANCE: '發票稅額尾差容許值 (元)',
+    DEFAULT_RETENTION_RATE: '工程估驗預設保留款率 (%)',
+    PROJECT_LOCK_MODE: '案場超支預算防呆鎖定模式',
+    NHI_RATE: '二代健保補充保費扣繳率',
+  };
+
+  const existing = getAllSystemConfigs().find(c => c.id === configId);
+  if (!existing) throw new Error('找不到指定的系統參數項目！');
+
+  const trimmed = newValue.trim();
+  if (trimmed === existing.configValue) return;
+
+  const nextVer = (existing.version || 1) + 1;
+  const now = new Date().toISOString().substring(0, 10);
+  dbInstance.run(`
+    UPDATE system_configs 
+    SET configValue = '${trimmed.replace(/'/g, "''")}',
+        version = ${nextVer},
+        updatedBy = '${operatorName.replace(/'/g, "''")}',
+        updatedAt = '${now}'
+    WHERE id = '${configId}';
+  `);
+
+  const cnLabel = existing.description || labelMap[existing.configKey] || existing.configKey;
+  logAudit(
+    dbInstance,
+    operatorName,
+    '修改資料',
+    '系統參數',
+    cnLabel,
+    { [cnLabel]: existing.configValue },
+    { [cnLabel]: trimmed },
+    operatorName
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
 }
 
 // 讀取審計日誌 (預設支援最多 300 筆，最新優先)
@@ -2181,13 +2248,30 @@ export function seedUserPermissionData(db: Database) {
 export function ensureDatabaseIntegrity(db: Database) {
   initializeTables(db);
 
-  // 升級檢測：確保 users 表擁有 groupIds、canManageUsers、canManageSystemConfigs、canManageAdmins、passwordHash、isPasswordReset 欄位
+  // 升級檢測：確保 users、user_groups、group_module_permissions、system_configs 擁有最新欄位與三柱版本控制
   try { db.run(`ALTER TABLE users ADD COLUMN groupIds TEXT DEFAULT '[]';`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageUsers INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageSystemConfigs INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageAdmins INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN passwordHash TEXT DEFAULT '888888';`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN isPasswordReset INTEGER DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE users ADD COLUMN version INTEGER DEFAULT 1;`); } catch (e) {}
+  try { db.run(`ALTER TABLE user_groups ADD COLUMN version INTEGER DEFAULT 1;`); } catch (e) {}
+  try { db.run(`ALTER TABLE group_module_permissions ADD COLUMN version INTEGER DEFAULT 1;`); } catch (e) {}
+  try { db.run(`ALTER TABLE group_module_permissions ADD COLUMN updatedAt TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE system_configs ADD COLUMN description TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE system_configs ADD COLUMN updatedBy TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE system_configs ADD COLUMN createdAt TEXT DEFAULT '2026-01-01';`); } catch (e) {}
+  try { db.run(`ALTER TABLE system_configs ADD COLUMN updatedAt TEXT DEFAULT '2026-01-01';`); } catch (e) {}
+
+  // 自動補齊既有 system_configs 之中文用途說明
+  try {
+    db.run(`UPDATE system_configs SET description = '法定營業稅率 (預設 5%)' WHERE configKey = 'TAX_RATE' AND (description IS NULL OR description = '');`);
+    db.run(`UPDATE system_configs SET description = '發票稅額尾差容許值 (新台幣元)' WHERE configKey = 'FIN_TAX_TOLERANCE' AND (description IS NULL OR description = '');`);
+    db.run(`UPDATE system_configs SET description = '工程估驗預設保留款扣留比例 (%)' WHERE configKey = 'DEFAULT_RETENTION_RATE' AND (description IS NULL OR description = '');`);
+    db.run(`UPDATE system_configs SET description = '案場超支預算防呆鎖定模式 (STRICT 嚴格阻擋 / WARN 警示放行)' WHERE configKey = 'PROJECT_LOCK_MODE' AND (description IS NULL OR description = '');`);
+    db.run(`UPDATE system_configs SET description = '二代健保補充保費法定扣繳費率' WHERE configKey = 'NHI_RATE' AND (description IS NULL OR description = '');`);
+  } catch (e) {}
 
   // 確保唯一最高 SUPERADMIN 具有帳號專人、全域參數與同階管理最高權限
   try {
@@ -2705,9 +2789,9 @@ export function updateUser(
     throw new Error('憲法保護防禦：一般 Admin 無權修改系統最高 Superadmin 帳號！');
   }
 
-  // 階層防呆：若目標帳號為 ADMIN，且操作者非 SUPERADMIN 且無同階管理特許與帳號專人特許
-  if (targetRole === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins && !operatorCanManageUsers) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【帳號管理人特許】或【同階管理特許】，無法修改同階 Admin 帳號！');
+  // 階層防呆：若目標帳號為其他同階 ADMIN，且操作者非 SUPERADMIN 且無同階管理特許 (canManageAdmins)
+  if (targetRole === 'ADMIN' && updateData.id !== currentOperatorId && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，依規定只能管理一般同仁 (User)，無法修改其他同階系統管理員 (Admin) 帳號！');
   }
 
   // 階層防呆：若試圖將角色改為 ADMIN，且操作者非 SUPERADMIN 且無同階管理特許
@@ -2948,8 +3032,8 @@ export function resetUserPassword(
     throw new Error('憲法保護防禦：一般 Admin 無權重設系統最高 Superadmin 密碼！');
   }
 
-  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins && !operatorCanManageUsers) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】或【帳號管理人特許】，無法重設同階 Admin 密碼！');
+  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，無法重設其他同階系統管理員 (Admin) 之密碼！');
   }
 
   const now = new Date().toISOString().substring(0, 10);
@@ -3017,8 +3101,8 @@ export function markUserPendingDelete(
     throw new Error('【憲法金身防護】系統唯一最高管理員 (Superadmin) 具備永久保護，嚴禁刪除！');
   }
 
-  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins && !operatorCanManageUsers) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】或【帳號管理人特許】，無法刪除同階 Admin 帳號！');
+  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，無法刪除其他同階系統管理員 (Admin) 帳號！');
   }
 
   if (currentStage === 'PENDING_DELETE') {
@@ -3134,8 +3218,8 @@ export function advanceUserToArchive(
     throw new Error('【憲法金身防護】系統唯一最高管理員嚴禁封存！');
   }
 
-  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins && !operatorCanManageUsers) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之特許權限，無法變更同階 Admin 狀態！');
+  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，無法變更其他同階系統管理員 (Admin) 狀態！');
   }
 
   const nowIso = new Date().toISOString();
@@ -3567,5 +3651,95 @@ export function assignUserGroups(userId: string, groupIds: string[], operatorNam
   saveDatabaseSnapshot();
   notifyListeners();
 }
+
+// 快速切換群組在單一模組之讀/寫/審/出權限 (供 12 大模組權限矩陣即時點擊切換並記錄中文差異日誌)
+export function toggleGroupModulePermission(
+  groupId: string,
+  moduleKey: ModuleKey,
+  field: 'canRead' | 'canWrite' | 'canApprove' | 'canExport',
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  const grp = getAllUserGroups().find(g => g.id === groupId);
+  const mod = SYSTEM_MODULES.find(m => m.key === moduleKey);
+  const currentPerms = getAllGroupPermissions(groupId);
+  const existing = currentPerms.find(p => p.moduleKey === moduleKey) || {
+    id: `PERM-${groupId}-${moduleKey}`,
+    groupId,
+    moduleKey,
+    canRead: false,
+    canWrite: false,
+    canApprove: false,
+    canExport: false,
+  };
+
+  const nextState = {
+    canRead: existing.canRead,
+    canWrite: existing.canWrite,
+    canApprove: existing.canApprove,
+    canExport: existing.canExport,
+  };
+
+  const nextVal = !existing[field];
+  nextState[field] = nextVal;
+
+  // 智慧防呆連動：若開啟「寫/審/出」，自動確保「讀 (canRead)」一併開啟；若關閉「讀」，自動關閉「寫/審/出」
+  if (field !== 'canRead' && nextVal) {
+    nextState.canRead = true;
+  }
+  if (field === 'canRead' && !nextVal) {
+    nextState.canWrite = false;
+    nextState.canApprove = false;
+    nextState.canExport = false;
+  }
+
+  const check = dbInstance.exec(`SELECT id FROM group_module_permissions WHERE groupId = '${groupId}' AND moduleKey = '${moduleKey}';`);
+  if (check.length && check[0].values.length) {
+    dbInstance.run(`
+      UPDATE group_module_permissions
+      SET canRead = ${nextState.canRead ? 1 : 0},
+          canWrite = ${nextState.canWrite ? 1 : 0},
+          canApprove = ${nextState.canApprove ? 1 : 0},
+          canExport = ${nextState.canExport ? 1 : 0}
+      WHERE groupId = '${groupId}' AND moduleKey = '${moduleKey}';
+    `);
+  } else {
+    dbInstance.run(`
+      INSERT INTO group_module_permissions (id, groupId, moduleKey, canRead, canWrite, canApprove, canExport)
+      VALUES ('PERM-${groupId}-${moduleKey}', '${groupId}', '${moduleKey}', ${nextState.canRead ? 1 : 0}, ${nextState.canWrite ? 1 : 0}, ${nextState.canApprove ? 1 : 0}, ${nextState.canExport ? 1 : 0});
+    `);
+  }
+
+  const formatActions = (s: { canRead: boolean; canWrite: boolean; canApprove: boolean; canExport: boolean }) => {
+    const arr: string[] = [];
+    if (s.canRead) arr.push('檢視');
+    if (s.canWrite) arr.push('編輯');
+    if (s.canApprove) arr.push('審批');
+    if (s.canExport) arr.push('匯出');
+    return arr.length > 0 ? arr.join('、') : '無權限';
+  };
+
+  const oldStr = formatActions(existing);
+  const newStr = formatActions(nextState);
+  if (oldStr !== newStr) {
+    const modName = mod?.name || moduleKey;
+    const grpName = grp?.groupName || groupId;
+    logAudit(
+      dbInstance,
+      operatorName,
+      '修改資料',
+      '權限群組',
+      grpName,
+      { [`${modName}權限`]: oldStr },
+      { [`${modName}權限`]: newStr },
+      operatorName
+    );
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
 
 

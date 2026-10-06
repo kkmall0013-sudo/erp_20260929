@@ -54,9 +54,25 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
   onOpenDatabaseCenter,
 }) => {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
-  const { currentUser, allUsers, switchUser } = useAuth();
+  const { currentUser, allUsers, isSuperadmin, switchUser } = useAuth();
   const [isDbMenuOpen, setIsDbMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 當切換使用者身分時，若當前選取之營運法人不在該人員之 allowedCompanies 授權範圍內，自動導向其預設授權法人
+  React.useEffect(() => {
+    if (!currentUser || isSuperadmin) return;
+    const allowed = currentUser.allowedCompanies && currentUser.allowedCompanies.length > 0
+      ? currentUser.allowedCompanies
+      : ['COMP-01'];
+    if (!allowed.includes(selectedCompanyId)) {
+      const fallback = allowed.includes(currentUser.defaultCompanyId || '')
+        ? (currentUser.defaultCompanyId as string)
+        : allowed[0];
+      if (fallback) {
+        onSelectCompany(fallback);
+      }
+    }
+  }, [currentUser, isSuperadmin, selectedCompanyId, onSelectCompany]);
 
   // 自主修改密碼對話框狀態
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -153,20 +169,35 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
         </div>
       </div>
 
-      {/* 中區：常駐法人資訊與公告條 (對應截圖中的體驗/法人狀態條) */}
+      {/* 中區：常駐法人資訊與公告條 (依當前登入帳號之 allowedCompanies 實質控管切換權限) */}
       <div className="hidden md:flex items-center gap-2 bg-slate-800/90 border border-slate-700/80 rounded-full px-3 py-1 text-xs">
         <Building2 className="w-3.5 h-3.5 text-indigo-400" />
         <span className="text-slate-400">營運法人：</span>
         <select
           value={selectedCompanyId}
-          onChange={(e) => onSelectCompany(e.target.value)}
+          onChange={(e) => {
+            const targetId = e.target.value;
+            const allowed = currentUser?.allowedCompanies && currentUser.allowedCompanies.length > 0
+              ? currentUser.allowedCompanies
+              : ['COMP-01'];
+            if (!isSuperadmin && !allowed.includes(targetId)) {
+              const targetComp = companies.find(c => c.id === targetId);
+              setPasswordSuccessToast(`⛔ 【法人權限攔截】您的帳號（${currentUser?.fullName}）未獲授權操作「${targetComp?.shortName || targetComp?.name || targetId}」！`);
+              setTimeout(() => setPasswordSuccessToast(null), 4000);
+              return;
+            }
+            onSelectCompany(targetId);
+          }}
           className="bg-transparent text-xs font-semibold text-white outline-none cursor-pointer pr-1"
         >
-          {companies.map(c => (
-            <option key={c.id} value={c.id} className="bg-slate-800 text-white">
-              [{c.companyCode}] {c.shortName || c.name} {c.taxId ? `(${c.taxId})` : c.nationalId ? `(${c.nationalId.slice(0, 4)}***)` : ''}
-            </option>
-          ))}
+          {companies.map(c => {
+            const allowed = isSuperadmin || (currentUser?.allowedCompanies || ['COMP-01']).includes(c.id);
+            return (
+              <option key={c.id} value={c.id} className="bg-slate-800 text-white">
+                {allowed ? '' : '🔒 [未授權] '}[{c.companyCode}] {c.shortName || c.name} {c.taxId ? `(${c.taxId})` : c.nationalId ? `(${c.nationalId.slice(0, 4)}***)` : ''}
+              </option>
+            );
+          })}
         </select>
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
       </div>
@@ -314,18 +345,28 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
             <select
               value={currentUser?.id || ''}
               onChange={(e) => switchUser(e.target.value)}
-              title="切換操作身分"
-              className="bg-slate-800 text-[11px] text-slate-200 border border-slate-700 rounded px-1.5 py-0.5 outline-none cursor-pointer max-w-[105px] sm:max-w-[130px] truncate"
+              title="切換操作身分 (可實測不同身分與停權攔截效果)"
+              className="bg-slate-800 text-[11px] text-slate-200 border border-slate-700 rounded px-1.5 py-0.5 outline-none cursor-pointer max-w-[115px] sm:max-w-[155px] truncate"
             >
-              {allUsers.map(u => (
-                <option key={u.id} value={u.id}>
-                  {u.fullName} ({u.role}{u.status === 'DISABLED' ? ' [停用]' : ''}{u.role === 'SUPERADMIN' ? ' 👑' : ''}{u.role === 'ADMIN' && u.canManageUsers ? ' 🔑' : ''}{u.role === 'ADMIN' && u.canManageSystemConfigs ? ' 🛡️' : ''}{u.role === 'ADMIN' && u.canManageAdmins ? ' ⚡' : ''})
-                </option>
-              ))}
+              {allUsers
+                .filter(u => u.deleteStage !== 'ARCHIVED' || u.id === currentUser?.id)
+                .map(u => {
+                  const roleCn = u.role === 'SUPERADMIN' ? '最高管理者' : u.role === 'ADMIN' ? '管理員' : '同仁';
+                  const stageTag = u.deleteStage === 'PENDING_DELETE'
+                    ? ' [回收站停權]'
+                    : u.status === 'DISABLED'
+                    ? ' [已停用]'
+                    : '';
+                  return (
+                    <option key={u.id} value={u.id}>
+                      {u.fullName} ({roleCn}{stageTag}{u.role === 'SUPERADMIN' ? ' 👑' : ''}{u.role === 'ADMIN' && u.canManageUsers ? ' 🔑' : ''}{u.role === 'ADMIN' && u.canManageSystemConfigs ? ' 🛡️' : ''}{u.role === 'ADMIN' && u.canManageAdmins ? ' ⚡' : ''})
+                    </option>
+                  );
+                })}
             </select>
             {currentUser?.status === 'DISABLED' && (
               <span className="px-1.5 py-0.2 rounded bg-rose-900/90 text-rose-200 border border-rose-700 text-[10px] font-bold whitespace-nowrap">
-                已停用
+                已停權封鎖
               </span>
             )}
           </div>

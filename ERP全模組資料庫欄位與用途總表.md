@@ -14,52 +14,56 @@
 | `currentVal` | 該前綴已使用的流水號，透過列鎖及原子更新避免重號。 |
 | `updatedAt` | 流水號最近更新時間。 |
 
-### SystemConfig｜全域參數
+### 🛡️ 全系統欄位重複性審核與既有欄位重用對照總表 (Field Deduplication & Reuse Audit)
+
+為確保單一真實來源（SSoT）並杜絕「同義不同名」或「功能重疊之冗餘欄位」，全系統資料庫經全面盤點與審核後，強制執行以下**欄位整併與既有欄位重用規範**：
+
+| 模組／資料表 | 原先潛在重複或雙重定義欄位 | 審核後唯一採用標準欄位 (SSoT) | 審核決策與既有欄位重用說明 |
+|---|---|---|---|
+| **User (`users`)** | `name` vs `fullName` | **`fullName`** | 統一使用 `fullName` 儲存同仁真實中文全名，廢除 `name` 別名，避免與 `username`（登入帳號）混淆。 |
+| **User (`users`)** | `deleteStage` vs `isDeleted` vs `isGhost` | **`deleteStage`** + **`status`** | 以 `deleteStage`（`ACTIVE` 正常在職、`PENDING_DELETE` 7日待刪除回收站、`ARCHIVED` 深度封存區）完整涵蓋軟刪除與幽靈封存三態，進入非 `ACTIVE` 時自動同步 `status = 'DISABLED'`，**不另設冗餘之 `isDeleted` 或 `isGhost` 欄位**。 |
+| **User (`users`)** | `groupId` vs `groupIds` | **`groupIds`**（主）+ **`groupId`**（索引同步） | `groupIds` 為多重業務群組 JSON 陣列（PBAC 聯集計算來源）；`groupId` 固定自動同步為 `groupIds[0]` 作為主群組快速索引與向下相容欄位，不另建中介關聯表。 |
+| **權限角色模型** | `Role`、`UserCompanyAccess` vs `UserGroup`、`GroupModulePermission` | **`user_groups`** + **`group_module_permissions`** + **`users.allowedCompanies`** | 舊版 `Role` 與 `UserCompanyAccess` 已由「三層身分 (`users.role`) ＋ 跨法人授權陣列 (`users.allowedCompanies`) ＋ 業務群組 (`user_groups`) ＋ 12大模組權限矩陣 (`group_module_permissions`)」完全取代，**廢除舊表避免權限雙軌衝突**。 |
+| **群組匯出權限** | `user_groups.canExport` vs `group_module_permissions.canExport` | **兩者分層協同（非重複）** | `user_groups.canExport` 為「群組建立與快速套用之預設匯出總開關」；`group_module_permissions.canExport` 為「12 大模組個別細粒度匯出權限開關（PBAC 實質攔截依據）」。 |
+| **AuditLog (`audit_logs`)** | `userId` vs `performedBy`；`targetTable` vs `tableName`；`targetId` vs `recordId`；`beforeJson`/`afterJson` vs `maskedPayload` | **`userId`、`userName`、`action`、`targetTable`、`targetId`、`beforeJson`、`afterJson`** | **全面重用既有 `audit_logs` 欄位**，廢除憲法草案重複定義之 `performedBy`、`tableName`、`recordId`、`maskedPayload`：`userId` 存操作者權限身分中文名稱、`userName` 存操作者姓名、`targetTable` 存模組中文名稱、`targetId` 存目標對象中文名稱、`beforeJson`/`afterJson` 僅記錄有實際修改之欄位純中文差異對照。 |
+| **SystemConfig (`system_configs`)** | `createdBy` vs `updatedBy` | **`updatedBy`** + **`description`** | 系統參數為預設種子初始化後由授權管理員動態調校，直接重用 `updatedBy` 記錄最近修改參數之管理員姓名，並增補 `description` 儲存參數中文用途說明，不另設冗餘之 `createdBy`。 |
+| **Project (`projects`)** | `name` vs `contractName` / `internalName`；`contractAmount` vs `managementContractAmount` | **`name`**、**`contractAmount`**、**`budgetAmount`** | 實體 SQLite 主表統一使用 `name`（專案工程全銜）與 `contractAmount`（合約總額）、`budgetAmount`（核定預算總額），不重複切分多欄造成統計分歧。 |
+| **BusinessPartner (`business_partners`)** | `phone` vs `telephone`；`type` vs `isCustomer`/`isVendor` | **`phone`**、**`type`** | 聯絡電話統一使用 `phone`；夥伴屬性統一使用單一列舉欄位 `type`（`CUSTOMER`、`VENDOR`、`SUBCONTRACTOR`、`BOTH`），取代多個布林欄位。 |
+
+---
+
+### SystemConfig｜全域參數 (`system_configs`)
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 參數資料列識別碼。 |
-| `configKey` | 參數鍵名，如 `FIN_TAX_TOLERANCE`、`STAMP_DUTY_RECEIPT`。 |
-| `configValue` | 參數值，以字串保存並依型別轉換。 |
-| `valueType` | 值型別，例如 `STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
-| `validFrom` | 參數生效起始時間。 |
-| `validTo` | 參數生效結束時間，支援歷史值與時點查詢。 |
-| `isDeleted` | 軟刪除標記。 |
-| `version` | 樂觀鎖版本，防止並行覆寫。 |
-| `createdBy` | 建立參數者。 |
-| `updatedBy` | 最近更新參數者。 |
-| `createdAt` | 建立時間。 |
-| `updatedAt` | 最近更新時間。 |
+| `id` | 參數資料列識別碼（如 `CFG-01`）。 |
+| `configKey` | 參數唯一鍵名，如 `TAX_RATE`、`FIN_TAX_TOLERANCE`、`DEFAULT_RETENTION_RATE`、`PROJECT_LOCK_MODE`、`NHI_RATE`。 |
+| `configValue` | 參數值，以字串保存並依 `valueType` 轉換。 |
+| `description` | **【審核增補】** 參數中文名稱與用途說明（供系統參數控制台與純中文審計日誌直接顯示，免除硬編碼對照）。 |
+| `valueType` | 值型別：`STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
+| `validFrom` | 參數生效起始日期。 |
+| `validTo` | 參數生效結束日期（選填，支援歷史時點查詢）。 |
+| `isDeleted` | 軟刪除標記（預設 `0`）。 |
+| `version` | 樂觀鎖版本號（預設 `1`，每次更新自動 `+1`）。 |
+| `updatedBy` | **【重用既有欄位】** 最近更新此參數之授權管理員姓名（取代冗餘之 `createdBy`）。 |
+| `createdAt`、`updatedAt` | 建立及最近更新日期時間。 |
 
-### AuditLog｜全域審計
+### AuditLog｜全域安全審計日誌 (`audit_logs`)
 
-| 欄位 | 用途 |
-|---|---|
-| `id` | 審計紀錄識別碼。 |
-| `userId` | 執行操作的使用者 ID。 |
-| `userName` | 操作者名稱快照。 |
-| `action` | 操作類型，如修改銀行帳戶或覆寫容差。 |
-| `targetTable` | 被操作的資料表／模型名稱。 |
-| `targetId` | 被操作資料列 ID。 |
-| `beforeJson` | 操作前資料快照。 |
-| `afterJson` | 操作後資料快照。 |
-| `ipAddress` | 操作者來源 IP。 |
-| `createdAt` | 審計事件時間。 |
-
-### 憲法版 AuditLog｜PaaS 加密審計契約（不同版本）
-
-PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄位名稱與上表第零章範本不同，應視為版本差異，不可直接混成單一資料表契約。
+> **審核整併說明**：已將原第零章 `AuditLog` 與憲法草案 `PaaS 加密審計契約` 整併為單一實體表 `audit_logs`。全面重用既有欄位儲存**「純中文、無系統代號、僅記錄實際修改差異（Before ➔ After）」**之高可讀性日誌，不另新增 `tableName`、`recordId`、`performedBy`、`maskedPayload` 等重複欄位。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 審計紀錄識別碼。 |
-| `tableName` | 被操作資料表名稱。 |
-| `recordId` | 被操作資料列 ID。 |
-| `action` | 操作類型，如 CREATE、UPDATE、DELETE、VIEW。 |
-| `maskedPayload` | 遮蔽後的變更內容。 |
-| `encryptedPayload` | 加密保存的完整敏感變更內容。 |
-| `performedBy` | 操作者 ID。 |
-| `createdAt` | 審計事件時間。 |
+| `id` | 審計紀錄識別碼（如 `LOG-1712345678-123`）。 |
+| `userId` | **【重用既有欄位】** 執行操作者之權限身分中文名稱（如 `最高管理者`、`系統管理員`、`一般同仁`，不顯示英文代號）。 |
+| `userName` | 操作者真實中文姓名快照（如 `黃副總經理`、`陳資訊主任`）。 |
+| `action` | 純中文操作事件類型（如 `登入系統`、`切換身分`、`新增資料`、`修改資料`、`重設密碼`、`個人密碼變更`、`移入回收站`、`復原帳號`、`移入封存區`、`終極救回帳號`、`永久物理清除`、`單據過帳`）。 |
+| `targetTable` | **【重用既有欄位】** 被操作的業務模組中文名稱（如 `同仁帳號`、`權限群組`、`集團與公司設定`、`系統參數`、`專案主檔`、`採購單`、`估驗計價單`）。 |
+| `targetId` | **【重用既有欄位】** 被操作對象之中文識別名稱（如同仁姓名 `王採購專員`、群組名稱 `採購發包組`、參數名稱 `法定營業稅率`，絕不顯示內部 ID 代碼）。 |
+| `beforeJson` | **【僅記錄修改差異】** 修改前之欄位中文鍵值 JSON（僅包含本次實際發生異動的欄位，未修改欄位一律不寫入；新增或登入時為 `NULL`）。 |
+| `afterJson` | **【僅記錄修改差異】** 修改後之欄位中文鍵值 JSON（與 `beforeJson` 一對一精準對應，呈現「修改前 ➔ 修改後」純中文差異）。 |
+| `ipAddress` | 操作來源環境描述或內網位置（如 `公司內網`、`工地內網`）。 |
+| `createdAt` | 審計事件發生時間戳記（`YYYY-MM-DD HH:mm:ss`）。 |
 
 ### SysReportSnapshot｜PaaS 全域報表快照
 
@@ -75,7 +79,7 @@ PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄
 | `requestedBy` | 發起產製的使用者 ID。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### AnnualArchiveSnapshot｜年度唯讀封存快照
+### AnnualArchiveSnapshot｜年度唯讀封存快照 (`annual_archive_snapshots`)
 
 > **架構定位**：每年底系統結算後產出之獨立 SQLite 唯讀封存切片（如 `ERP_ARCHIVE_2025.sqlite`）。平時主庫保留完整資料，此快照檔案供：① 免啟動主系統之靜態離線查閱；② 新機遷移選擇性載入指定年份；③ 災難復原基底。
 
@@ -162,11 +166,11 @@ PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄
 | `createdBy`、`updatedBy` | 建立及最近更新者。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-全域參數字典中列出的鍵名（屬於 `configKey` 值，不是額外欄位）：`FIN_TAX_TOLERANCE`（營業稅容差）、`NHI_RATE`（健保費率）、`STAMP_DUTY_CONTRACT_RATE`（承攬契據稅率）、`STAMP_DUTY_ASSET_SALE`（動產買賣契據稅額）、`STAMP_DUTY_RECEIPT`（銀錢收據稅率）、`TRASH_RETENTION_DAYS`（附件垃圾桶保留天數）、`PROJECT_LOCK_MODE`（專案鎖定模式）、`VALUATION_ATTACHMENT_MODE`（估驗附件要求模式）、`MAINTENANCE_MODE`（系統維護模式）。
+全域參數字典中列出的鍵名（屬於 `configKey` 值，不是額外欄位）：`TAX_RATE`（法定營業稅率）、`FIN_TAX_TOLERANCE`（營業稅容差）、`DEFAULT_RETENTION_RATE`（預設保留款率）、`NHI_RATE`（健保費率）、`STAMP_DUTY_CONTRACT_RATE`（承攬契據稅率）、`STAMP_DUTY_ASSET_SALE`（動產買賣契據稅額）、`STAMP_DUTY_RECEIPT`（銀錢收據稅率）、`TRASH_RETENTION_DAYS`（附件垃圾桶保留天數）、`PROJECT_LOCK_MODE`（專案鎖定模式）、`VALUATION_ATTACHMENT_MODE`（估驗附件要求模式）、`MAINTENANCE_MODE`（系統維護模式）。
 
 ## 核心架構與資安防禦
 
-### Company｜公司法人與集團實體
+### Company｜公司法人與集團實體 (`companies`)
 
 > 支援「集團母體（GROUP）＋子公司法人（CORPORATION）＋老闆私人資金帳戶（PERSONAL）」之母子樹狀架構。
 > **個人實體規則：** 
@@ -197,44 +201,40 @@ PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄
 | `version` | 樂觀鎖版本，防止並行覆寫。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### User｜使用者
+### User｜使用者帳號主檔 (`users`)
+
+> **欄位審核重點**：
+> - 統一採用 **`fullName`** 作為使用者姓名欄位（廢除重複的 `name` 寫法）。
+> - 統一採用 **`deleteStage`**（`ACTIVE` / `PENDING_DELETE` / `ARCHIVED`）搭配 **`status`**（`ACTIVE` / `DISABLED`）控管帳號三階段刪除與停權生命週期，**不重複設置 `isDeleted` 或 `isGhost`**，確保狀態機唯一且無衝突。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 使用者識別碼。 |
-| `employeeId` | 員工編號。 |
+| `id` | 使用者唯一識別碼（如 `USR-001`）。 |
 | `username` | 登入帳號名稱（唯一不重複）。 |
-| `name` / `fullName` | 使用者姓名。 |
-| `title` | 職務職稱，如「工務主任」、「財務會計長」。 |
-| `email` | 登入或聯絡 Email。 |
-| `passwordHash` | 密碼雜湊或加密字串，不存明碼。 |
-| `isPasswordReset` | 是否為管理員重設後之初始預設密碼標記（布林值）。 |
-| `role` | 三層式身分架構：`SUPERADMIN`（唯一最高）、`ADMIN`（系統管理員）、`USER`（業務同仁）。 |
-| `canManageSystemConfigs` | **【Superadmin 特許核心授權】** 是否開放此特定 Admin 帳號修改全域核心參數（布林值，僅最高 Superadmin 有權授予開關，預設 0／false）。 |
-| `canManageUsers` | **【Superadmin 特許帳號管理專人授權】** 是否開放此特定 Admin 進入帳號管理模組，並具備同仁帳號維護與重設他人密碼之專人權限（布林值，僅最高 Superadmin 有權授予開關，預設 0／false；未獲授權者選單完全隱藏）。 |
-| `canManageAdmins` | **【Superadmin 特許同階管理授權】** 是否開放此特定 Admin 帳號新增、編輯、重設密碼與停用/刪除同階 Admin 帳號（布林值，僅最高 Superadmin 有權授予開關，預設 0／false）。 |
-| `groupId` | 主要業務權限群組代碼（對應 `user_groups.id`）。 |
-| `groupIds` | 多重業務權限群組矩陣 JSON（例如 `["GRP-ENG","GRP-PROC"]`，採權限聯集）。 |
-| `allowedCompanies` | 授權營運法人 ID 清單 JSON（例如 `["COMP-01","COMP-02"]`）。 |
-| `defaultCompanyId` | 預設進入之營運法人 ID。 |
-| `tokenVersion` | Token 版本；更新後可使既有登入憑證失效。 |
-| `maxConcurrentSessions` | 同時允許登入的設備數上限。 |
-| `allowedIpRanges` | 此帳號可登入的 IP／網段。 |
-| `dailyExportLimit` | 每日報表或資料匯出筆數上限。 |
-| `status` | 帳號狀態：`ACTIVE`（正常啟用）、`DISABLED`（停用／離職）。 |
-| `isGhost` | 幽靈員工標記；新選單隱藏但保留歷史血緣。 |
-| `resignedAt`、`reinstatedAt` | 離職及復職時間。 |
-| `delegateToId` | 代理人使用者 ID。 |
-| `delegateScope` | 代理可操作的模組／範圍。 |
-| `delegateFrom`、`delegateUntil` | 代理權限生效及到期時間。 |
-| `deleteStage` | 帳號生命週期狀態：`ACTIVE`（正常在職主檔）、`PENDING_DELETE`（第一階段：7日待刪除冷卻回收站）、`ARCHIVED`（第二階段：Superadmin 深度封存區）。 |
-| `stageDeletedAt` | 進入冷卻期或封存狀態之時間戳 (ISO)。 |
-| `purgeDueAt` | 7 天冷卻期預計屆滿截止時間 (ISO)。 |
-| `deletedBy` | 執行第一階段刪除或移交封存之操作人員姓名。 |
-| `stageNotes` | 刪除或封存之事由備註。 |
-| `isDeleted` | 軟刪除標記。 |
-| `version` | 樂觀鎖版本。 |
+| `fullName` | **【唯一標準欄位】** 使用者真實中文全名（供單據經辦快照與純中文審計日誌顯示）。 |
+| `title` | 職務職稱，如「工務主任」、「財務會計處副理」。 |
+| `email` | 登入或公務聯絡 Email。 |
+| `passwordHash` | 密碼雜湊或加密字串。 |
+| `isPasswordReset` | 是否為管理員重設後之初始預設密碼標記（`0` 或 `1`）。 |
+| `role` | 三層式身分架構：`SUPERADMIN`（唯一最高管理者）、`ADMIN`（系統管理員）、`USER`（業務群組同仁）。 |
+| `canManageUsers` | **【Superadmin 特許帳號管理專人授權】** 是否開放此特定 Admin 進入帳號管理模組，並具備同仁帳號維護與重設他人密碼之專人權限（預設 `0`；未獲授權者選單完全隱藏）。 |
+| `canManageSystemConfigs` | **【Superadmin 特許核心授權】** 是否開放此特定 Admin 帳號修改全域核心參數（預設 `0`）。 |
+| `canManageAdmins` | **【Superadmin 特許同階管理授權】** 是否開放此特定 Admin 帳號新增、編輯、重設密碼與停用/刪除同階 Admin 帳號（預設 `0`）。 |
+| `groupId` | 主要業務權限群組代碼（對應 `user_groups.id`，自動同步為 `groupIds[0]` 供快速索引與向下相容）。 |
+| `groupIds` | **【多重群組主欄位】** 多重業務權限群組矩陣 JSON（例如 `["GRP-ENG","GRP-PROC"]`，採 PBAC 權限聯集計算）。 |
+| `allowedCompanies` | **【取代 UserCompanyAccess】** 授權可切換與操作之營運法人 ID 清單 JSON（例如 `["COMP-01","COMP-02"]`）。 |
+| `defaultCompanyId` | 預設登入進入之營運法人 ID。 |
+| `status` | 帳號啟用狀態：`ACTIVE`（正常啟用）、`DISABLED`（停用凍結，立即攔截所有模組操作）。 |
+| `lastLoginAt` | 最近一次登入或切換進入系統之時間戳記。 |
+| `deleteStage` | **【取代傳統 isDeleted / isGhost】** 帳號刪除生命週期三態：`ACTIVE`（正常在職主檔）、`PENDING_DELETE`（第一階段：7日待刪除冷卻回收站）、`ARCHIVED`（第二階段：Superadmin 深度封存區）。 |
+| `stageDeletedAt` | 進入冷卻期或封存狀態之時間戳記 (ISO-8601)。 |
+| `purgeDueAt` | 7 天冷卻期預計屆滿截止時間 (ISO-8601)。 |
+| `deletedBy` | 執行第一階段刪除或移交封存之操作人員中文姓名。 |
+| `stageNotes` | 刪除或封存之事由備註說明。 |
+| `version` | 樂觀鎖版本號（預設 `1`）。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+
+> **規格預留擴充欄位（目前由前端 Session 與群組權限承載，不重複建欄）：** `employeeId`（員工編號，目前與 `id`/`username` 共用）、`tokenVersion`、`maxConcurrentSessions`、`allowedIpRanges`、`dailyExportLimit`（由群組與模組 `canExport` 控管）、`resignedAt`/`reinstatedAt`（由 `stageDeletedAt` 與審計日誌承載）、`delegateToId`/`delegateScope`/`delegateFrom`/`delegateUntil`。
 
 > **三層式權限與特許核心設定規則（憲法補充）：**
 > 1. **Superadmin 金身防護**：全系統僅此 1 位，具備絕對最高權限，不可刪除、不可停用、不可被一般 Admin 修改；欲更換最高管理者必須走「最高權限交接程序」。
@@ -258,25 +258,42 @@ PaaS 憲法另外定義了以遮蔽及加密內容為核心的審計模型；欄
 >     - **禁止自殺式停權**：無論 Superadmin 或具備帳號維護權限之專人 Admin，系統全面禁止將當前正在登入操作中之自身帳號設為停用（DISABLED）。介面點擊時觸發置頂防呆警示視窗，後端資料庫亦具備不可逾越之操作者身分阻擋檢核。
 >     - **停權狀態不可竄升提權**：當同仁帳號遭其他管理員停權時，前端驗證核心嚴禁靜默降級或回退至唯一最高 Superadmin；該帳號將如實維持停權狀態並全面封鎖所有 12 大模組的操作與審批權限，杜絕藉由停權換取最高管理者特權之資安漏洞。
 
-### Role｜權限角色
+### UserGroup｜業務權限群組主檔 (`user_groups`)
+
+> **審核增補說明**：取代舊版單層 `Role` 表，支援系統預設四大核心業務群組（工務組、財務會計組、採購發包組、專案業務組）與管理員動態新增之自訂職能群組，並內建單筆核准金額上限 (`approvalLimit`)。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 角色識別碼。 |
-| `roleName` | 角色名稱。 |
-| `permissions` | 權限矩陣 JSON，保存讀寫、核准、額度、欄位遮蔽等權限。 |
-| `isDeleted` | 軟刪除標記。 |
-| `version` | 樂觀鎖版本。 |
+| `id` | 權限群組識別碼（如 `GRP-ENG`、`GRP-ACC`）。 |
+| `groupCode` | 群組唯一業務代碼（如 `SITE_ENG`、`FIN_ACC`）。 |
+| `groupName` | 群組中文名稱（如 `工務組`、`財務會計組`）。 |
+| `description` | 群組職責範圍與權限說明。 |
+| `isSystem` | 是否為系統內建四大核心群組標記（`1` 為系統內建，受憲法保護禁止刪除；`0` 為自訂群組）。 |
+| `approvalLimit` | 該群組同仁之單筆簽核金額上限（新台幣元；`-1` 或 `>= 999999999` 代表無限額；多群組同仁取最大值）。 |
+| `canExport` | 群組層級預設匯出報表總開關（`0` 或 `1`，作為新模組預設值與群組層級快速識別）。 |
+| `version` | 樂觀鎖版本號（預設 `1`）。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### UserCompanyAccess｜使用者法人角色關聯
+### GroupModulePermission｜群組 12 大模組 PBAC 權限矩陣 (`group_module_permissions`)
+
+> **審核增補說明**：將原本濃縮在 `Role.permissions` JSON 字串中的權限拆解為結構化關聯表，針對全系統 12 大業務模組個別控管「讀 (`canRead`)、寫 (`canWrite`)、審 (`canApprove`)、出 (`canExport`)」四維權限，並內建讀寫連動防呆（開啟寫/審/出自動開啟讀；關閉讀自動關閉寫/審/出）。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 權限關聯識別碼。 |
-| `userId` | 使用者 ID。 |
-| `companyId` | 使用者可操作的法人 ID。 |
-| `roleId` | 使用者在該法人的角色 ID。 |
+| `id` | 權限矩陣項目識別碼（格式：`PERM-{groupId}-{moduleKey}`）。 |
+| `groupId` | 所屬業務權限群組 ID（對應 `user_groups.id`）。 |
+| `moduleKey` | 12 大業務模組鍵名：`COMPANIES`、`PROJECTS`、`PARTNERS`、`QUOTATIONS`、`PURCHASE_ORDERS`、`SUBCONTRACTS`、`VALUATIONS`、`FINANCE_AP`、`FINANCE_AR`、`BANK_CHECKS`、`SYSTEM_CONFIGS`、`AUDIT_LOGS`。 |
+| `canRead` | 讀取／進入模組權限（`0` 攔截並顯示無權限閘門；`1` 放行檢視）。 |
+| `canWrite` | 新增／編輯／刪除草稿權限（`0` 唯讀鎖定；`1` 允許寫入）。 |
+| `canApprove` | 單據核准／過帳權限（`0` 禁止簽核；`1` 允許於 `approvalLimit` 額度內執行簽核過帳）。 |
+| `canExport` | 模組單據／報表匯出權限（`0` 鎖定匯出；`1` 允許匯出 CSV/PDF/SQL）。 |
+| `version` | 樂觀鎖版本號（預設 `1`）。 |
+| `updatedAt` | 權限矩陣最近更新時間。 |
+
+### 舊版 Role 與 UserCompanyAccess｜【已整併淘汰，由上述模型重用取代】
+
+- **原 `Role` 表 (`id, roleName, permissions`)**：已由 `UserGroup` (`user_groups`) 與 `GroupModulePermission` (`group_module_permissions`) 結構化資料表完全取代，不再重複建立 `roles` 表。
+- **原 `UserCompanyAccess` 表 (`id, userId, companyId, roleId`)**：已由 `User.allowedCompanies`（跨法人授權 JSON 陣列）、`User.defaultCompanyId`（預設法人）與 `User.groupIds`（多重業務群組 JSON 陣列）直接重用取代，免除多表 JOIN 冗餘。
 
 API／權限結構中另有非資料表欄位：`sub`（JWT 使用者 ID）、`act`（代理行為者 ID）、`currentCompanyId`（當前法人）、`canReadOwn`（讀本人／負責資料）、`canReadAll`（讀全法人資料）、`canWrite`（寫入權）、`canApprove`（核准權）、`approvalLimit`（核准金額上限）、`maskedFields`（需遮蔽欄位清單）。
 

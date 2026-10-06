@@ -126,7 +126,15 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
   onSelectCompany,
   onDataChanged,
 }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, isSuperadmin, can } = useAuth();
+  const canWriteCompany = can('COMPANIES', 'write');
+  const isCompanyAllowed = (compId: string) => {
+    if (isSuperadmin) return true;
+    const allowed = currentUser?.allowedCompanies && currentUser.allowedCompanies.length > 0
+      ? currentUser.allowedCompanies
+      : ['COMP-01'];
+    return allowed.includes(compId);
+  };
   const [activeCompanyId, setActiveCompanyId] = useState<string>(selectedCompanyId || companies[0]?.id || 'COMP-01');
 
   // 篩選與搜尋狀態
@@ -260,6 +268,10 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
 
   // 建立新公司、新個人實體或新集團
   const handleCreateNew = (type: 'GROUP' | 'CORPORATION' | 'PERSONAL') => {
+    if (!canWriteCompany) {
+      showToast('⛔ 【權限攔截】您目前的身分或業務群組僅具備「公司法人組織」之唯讀權限，無法新增實體！（可於權限矩陣開啟「寫」權限後再試）');
+      return;
+    }
     const isCorp = type === 'CORPORATION';
     const isPersonal = type === 'PERSONAL';
     const isGroup = type === 'GROUP';
@@ -310,6 +322,14 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
 
   // 儲存表單
   const handleSave = () => {
+    if (!canWriteCompany) {
+      showToast('⛔ 【權限攔截】您目前的業務群組未開啟「公司法人組織」之【寫入編輯 (Write)】權限，無法儲存變更！');
+      return;
+    }
+    if (formData.id && !isCompanyAllowed(formData.id)) {
+      showToast('⛔ 【法人權限攔截】您的帳號未獲授權維護此營運法人！');
+      return;
+    }
     if (!formData.name?.trim()) {
       showToast('❌ 請輸入主體完整名稱');
       return;
@@ -374,6 +394,14 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
 
   // 開啟安全刪除確認 Modal
   const handleOpenDeleteModal = () => {
+    if (!canWriteCompany) {
+      showToast('⛔ 【權限攔截】您目前的業務群組未開啟「公司法人組織」之【寫入編輯 (Write)】權限，無法刪除實體！');
+      return;
+    }
+    if (formData.id && !isCompanyAllowed(formData.id)) {
+      showToast('⛔ 【法人權限攔截】您的帳號未獲授權刪除此營運法人！');
+      return;
+    }
     setDeleteErrorNote(null);
     setIsDeleteModalOpen(true);
   };
@@ -532,16 +560,23 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
             const isGroup = c.entityType === 'GROUP';
             const isPersonal = c.entityType === 'PERSONAL';
             const cParent = companies.find(p => p.id === c.parentId);
+            const allowedForUser = isCompanyAllowed(c.id);
 
             return (
               <button
                 key={c.id}
                 onClick={() => {
+                  if (!allowedForUser) {
+                    showToast(`⛔ 【法人權限攔截】您的帳號（${currentUser?.fullName}）未獲授權存取「${c.shortName || c.name}」！`);
+                    return;
+                  }
                   setActiveCompanyId(c.id);
                   onSelectCompany(c.id);
                 }}
-                className={`p-3.5 rounded-lg border text-left transition-all relative flex flex-col justify-between ${
-                  isSelected
+                className={`p-3.5 rounded-lg border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
+                  !allowedForUser
+                    ? 'bg-slate-100/70 border-slate-200 opacity-65 hover:border-rose-300'
+                    : isSelected
                     ? isPersonal
                       ? 'bg-amber-50/80 border-amber-400 shadow-xs ring-2 ring-amber-400/40'
                       : isGroup
@@ -555,17 +590,24 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
                     <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-1.5 py-0.5 rounded border border-slate-200">
                       {c.companyCode}
                     </span>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        isGroup
-                          ? 'bg-purple-100 text-purple-800 border border-purple-200'
-                          : isPersonal
-                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                      }`}
-                    >
-                      {isGroup ? '集團母體' : isPersonal ? '老闆私帳' : '公司法人'}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      {!allowedForUser && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">
+                          🔒 未授權
+                        </span>
+                      )}
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          isGroup
+                            ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                            : isPersonal
+                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        {isGroup ? '集團母體' : isPersonal ? '老闆私帳' : '公司法人'}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="font-bold text-xs text-slate-900 truncate mt-2">
@@ -609,7 +651,7 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
               {formData.companyCode || 'COMP'}
             </span>
             <div>
-              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <h2 className="text-sm font-bold text-slate-900 flex flex-wrap items-center gap-2">
                 <span>{formData.name || '未命名實體'}</span>
                 <span className="text-[11px] font-normal text-slate-400 font-mono">
                   [版本: v{formData.version || 1}]
@@ -619,6 +661,15 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
                     簡稱: {formData.shortName}
                   </span>
                 )}
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                    canWriteCompany
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-800 border-amber-300'
+                  }`}
+                >
+                  {canWriteCompany ? '✅ 目前身分具備編輯權限 (Write)' : '🔒 唯讀檢視模式 (無寫入權限)'}
+                </span>
               </h2>
               <div className="text-[11px] text-slate-500 mt-0.5">
                 {formData.entityType === 'PERSONAL'
@@ -633,17 +684,25 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
           <div className="flex items-center gap-2">
             <button
               onClick={handleOpenDeleteModal}
-              className="px-3 py-1.5 rounded-md text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-slate-200 transition-colors flex items-center gap-1"
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors flex items-center gap-1 cursor-pointer ${
+                canWriteCompany
+                  ? 'text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-slate-200'
+                  : 'text-slate-400 bg-slate-100 border-slate-200'
+              }`}
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>刪除實體</span>
             </button>
             <button
               onClick={handleSave}
-              className="px-4 py-1.5 rounded-md text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 shadow-xs transition-colors"
+              className={`px-4 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer ${
+                canWriteCompany
+                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                  : 'bg-slate-300 text-slate-600 hover:bg-slate-400'
+              }`}
             >
               <Save className="w-3.5 h-3.5" />
-              <span>儲存基本資料</span>
+              <span>{canWriteCompany ? '儲存基本資料' : '🔒 儲存基本資料 (唯讀攔截)'}</span>
             </button>
           </div>
         </div>

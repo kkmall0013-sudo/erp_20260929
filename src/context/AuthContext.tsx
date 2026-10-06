@@ -88,6 +88,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isSuperadmin) return Infinity;
     if (isAdmin) return 50000000;
     if (currentGroups.length > 0) {
+      if (currentGroups.some(g => g.approvalLimit === -1 || g.approvalLimit >= 999999999)) {
+        return Infinity;
+      }
       return Math.max(...currentGroups.map(g => g.approvalLimit || 0), 0);
     }
     return 0;
@@ -119,8 +122,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const can = useCallback((moduleKey: ModuleKey, action: 'read' | 'write' | 'approve' | 'export'): boolean => {
     if (!currentUser) return false;
 
-    // 停權帳號（DISABLED）：全面封鎖所有模組權限
-    if (currentUser.status === 'DISABLED') return false;
+    // 停權帳號（DISABLED）或待刪除/封存帳號：全面封鎖所有模組權限
+    if (currentUser.status === 'DISABLED' || (currentUser.deleteStage && currentUser.deleteStage !== 'ACTIVE')) return false;
 
     // Superadmin: 擁有所有模組的無條件最高權限
     if (currentUser.role === 'SUPERADMIN') return true;

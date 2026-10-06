@@ -22,8 +22,13 @@ import {
   Info,
   CheckCircle2,
   Clock,
-  Sparkles
+  Sparkles,
+  Lock,
+  ShieldAlert,
+  ShieldCheck
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { recordAuditLog } from '../db/sqlite';
 
 interface MainCanvasWorkspaceProps {
   project: Project | null;
@@ -55,12 +60,19 @@ export const MainCanvasWorkspace: React.FC<MainCanvasWorkspaceProps> = ({
   onDataChanged,
   onOpenFlowchart,
 }) => {
+  const { currentUser, currentGroup, approvalLimit, can, checkApproval } = useAuth();
+  const canWrite = can('PROJECTS', 'write');
+  const canApprove = can('PROJECTS', 'approve');
+  const canExport = can('PROJECTS', 'export');
+
   const [activeCanvasTab, setActiveCanvasTab] = useState<'WBS' | 'CONTRACT' | 'VALUATION_TIMELINE' | 'ATTACHMENTS'>('WBS');
   const [toastNote, setToastNote] = useState<string | null>(null);
+  const [wbsItems, setWbsItems] = useState(SAMPLE_WBS_ITEMS);
+  const [testApprovalAmount, setTestApprovalAmount] = useState<number>(350000);
 
   const showActionToast = (msg: string) => {
     setToastNote(msg);
-    setTimeout(() => setToastNote(null), 3000);
+    setTimeout(() => setToastNote(null), 4000);
   };
 
   if (!project) {
@@ -74,72 +86,201 @@ export const MainCanvasWorkspace: React.FC<MainCanvasWorkspaceProps> = ({
   }
 
   // 計算匯總數據
-  const totalAmount = SAMPLE_WBS_ITEMS.reduce((sum, item) => sum + item.amount, 0);
+  const totalAmount = wbsItems.reduce((sum, item) => sum + item.amount, 0);
+
+  const handleAddWbsItem = () => {
+    if (!canWrite) {
+      showActionToast(`⛔ 權限攔截：您目前的身分（${currentUser?.fullName} / ${currentGroup?.groupName || '無群組'}）對【專案工程案場】僅具唯讀權限 (w:0)，禁止新增工項！`);
+      return;
+    }
+    const nextIdx = wbsItems.length + 1;
+    const newItem = {
+      id: `WBS-${nextIdx}-${Date.now()}`,
+      code: `09900-${String(nextIdx).padStart(2, '0')}`,
+      name: `新增變更追加工程項目 #${nextIdx}`,
+      spec: '依最新核定施工圖說辦理',
+      unit: '式',
+      qty: 1,
+      price: 150000,
+      amount: 150000,
+      progress: 0,
+      isDeduction: false,
+    };
+    setWbsItems(prev => [newItem, ...prev]);
+    recordAuditLog(
+      currentUser?.fullName || '系統操作員',
+      '新增工項',
+      '專案工程案場',
+      project.name,
+      { '新增工項名稱': newItem.name, '發包預算金額': 'NT$ 150,000' }
+    );
+    showActionToast(`✅ 已成功新增工項「${newItem.name}」並寫入中文稽核日誌！`);
+  };
+
+  const handleSaveDocument = () => {
+    if (!canWrite) {
+      showActionToast(`⛔ 權限攔截：您目前的身分（${currentUser?.fullName}）無【專案工程案場】之寫入權限 (w:0)，系統已阻擋儲存變更！`);
+      return;
+    }
+    recordAuditLog(
+      currentUser?.fullName || '系統操作員',
+      '儲存單據',
+      '專案工程案場',
+      project.name,
+      { '工料筆數': `${wbsItems.length} 項`, '預算結算合計': `NT$ ${totalAmount.toLocaleString()}` }
+    );
+    showActionToast('✅ 單據資料已即時寫入 SQLite 資料庫並記錄中文稽核軌跡');
+    onDataChanged();
+  };
+
+  const handleApproveDocument = () => {
+    const check = checkApproval(testApprovalAmount, 'PROJECTS');
+    if (!check.allowed) {
+      showActionToast(`⛔ 簽核攔截：${check.reason}`);
+      return;
+    }
+    recordAuditLog(
+      currentUser?.fullName || '系統操作員',
+      '核准簽呈',
+      '專案工程案場',
+      project.name,
+      { '簽核單據金額': `NT$ ${testApprovalAmount.toLocaleString()}`, '簽核結果': '核准通過' }
+    );
+    showActionToast(`✅ 簽核通過！已由 ${currentUser?.fullName} 核准 NT$ ${testApprovalAmount.toLocaleString()} 預算單據`);
+  };
+
+  const handleExportDocument = () => {
+    if (!canExport) {
+      showActionToast(`⛔ 權限攔截：您目前的身分（${currentUser?.fullName}）無【專案工程案場】之匯出/列印權限 (e:0)，系統已禁止匯出敏感工程底價！`);
+      return;
+    }
+    recordAuditLog(
+      currentUser?.fullName || '系統操作員',
+      '匯出報表',
+      '專案工程案場',
+      project.name,
+      { '匯出內容': '工程發包預算明細報表 PDF' }
+    );
+    showActionToast('🖨️ 權限檢核通過！已產出鼎新標準工程發包明細報表 PDF');
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-100/60 overflow-hidden relative">
       {/* ======================================================== */}
       {/* 1. 右側固定頂部單據工具列 (Frozen Action Bar)             */}
       {/* ======================================================== */}
-      <div className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0 z-20 shadow-2xs">
-        {/* 左側：單據標題與麵包屑 */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
-              {project.projectCode}
-            </span>
-            <h2 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <span>{project.name}</span>
-              <span className="text-xs font-normal text-slate-500 font-mono">
-                [REV-A 定版]
+      <div className="min-h-14 py-2 bg-white border-b border-slate-200 px-6 flex flex-wrap items-center justify-between gap-3 shrink-0 z-20 shadow-2xs">
+        {/* 左側：單據標題與即時 PBAC 權限狀態 */}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
+                {project.projectCode}
               </span>
-            </h2>
+              <h2 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                <span>{project.name}</span>
+                <span className="text-xs font-normal text-slate-500 font-mono">
+                  [REV-A 定版]
+                </span>
+              </h2>
+            </div>
+
+            <span
+              className={`text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                project.status === 'ACTIVE'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>{project.status === 'ACTIVE' ? '施工在建中' : project.status === 'COMPLETED' ? '完工結案' : '規劃起標'}</span>
+            </span>
           </div>
 
-          <span
-            className={`text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-              project.status === 'ACTIVE'
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>{project.status === 'ACTIVE' ? '施工在建中' : project.status === 'COMPLETED' ? '完工結案' : '規劃起標'}</span>
-          </span>
+          {/* 即時 PBAC 權限徽章列 */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-slate-400">當前身分權限：</span>
+            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded border ${canWrite ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+              {canWrite ? '✓ 可編輯寫入' : '🔒 唯讀 (禁止新增/儲存)'}
+            </span>
+            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded border ${canApprove ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+              {canApprove
+                ? `✓ 可簽核 (上限: ${approvalLimit === Infinity ? '無限額' : `NT$ ${approvalLimit.toLocaleString()}`})`
+                : '🔒 無簽核權'}
+            </span>
+            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded border ${canExport ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+              {canExport ? '✓ 可匯出列印' : '🔒 禁止匯出'}
+            </span>
+          </div>
         </div>
 
-        {/* 右側：標準 ERP 核心按鈕群組 (新增、儲存、送審、列印) */}
-        <div className="flex items-center gap-2">
+        {/* 右側：標準 ERP 核心按鈕群組 (受 PBAC 權限即時管控) */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => showActionToast('已觸發工料項目新增作業')}
-            className="px-3 py-1.5 rounded-md text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+            onClick={handleAddWbsItem}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold border flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer ${
+              canWrite
+                ? 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
+                : 'bg-rose-50/70 hover:bg-rose-100/70 text-rose-700 border-rose-200'
+            }`}
+            title={canWrite ? '新增工程工項' : '無寫入權限 (點擊可測試攔截)'}
           >
-            <Plus className="w-3.5 h-3.5 text-slate-500" />
+            {canWrite ? <Plus className="w-3.5 h-3.5 text-slate-500" /> : <Lock className="w-3.5 h-3.5 text-rose-600" />}
             <span>新增工項</span>
           </button>
 
           <button
-            onClick={() => showActionToast('✅ 單據資料已即時寫入 SQLite 資料庫')}
-            className="px-3 py-1.5 rounded-md text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 transition-colors shadow-xs"
+            onClick={handleSaveDocument}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer ${
+              canWrite
+                ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                : 'bg-rose-600 hover:bg-rose-700 text-white'
+            }`}
+            title={canWrite ? '儲存單據變更' : '無寫入權限 (點擊可測試攔截)'}
           >
-            <Save className="w-3.5 h-3.5" />
+            {canWrite ? <Save className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
             <span>儲存單據</span>
           </button>
 
-          <button
-            onClick={() => showActionToast('已啟動鼎新 A1 審批呈核流程')}
-            className="px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-800 hover:bg-slate-900 text-white flex items-center gap-1.5 transition-colors shadow-xs"
-          >
-            <Send className="w-3.5 h-3.5 text-slate-300" />
-            <span>呈核審批</span>
-          </button>
+          {/* 簽核金額模擬器 + 呈核審批按鈕 */}
+          <div className="flex items-center bg-slate-100 rounded-md p-0.5 border border-slate-200">
+            <select
+              value={testApprovalAmount}
+              onChange={(e) => setTestApprovalAmount(Number(e.target.value))}
+              className="bg-transparent text-[11px] font-mono font-bold text-slate-700 px-2 py-1 outline-none cursor-pointer"
+              title="選擇欲測試簽核之單據金額 (用於測試群組核准上限攔截)"
+            >
+              <option value={50000}>簽核額: 5萬</option>
+              <option value={350000}>簽核額: 35萬 (工務50萬內)</option>
+              <option value={800000}>簽核額: 80萬 (逾工務50萬上限)</option>
+              <option value={1500000}>簽核額: 150萬 (採購200萬內)</option>
+              <option value={3500000}>簽核額: 350萬 (財務500萬內)</option>
+              <option value={8000000}>簽核額: 800萬 (僅總經理無限額)</option>
+            </select>
+            <button
+              onClick={handleApproveDocument}
+              className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer ${
+                canApprove
+                  ? 'bg-slate-800 hover:bg-slate-900 text-white'
+                  : 'bg-rose-700 hover:bg-rose-800 text-white'
+              }`}
+            >
+              {canApprove ? <Send className="w-3.5 h-3.5 text-slate-300" /> : <Lock className="w-3.5 h-3.5 text-white" />}
+              <span>呈核審批</span>
+            </button>
+          </div>
 
           <button
-            onClick={() => window.print()}
-            title="列印或匯出工程報表"
-            className="p-1.5 rounded-md hover:bg-slate-100 text-slate-500 hover:text-slate-800 border border-slate-200 transition-colors"
+            onClick={handleExportDocument}
+            title={canExport ? '列印或匯出工程報表' : '無匯出權限 (點擊可測試攔截)'}
+            className={`px-2.5 py-1.5 rounded-md border flex items-center gap-1 text-xs font-semibold transition-colors cursor-pointer ${
+              canExport
+                ? 'hover:bg-slate-100 text-slate-600 hover:text-slate-800 border-slate-200 bg-white'
+                : 'bg-rose-50/70 hover:bg-rose-100/70 text-rose-700 border-rose-200'
+            }`}
           >
-            <Printer className="w-4 h-4" />
+            {canExport ? <Printer className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5 text-rose-600" />}
+            <span>匯出</span>
           </button>
         </div>
       </div>
@@ -197,7 +338,7 @@ export const MainCanvasWorkspace: React.FC<MainCanvasWorkspaceProps> = ({
         {/* B. 頁籤列 (Tabs) */}
         <div className="flex items-center gap-2 border-b border-slate-200 pb-px">
           {[
-            { id: 'WBS', label: `工程工料與發包明細 (${SAMPLE_WBS_ITEMS.length} 項)` },
+            { id: 'WBS', label: `工程工料與發包明細 (${wbsItems.length} 項)` },
             { id: 'CONTRACT', label: '業主合約與條款' },
             { id: 'VALUATION_TIMELINE', label: '下包估驗請款進度' },
             { id: 'ATTACHMENTS', label: '圖說與無紙化附件 (3)' },
@@ -255,7 +396,7 @@ export const MainCanvasWorkspace: React.FC<MainCanvasWorkspaceProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {SAMPLE_WBS_ITEMS.map((item, idx) => {
+                {wbsItems.map((item, idx) => {
                   return (
                     <tr
                       key={item.id}
