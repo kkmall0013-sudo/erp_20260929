@@ -180,25 +180,150 @@ export interface ProjectWBS {
   actualAmount: number;
 }
 
+export interface PartnerAddress {
+  id: string;
+  partnerId: string;
+  addressType: 'COMMUNICATION' | 'REGISTERED' | 'FACTORY' | 'SITE_OFFICE' | 'OTHER';
+  label?: string; // 自訂標籤如: "總部通訊", "林口一廠", "工務所" (預設一般寫「地址」)
+  postalCode?: string; // 3 碼中華郵政郵遞區號 (如 100, 248)
+  city?: string; // 縣市 (如 臺北市, 新北市)
+  district?: string; // 鄉鎮市區 (如 中正區, 五股區)
+  streetAddress?: string; // 街道巷弄號樓等詳細路段 (拆分輸入)
+  fullAddress: string;
+  isDeleted: boolean;
+}
+
+export interface PartnerContact {
+  id: string;
+  partnerId: string;
+  contactType: 'PRIMARY' | 'FINANCE' | 'ENGINEERING' | 'SALES' | 'PURCHASE' | 'OTHER';
+  name: string;
+  title?: string; // 職稱如: 負責人、工務主任、會計主管、業務窗口
+  phone?: string; // 總機/座機
+  mobile?: string; // 行動電話
+  extension?: string; // 分機號碼
+  email?: string;
+  notes?: string;
+  isDeleted: boolean;
+}
+
+export interface PartnerBusinessCard {
+  id: string;
+  partnerId: string;
+  name: string; // 姓名 (名片上稱謂)
+  title?: string; // 職稱
+  companyName?: string; // 名片公司全稱
+  phone?: string; // 總機電話
+  mobile?: string; // 行動電話
+  email?: string; // 電子信箱
+  address?: string; // 名片地址
+  exchangeDate?: string; // 交換名片日期 (YYYY-MM-DD)
+  cardFrontUrl?: string; // 名片正面圖檔或 PDF
+  cardBackUrl?: string; // 名片背面圖檔
+  cardFileType?: 'IMAGE' | 'PDF';
+  notes?: string; // 備註
+  createdAt?: string;
+}
+
+export interface StoredMediaFile {
+  id: string;
+  name: string;
+  dataUrl: string; // Base64 或 Data URL (圖片或 PDF)
+  fileType: 'IMAGE' | 'PDF';
+  sizeBytes?: number;
+  uploadedAt: string;
+}
+
+export interface BPBankAccount {
+  id: string;
+  bpId: string;
+  bankCode: string; // 3 碼銀行機構代碼 (如 004, 013, 822)
+  bankName: string; // 銀行名稱
+  branchCode?: string; // 4 碼分行代碼
+  branchName?: string; // 分行名稱
+  accountNumber: string; // 帳號
+  accountName: string; // 戶名
+  isPrimary: boolean;
+  passbookFileId?: string; // 存摺封面照片附件 ID
+  passbookFileData?: string; // 存摺封面預覽資料 (Base64 / Data URL)
+  passbookFiles?: StoredMediaFile[]; // 支援多張存摺封面、內頁或印鑑卡檔案
+  isDeleted?: boolean;
+}
+
+export interface PartnerChequeRecord {
+  id: string;
+  partnerId: string;
+  direction: 'RECEIPT' | 'PAYMENT'; // RECEIPT: 收受支票, PAYMENT: 開出支票
+  bankCode: string; // 付款金融機構代碼 (3 碼)
+  bankName: string; // 付款銀行名稱
+  branchName?: string; // 付款分行名稱
+  accountNumber: string; // 支票扣款帳號
+  checkNumber: string; // 支票號碼
+  receivedDate?: string; // 收到支票時間 (收票時) 或 寄出給付時間 (開票時)
+  issueDate: string; // 支票票面發票日 (約定可兌換提示日 YYYY-MM-DD)
+  dueDate: string; // 支票到期日 / 票期 (可兌換時間 / 提示兌現日 YYYY-MM-DD)
+  statutoryExpiryDate?: string; // 票據法法定消滅時效日 (發票日+1年，系統自動計算提示)
+  cashableDate?: string; // 支票可兌換時間 (同到期提示日)
+  amount: number; // 支票金額 (嚴格正數)
+  payeeName: string; // 受款人抬頭
+  isNonNegotiable: boolean; // 是否禁止背書轉讓 (true / false)
+  chequeFileId?: string; // 支票影本 / PDF 掃描檔附件 ID
+  chequeFileData?: string; // 支票影本縮圖或預覽 Data URL
+  chequeFiles?: StoredMediaFile[]; // 支援正反面多影本或 PDF 掃描檔
+  status: 'ISSUED' | 'RECEIVED' | 'DEPOSITED' | 'CLEARED' | 'BOUNCED' | 'VOIDED'; // 已開立/已收受/已託收/已兌現/退票/作廢
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PartnerServiceCategoryItem {
+  id: string;
+  main: string;
+  sub: string;
+}
+
 export interface BusinessPartner {
   id: string;
   bpCode: string;
   name: string;
-  taxId: string;
+  taxId: string; // 8 碼公司統編 或 10 碼自然人身分證號
+  entityType?: 'CORPORATION' | 'NATURAL_PERSON'; // 公司法人 vs 自然人 (地主/工班師傅)
   type: 'CUSTOMER' | 'VENDOR' | 'SUBCONTRACTOR' | 'BOTH';
-  contactPerson: string;
-  phone: string;
+  isCustomer?: boolean; // 具備業主 (客戶/發包方) 身分
+  isVendor?: boolean; // 具備合作廠商 (協力包商/材料商) 身分
+  convertedFromVendorId?: string; // 若此業主由合作廠商「一鍵引薦轉換加入變業主」，記錄來源廠商 ID (SSoT)
+  serviceCategoryMain?: string; // 合作廠商主要工項大類 (主要)
+  serviceCategorySub?: string; // 合作廠商主要工項子類 (主要)
+  serviceCategories?: PartnerServiceCategoryItem[]; // 支援加入多項多元工種清單！
+  ownerIdNumber?: string; // 負責人身分證字號 (防弊/防換殼)
+  representative?: string; // 負責人姓名
+  contactPerson: string; // 主要聯絡人
+  phone: string; // 主要聯絡電話
   email: string;
-  address: string;
+  address: string; // 主要通訊地址
   bankName: string;
   bankCode: string;
   bankAccount: string;
-  paymentTermsDays: number;
+  bankAccountName?: string;
+  bankFeePayer?: 'COMPANY' | 'PARTNER'; // 手續費/匯費負擔方：預設 COMPANY (公司自行吸收，請款100全額匯100不內扣)
+  hasInvoice?: boolean; // 是否可開立三聯式統一發票 (自然人工班可為否)
+  paymentTermsDays: number; // 付款條件天數 (如 30 天, 45 天, 60 天)
   isHighRisk: boolean;
   riskReason?: string;
+  currentScore?: number; // 廠商評鑑分數 (0 ~ 100)
+  status?: 'ACTIVE' | 'PENDING' | 'WARNING' | 'SUSPENDED' | 'PAYMENT_LOCKED';
   companyId: string;
   isDeleted: boolean;
   version: number;
+  createdAt?: string;
+  updatedAt?: string;
+
+  // 關聯子集合 (前端多分頁或展開檢視)
+  addresses?: PartnerAddress[];
+  contacts?: PartnerContact[];
+  bankAccounts?: BPBankAccount[];
+  chequeRecords?: PartnerChequeRecord[];
+  businessCards?: PartnerBusinessCard[];
 }
 
 export interface Item {

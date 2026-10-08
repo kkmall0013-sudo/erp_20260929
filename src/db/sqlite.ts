@@ -8,6 +8,11 @@ import {
   ProjectSite,
   ProjectWBS,
   BusinessPartner,
+  PartnerAddress,
+  PartnerContact,
+  BPBankAccount,
+  PartnerChequeRecord,
+  PartnerBusinessCard,
   Item,
   Quotation,
   QuotationRevision,
@@ -329,7 +334,16 @@ function initializeTables(db: Database) {
       bpCode TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
       taxId TEXT NOT NULL,
+      entityType TEXT DEFAULT 'CORPORATION',
       type TEXT NOT NULL,
+      isCustomer INTEGER DEFAULT 0,
+      isVendor INTEGER DEFAULT 1,
+      convertedFromVendorId TEXT,
+      serviceCategoryMain TEXT,
+      serviceCategorySub TEXT,
+      serviceCategories TEXT,
+      ownerIdNumber TEXT,
+      representative TEXT,
       contactPerson TEXT,
       phone TEXT,
       email TEXT,
@@ -337,12 +351,105 @@ function initializeTables(db: Database) {
       bankName TEXT,
       bankCode TEXT,
       bankAccount TEXT,
+      bankAccountName TEXT,
+      bankFeePayer TEXT DEFAULT 'COMPANY',
+      hasInvoice INTEGER DEFAULT 1,
       paymentTermsDays INTEGER DEFAULT 30,
       isHighRisk INTEGER DEFAULT 0,
       riskReason TEXT,
+      currentScore REAL DEFAULT 85,
+      status TEXT DEFAULT 'ACTIVE',
       companyId TEXT,
       isDeleted INTEGER DEFAULT 0,
-      version INTEGER DEFAULT 1
+      version INTEGER DEFAULT 1,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS bp_bank_accounts (
+      id TEXT PRIMARY KEY,
+      bpId TEXT NOT NULL,
+      bankCode TEXT NOT NULL,
+      bankName TEXT NOT NULL,
+      branchCode TEXT,
+      branchName TEXT,
+      accountNumber TEXT NOT NULL,
+      accountName TEXT NOT NULL,
+      isPrimary INTEGER DEFAULT 1,
+      passbookFileId TEXT,
+      passbookFileData TEXT,
+      passbookFiles TEXT,
+      isDeleted INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_addresses (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      addressType TEXT DEFAULT 'COMMUNICATION',
+      label TEXT,
+      postalCode TEXT,
+      city TEXT,
+      district TEXT,
+      streetAddress TEXT,
+      fullAddress TEXT NOT NULL,
+      isDeleted INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_contacts (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      contactType TEXT DEFAULT 'PRIMARY',
+      name TEXT NOT NULL,
+      title TEXT,
+      phone TEXT,
+      mobile TEXT,
+      extension TEXT,
+      email TEXT,
+      notes TEXT,
+      isDeleted INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_business_cards (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      title TEXT,
+      companyName TEXT,
+      phone TEXT,
+      mobile TEXT,
+      email TEXT,
+      address TEXT,
+      exchangeDate TEXT,
+      cardFrontUrl TEXT,
+      cardBackUrl TEXT,
+      cardFileType TEXT DEFAULT 'IMAGE',
+      notes TEXT,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_cheque_records (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      bankCode TEXT NOT NULL,
+      bankName TEXT NOT NULL,
+      branchName TEXT,
+      accountNumber TEXT NOT NULL,
+      checkNumber TEXT NOT NULL,
+      receivedDate TEXT,
+      issueDate TEXT NOT NULL,
+      dueDate TEXT NOT NULL,
+      statutoryExpiryDate TEXT,
+      amount REAL NOT NULL,
+      payeeName TEXT NOT NULL,
+      isNonNegotiable INTEGER DEFAULT 1,
+      chequeFileId TEXT,
+      chequeFileData TEXT,
+      chequeFiles TEXT,
+      status TEXT DEFAULT 'RECEIVED',
+      notes TEXT,
+      createdAt TEXT,
+      updatedAt TEXT
     );
 
     CREATE TABLE IF NOT EXISTS items (
@@ -585,7 +692,7 @@ export function seedInitialData(db: Database) {
   const tables = [
     'users', 'user_groups', 'group_module_permissions',
     'companies', 'system_configs', 'audit_logs', 'projects', 'project_sites',
-    'project_wbs', 'business_partners', 'items', 'quotations', 'quotation_revisions',
+    'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
     'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
     'accounts_payable', 'accounts_receivable', 'bank_checks'
@@ -618,14 +725,55 @@ export function seedInitialData(db: Database) {
 
   // 3. 商業夥伴 (業主、混凝土下包、鋼構廠、弱電機電)
   db.run(`
-    INSERT INTO business_partners (id, bpCode, name, taxId, type, contactPerson, phone, email, address, bankName, bankCode, bankAccount, paymentTermsDays, isHighRisk, riskReason, companyId, isDeleted, version)
+    INSERT INTO business_partners (id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, convertedFromVendorId, serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson, phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer, hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId, isDeleted, version, createdAt, updatedAt)
     VALUES
-      ('BP-01', 'CUST-001', '富鼎置地開發建設股份有限公司', '12345678', 'CUSTOMER', '陳大為 總監', '02-2712-8888', 'contact@fuding.com.tw', '台北市信義區松高路100號', '中國信託商業銀行', '822', '123456789012', 45, 0, NULL, 'COMP-01', 0, 1),
-      ('BP-02', 'CUST-002', '國揚高新科技園區開發股份有限公司', '23456789', 'CUSTOMER', '林志祥 副總', '03-5712-9999', 'service@guoyang.com.tw', '新竹市東區公道五路二段50號', '國泰世華銀行', '013', '234567890123', 60, 0, NULL, 'COMP-01', 0, 1),
-      ('BP-03', 'VEND-001', '台灣水泥股份有限公司 (台北營業所)', '03754904', 'VENDOR', '黃經理', '02-2567-8899', 'orders@taiwancement.com', '台北市中山北路二段113號', '台灣銀行', '004', '004001234567', 30, 0, NULL, 'COMP-01', 0, 1),
-      ('BP-04', 'VEND-002', '中鋼結構工程股份有限公司', '86512390', 'VENDOR', '周工程師', '07-616-8800', 'steel@csbc.com.tw', '高雄市小港區中鋼路1號', '兆豐國際商業銀行', '017', '017009876543', 30, 0, NULL, 'COMP-01', 0, 1),
-      ('BP-05', 'SUB-001', '合眾基礎連續壁深開挖工程行', '78901234', 'SUBCONTRACTOR', '張添進 負責人', '0912-345-678', 'hezhong@tunnel.tw', '新北市五股區成泰路三段12號', '第一銀行', '007', '007001928374', 15, 0, NULL, 'COMP-01', 0, 1),
-      ('BP-06', 'SUB-002', '億翔機電弱電工程企業社', '45678901', 'SUBCONTRACTOR', '李文發', '0933-888-777', 'yixiang@mep.tw', '桃園市蘆竹區中正北路88號', '玉山銀行', '808', '808006543210', 30, 1, '曾有工程逾期爭議紀錄，發包前需副總以上特許核可', 'COMP-01', 0, 1);
+      ('BP-01', 'CUST-001', '富鼎置地開發建設股份有限公司', '12345678', 'CORPORATION', 'CUSTOMER', 1, 0, NULL, NULL, NULL, 'A123456789', '陳大為 董事長', '陳大為 總監', '02-2712-8888', 'contact@fuding.com.tw', '台北市信義區松高路100號', '中國信託商業銀行', '822', '123456789012', '富鼎置地開發建設股份有限公司', 'COMPANY', 1, 45, 0, NULL, 92, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01'),
+      ('BP-02', 'CUST-002', '國揚高新科技園區開發股份有限公司', '23456789', 'CORPORATION', 'CUSTOMER', 1, 0, NULL, NULL, NULL, 'B120987654', '林志祥 總經理', '林志祥 副總', '03-5712-9999', 'service@guoyang.com.tw', '新竹市東區公道五路二段50號', '國泰世華商業銀行', '013', '234567890123', '國揚高新科技園區開發股份有限公司', 'COMPANY', 1, 60, 0, NULL, 88, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01'),
+      ('BP-03', 'VEND-001', '台灣水泥股份有限公司 (台北營業所)', '03754904', 'CORPORATION', 'VENDOR', 0, 1, NULL, '營建材料原物料供料商', '預拌混凝土出料', 'A100987654', '張安平 董事長', '黃經理', '02-2567-8899', 'orders@taiwancement.com', '台北市中山北路二段113號', '臺灣銀行', '004', '004001234567', '台灣水泥股份有限公司', 'COMPANY', 1, 30, 0, NULL, 95, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01'),
+      ('BP-04', 'VEND-002', '中鋼結構工程股份有限公司', '86512390', 'CORPORATION', 'VENDOR', 0, 1, NULL, '基礎與結構工程', '鋼骨結構工程 (SC/SRC)', 'E123456780', '陳瑞騰 總經理', '周工程師', '07-616-8800', 'steel@csbc.com.tw', '高雄市小港區中鋼路1號', '兆豐國際商業銀行', '017', '017009876543', '中鋼結構工程股份有限公司', 'COMPANY', 1, 30, 0, NULL, 96, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01'),
+      ('BP-05', 'SUB-001', '合眾基礎連續壁深開挖工程行', '78901234', 'CORPORATION', 'SUBCONTRACTOR', 0, 1, NULL, '基礎與結構工程', '連續壁工程', 'F124567891', '張添進 負責人', '張添進 負責人', '0912-345-678', 'hezhong@tunnel.tw', '新北市五股區成泰路三段12號', '第一商業銀行', '007', '007001928374', '合眾基礎連續壁深開挖工程行', 'COMPANY', 1, 15, 0, NULL, 90, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01'),
+      ('BP-06', 'SUB-002', '億翔機電弱電工程企業社', '45678901', 'CORPORATION', 'SUBCONTRACTOR', 0, 1, NULL, '水電消防與空調機電', '智慧弱電/網路/監視門禁', 'H123456782', '李文發 負責人', '李文發', '0933-888-777', 'yixiang@mep.tw', '桃園市蘆竹區中正北路88號', '玉山商業銀行', '808', '808006543210', '億翔機電弱電工程企業社', 'COMPANY', 1, 30, 1, '曾有工程逾期爭議紀錄，發包前需副總以上特許核可', 72, 'WARNING', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01');
+
+    -- 夥伴銀行帳戶 (BPBankAccount)
+    INSERT INTO bp_bank_accounts (id, bpId, bankCode, bankName, branchCode, branchName, accountNumber, accountName, isPrimary, isDeleted)
+    VALUES
+      ('BACC-01', 'BP-01', '822', '中國信託商業銀行', '0822', '松高分行', '123456789012', '富鼎置地開發建設股份有限公司', 1, 0),
+      ('BACC-02', 'BP-02', '013', '國泰世華商業銀行', '0135', '新竹分行', '234567890123', '國揚高新科技園區開發股份有限公司', 1, 0),
+      ('BACC-03', 'BP-03', '004', '臺灣銀行', '0041', '群賢分行', '004001234567', '台灣水泥股份有限公司', 1, 0),
+      ('BACC-04', 'BP-04', '017', '兆豐國際商業銀行', '0178', '小港分行', '017009876543', '中鋼結構工程股份有限公司', 1, 0),
+      ('BACC-05', 'BP-05', '007', '第一商業銀行', '0073', '五股分行', '007001928374', '合眾基礎連續壁深開挖工程行', 1, 0),
+      ('BACC-06', 'BP-06', '808', '玉山商業銀行', '8082', '蘆竹分行', '808006543210', '億翔機電弱電工程企業社', 1, 0);
+
+    -- 夥伴多地址 (PartnerAddress - 支援登記地址、廠區、通訊地址等多點)
+    INSERT INTO partner_addresses (id, partnerId, addressType, label, fullAddress, isDeleted)
+    VALUES
+      ('PADDR-01', 'BP-01', 'COMMUNICATION', '台北總部', '台北市信義區松高路100號18樓', 0),
+      ('PADDR-02', 'BP-02', 'COMMUNICATION', '新竹辦公室', '新竹市東區公道五路二段50號6樓', 0),
+      ('PADDR-03', 'BP-03', 'COMMUNICATION', '台北營業所', '台北市中山北路二段113號', 0),
+      ('PADDR-04', 'BP-03', 'FACTORY', '八里預拌混凝土廠', '新北市八里區中山路三段55號', 0),
+      ('PADDR-05', 'BP-04', 'COMMUNICATION', '小港總廠', '高雄市小港區中鋼路1號', 0),
+      ('PADDR-06', 'BP-04', 'FACTORY', '燕巢鋼構加工廠', '高雄市燕巢區角宿路120號', 0),
+      ('PADDR-07', 'BP-05', 'COMMUNICATION', '工務通訊處', '新北市五股區成泰路三段12號', 0),
+      ('PADDR-08', 'BP-06', 'COMMUNICATION', '蘆竹總部', '桃園市蘆竹區中正北路88號', 0);
+
+    -- 夥伴多聯絡人 (PartnerContact - 業務、工務、會計等多重窗口)
+    INSERT INTO partner_contacts (id, partnerId, contactType, name, title, phone, mobile, extension, email, notes, isDeleted)
+    VALUES
+      ('PCON-01', 'BP-01', 'PRIMARY', '陳大為', '開發處總監', '02-2712-8888', '0910-888-999', '101', 'contact@fuding.com.tw', '主要商務合約決策人', 0),
+      ('PCON-02', 'BP-01', 'FINANCE', '林雅婷', '財務經理', '02-2712-8888', '0922-111-222', '108', 'finance@fuding.com.tw', '請款發票對帳窗口', 0),
+      ('PCON-03', 'BP-02', 'PRIMARY', '林志祥', '工程處副總', '03-5712-9999', '0935-777-666', '201', 'service@guoyang.com.tw', '竹科專案負責人', 0),
+      ('PCON-04', 'BP-03', 'SALES', '黃經理', '業務部副理', '02-2567-8899', '0918-222-333', '302', 'orders@taiwancement.com', '混凝土調度及磅單核對窗口', 0),
+      ('PCON-05', 'BP-04', 'ENGINEERING', '周工程師', '工務處工程師', '07-616-8800', '0921-333-444', '512', 'steel@csbc.com.tw', '鋼構圖面深化審查及吊裝排程', 0),
+      ('PCON-06', 'BP-05', 'PRIMARY', '張添進', '負責人', '02-2292-1234', '0912-345-678', '', 'hezhong@tunnel.tw', '連續壁開挖現場工頭指揮', 0),
+      ('PCON-07', 'BP-06', 'PRIMARY', '李文發', '負責人', '03-311-2233', '0933-888-777', '', 'yixiang@mep.tw', '弱電工程統籌', 0);
+
+    -- 夥伴支票往來記錄 (PartnerChequeRecord - 收票與發票全盤留存)
+    INSERT INTO partner_cheque_records (id, partnerId, direction, bankCode, bankName, accountNumber, checkNumber, issueDate, dueDate, amount, payeeName, isNonNegotiable, status, notes, createdAt, updatedAt)
+    VALUES
+      ('PCHK-01', 'BP-01', 'RECEIPT', '013', '國泰世華銀行', '234567890123', 'RC-990011', '2026-02-20', '2026-03-15', 17850000, '台灣大巨營造工程股份有限公司', 1, 'CLEARED', '合約首期訂金票據（已兌現入帳）', '2026-02-20', '2026-03-15'),
+      ('PCHK-02', 'BP-03', 'PAYMENT', '822', '中國信託商業銀行', '123456789012', 'CQ-882201', '2026-03-05', '2026-04-30', 10080000, '台灣水泥股份有限公司', 1, 'CLEARED', '南港商辦案 3 月份預拌混凝土貨款（已兌現結清）', '2026-03-05', '2026-04-30'),
+      ('PCHK-03', 'BP-04', 'PAYMENT', '004', '臺灣銀行', '004001234567', 'CQ-882203', '2026-04-05', '2026-05-31', 5000000, '中鋼結構工程股份有限公司', 1, 'ISSUED', '鋼構首批吊裝到場期票（未到期）', '2026-04-05', '2026-04-05'),
+      ('PCHK-04', 'BP-05', 'PAYMENT', '822', '中國信託商業銀行', '123456789012', 'CQ-882202', '2026-04-01', '2026-05-15', 3727500, '合眾基礎連續壁深開挖工程行', 1, 'ISSUED', '第 1 期估驗尾款開立 45 天期票', '2026-04-01', '2026-04-01');
   `);
 
   // 4. 專案工程與案場 (Projects, ProjectSites, ProjectWBS)
@@ -760,7 +908,7 @@ export function exportSqlDump(): string {
     'companies', 'system_configs', 'audit_logs', 'document_sequences',
     'annual_archive_snapshots', 'system_files',
     'projects', 'project_sites',
-    'project_wbs', 'business_partners', 'items', 'quotations', 'quotation_revisions',
+    'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
     'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
     'accounts_payable', 'accounts_receivable', 'bank_checks'
@@ -1739,31 +1887,586 @@ export function getAllProjects(companyId?: string): Project[] {
   }));
 }
 
-// 讀取商業夥伴
+// ============================================================================
+// 🏛️ Phase 3 商業夥伴 (BusinessPartner) 核心管理函式
+// ============================================================================
+
+// 讀取所有商業夥伴（含地址、聯絡人、銀行帳戶、支票記錄子集合）
 export function getAllBusinessPartners(): BusinessPartner[] {
   if (!dbInstance) return [];
-  const res = dbInstance.exec(`SELECT * FROM business_partners WHERE isDeleted = 0 ORDER BY bpCode;`);
-  if (!res.length) return [];
-  return res[0].values.map(v => ({
-    id: String(v[0]),
-    bpCode: String(v[1]),
-    name: String(v[2]),
-    taxId: String(v[3]),
-    type: v[4] as BusinessPartner['type'],
-    contactPerson: String(v[5] || ''),
-    phone: String(v[6] || ''),
-    email: String(v[7] || ''),
-    address: String(v[8] || ''),
-    bankName: String(v[9] || ''),
-    bankCode: String(v[10] || ''),
-    bankAccount: String(v[11] || ''),
-    paymentTermsDays: Number(v[12] || 30),
-    isHighRisk: Boolean(v[13]),
-    riskReason: v[14] ? String(v[14]) : undefined,
-    companyId: String(v[15]),
-    isDeleted: Boolean(v[16]),
-    version: Number(v[17]),
-  }));
+
+  // 1. 讀取主檔
+  const bpRes = dbInstance.exec(`
+    SELECT 
+      id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, convertedFromVendorId,
+      serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson,
+      phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
+      hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
+      isDeleted, version, createdAt, updatedAt, serviceCategories
+    FROM business_partners
+    WHERE isDeleted = 0
+    ORDER BY bpCode;
+  `);
+
+  if (!bpRes.length) return [];
+
+  // 2. 預載入全量關聯子集合（避免 N+1 查詢）
+  const addressesMap = new Map<string, PartnerAddress[]>();
+  try {
+    const addrRes = dbInstance.exec(`SELECT id, partnerId, addressType, label, fullAddress, isDeleted, postalCode, city, district, streetAddress FROM partner_addresses WHERE isDeleted = 0;`);
+    if (addrRes.length && addrRes[0].values) {
+      for (const row of addrRes[0].values) {
+        const pId = String(row[1]);
+        const addr: PartnerAddress = {
+          id: String(row[0]),
+          partnerId: pId,
+          addressType: (row[2] as PartnerAddress['addressType']) || 'COMMUNICATION',
+          label: row[3] ? String(row[3]) : undefined,
+          fullAddress: String(row[4] || ''),
+          isDeleted: Boolean(row[5]),
+          postalCode: row[6] ? String(row[6]) : undefined,
+          city: row[7] ? String(row[7]) : undefined,
+          district: row[8] ? String(row[8]) : undefined,
+          streetAddress: row[9] ? String(row[9]) : undefined
+        };
+        const list = addressesMap.get(pId) || [];
+        list.push(addr);
+        addressesMap.set(pId, list);
+      }
+    }
+  } catch (e) {}
+
+  const contactsMap = new Map<string, PartnerContact[]>();
+  try {
+    const conRes = dbInstance.exec(`SELECT id, partnerId, contactType, name, title, phone, mobile, extension, email, notes, isDeleted FROM partner_contacts WHERE isDeleted = 0;`);
+    if (conRes.length && conRes[0].values) {
+      for (const row of conRes[0].values) {
+        const pId = String(row[1]);
+        const con: PartnerContact = {
+          id: String(row[0]),
+          partnerId: pId,
+          contactType: (row[2] as PartnerContact['contactType']) || 'PRIMARY',
+          name: String(row[3] || ''),
+          title: row[4] ? String(row[4]) : undefined,
+          phone: row[5] ? String(row[5]) : undefined,
+          mobile: row[6] ? String(row[6]) : undefined,
+          extension: row[7] ? String(row[7]) : undefined,
+          email: row[8] ? String(row[8]) : undefined,
+          notes: row[9] ? String(row[9]) : undefined,
+          isDeleted: Boolean(row[10])
+        };
+        const list = contactsMap.get(pId) || [];
+        list.push(con);
+        contactsMap.set(pId, list);
+      }
+    }
+  } catch (e) {}
+
+  const cardsMap = new Map<string, PartnerBusinessCard[]>();
+  try {
+    const cardRes = dbInstance.exec(`SELECT id, partnerId, name, title, companyName, phone, mobile, email, address, exchangeDate, cardFrontUrl, cardBackUrl, cardFileType, notes, createdAt FROM partner_business_cards ORDER BY createdAt DESC;`);
+    if (cardRes.length && cardRes[0].values) {
+      for (const row of cardRes[0].values) {
+        const pId = String(row[1]);
+        const card: PartnerBusinessCard = {
+          id: String(row[0]),
+          partnerId: pId,
+          name: String(row[2] || ''),
+          title: row[3] ? String(row[3]) : undefined,
+          companyName: row[4] ? String(row[4]) : undefined,
+          phone: row[5] ? String(row[5]) : undefined,
+          mobile: row[6] ? String(row[6]) : undefined,
+          email: row[7] ? String(row[7]) : undefined,
+          address: row[8] ? String(row[8]) : undefined,
+          exchangeDate: row[9] ? String(row[9]) : undefined,
+          cardFrontUrl: row[10] ? String(row[10]) : undefined,
+          cardBackUrl: row[11] ? String(row[11]) : undefined,
+          cardFileType: (row[12] as any) || 'IMAGE',
+          notes: row[13] ? String(row[13]) : undefined,
+          createdAt: row[14] ? String(row[14]) : undefined
+        };
+        const list = cardsMap.get(pId) || [];
+        list.push(card);
+        cardsMap.set(pId, list);
+      }
+    }
+  } catch (e) {}
+
+  const banksMap = new Map<string, BPBankAccount[]>();
+  try {
+    const bnkRes = dbInstance.exec(`SELECT id, bpId, bankCode, bankName, branchCode, branchName, accountNumber, accountName, isPrimary, passbookFileId, passbookFileData, isDeleted, passbookFiles FROM bp_bank_accounts WHERE isDeleted = 0;`);
+    if (bnkRes.length && bnkRes[0].values) {
+      for (const row of bnkRes[0].values) {
+        const pId = String(row[1]);
+        let pFiles: any[] = [];
+        try {
+          if (row[12]) pFiles = JSON.parse(String(row[12]));
+        } catch (e) {}
+        const bnk: BPBankAccount = {
+          id: String(row[0]),
+          bpId: pId,
+          bankCode: String(row[2] || ''),
+          bankName: String(row[3] || ''),
+          branchCode: row[4] ? String(row[4]) : undefined,
+          branchName: row[5] ? String(row[5]) : undefined,
+          accountNumber: String(row[6] || ''),
+          accountName: String(row[7] || ''),
+          isPrimary: Boolean(row[8]),
+          passbookFileId: row[9] ? String(row[9]) : undefined,
+          passbookFileData: row[10] ? String(row[10]) : undefined,
+          isDeleted: Boolean(row[11]),
+          passbookFiles: pFiles
+        };
+        const list = banksMap.get(pId) || [];
+        list.push(bnk);
+        banksMap.set(pId, list);
+      }
+    }
+  } catch (e) {}
+
+  const chequesMap = new Map<string, PartnerChequeRecord[]>();
+  try {
+    const chkRes = dbInstance.exec(`SELECT id, partnerId, direction, bankCode, bankName, accountNumber, checkNumber, issueDate, dueDate, amount, payeeName, isNonNegotiable, chequeFileId, chequeFileData, status, notes, createdAt, updatedAt, branchName, receivedDate, chequeFiles, statutoryExpiryDate FROM partner_cheque_records ORDER BY dueDate DESC;`);
+    if (chkRes.length && chkRes[0].values) {
+      for (const row of chkRes[0].values) {
+        const pId = String(row[1]);
+        let cFiles: any[] = [];
+        try {
+          if (row[20]) cFiles = JSON.parse(String(row[20]));
+        } catch (e) {}
+        const chk: PartnerChequeRecord = {
+          id: String(row[0]),
+          partnerId: pId,
+          direction: (row[2] as PartnerChequeRecord['direction']) || 'RECEIPT',
+          bankCode: String(row[3] || ''),
+          bankName: String(row[4] || ''),
+          accountNumber: String(row[5] || ''),
+          checkNumber: String(row[6] || ''),
+          issueDate: String(row[7] || ''),
+          dueDate: String(row[8] || ''),
+          amount: Number(row[9] || 0),
+          payeeName: String(row[10] || ''),
+          isNonNegotiable: Boolean(row[11]),
+          chequeFileId: row[12] ? String(row[12]) : undefined,
+          chequeFileData: row[13] ? String(row[13]) : undefined,
+          status: (row[14] as PartnerChequeRecord['status']) || 'RECEIVED',
+          notes: row[15] ? String(row[15]) : undefined,
+          createdAt: String(row[16] || ''),
+          updatedAt: String(row[17] || ''),
+          branchName: row[18] ? String(row[18]) : undefined,
+          receivedDate: row[19] ? String(row[19]) : undefined,
+          chequeFiles: cFiles,
+          statutoryExpiryDate: row[21] ? String(row[21]) : undefined
+        };
+        const list = chequesMap.get(pId) || [];
+        list.push(chk);
+        chequesMap.set(pId, list);
+      }
+    }
+  } catch (e) {}
+
+  return bpRes[0].values.map(v => {
+    const id = String(v[0]);
+    const bType = v[5] as BusinessPartner['type'];
+    const isCust = v[6] !== null && v[6] !== undefined ? Boolean(v[6]) : (bType === 'CUSTOMER' || bType === 'BOTH');
+    const isVend = v[7] !== null && v[7] !== undefined ? Boolean(v[7]) : (bType === 'VENDOR' || bType === 'SUBCONTRACTOR' || bType === 'BOTH');
+
+    let parsedServiceCategories: any[] = [];
+    try {
+      if (v[33]) parsedServiceCategories = JSON.parse(String(v[33]));
+    } catch (e) {}
+
+    return {
+      id,
+      bpCode: String(v[1]),
+      name: String(v[2]),
+      taxId: String(v[3]),
+      entityType: (v[4] as BusinessPartner['entityType']) || 'CORPORATION',
+      type: bType,
+      isCustomer: isCust,
+      isVendor: isVend,
+      convertedFromVendorId: v[8] ? String(v[8]) : undefined,
+      serviceCategoryMain: v[9] ? String(v[9]) : undefined,
+      serviceCategorySub: v[10] ? String(v[10]) : undefined,
+      serviceCategories: parsedServiceCategories,
+      ownerIdNumber: v[11] ? String(v[11]) : undefined,
+      representative: v[12] ? String(v[12]) : undefined,
+      contactPerson: String(v[13] || ''),
+      phone: String(v[14] || ''),
+      email: String(v[15] || ''),
+      address: String(v[16] || ''),
+      bankName: String(v[17] || ''),
+      bankCode: String(v[18] || ''),
+      bankAccount: String(v[19] || ''),
+      bankAccountName: v[20] ? String(v[20]) : undefined,
+      bankFeePayer: (v[21] as BusinessPartner['bankFeePayer']) || 'COMPANY',
+      hasInvoice: v[22] !== null ? Boolean(v[22]) : true,
+      paymentTermsDays: Number(v[23] || 30),
+      isHighRisk: Boolean(v[24]),
+      riskReason: v[25] ? String(v[25]) : undefined,
+      currentScore: Number(v[26] ?? 85),
+      status: (v[27] as BusinessPartner['status']) || 'ACTIVE',
+      companyId: String(v[28] || 'COMP-01'),
+      isDeleted: Boolean(v[29]),
+      version: Number(v[30] || 1),
+      createdAt: String(v[31] || '2026-01-01'),
+      updatedAt: String(v[32] || '2026-01-01'),
+      addresses: addressesMap.get(id) || [],
+      contacts: contactsMap.get(id) || [],
+      bankAccounts: banksMap.get(id) || [],
+      chequeRecords: chequesMap.get(id) || [],
+      businessCards: cardsMap.get(id) || []
+    };
+  });
+}
+
+// 根據 ID 讀取單一商業夥伴
+export function getBusinessPartnerById(id: string): BusinessPartner | null {
+  const all = getAllBusinessPartners();
+  return all.find(b => b.id === id) || null;
+}
+
+// 儲存或更新商業夥伴 (包含子地址、聯絡人、銀行帳戶及審計日誌)
+export function saveBusinessPartner(
+  partner: BusinessPartner,
+  operatorName: string = '系統管理員'
+): BusinessPartner {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const isExisting = Boolean(partner.id && getBusinessPartnerById(partner.id));
+  const targetId = partner.id || `BP-${Date.now().toString().slice(-6)}`;
+  const targetCode = partner.bpCode || (partner.isCustomer ? `CUST-${Date.now().toString().slice(-4)}` : `VEND-${Date.now().toString().slice(-4)}`);
+
+  // 決定類型代號
+  let determinedType: BusinessPartner['type'] = partner.type;
+  if (partner.isCustomer && partner.isVendor) {
+    determinedType = 'BOTH';
+  } else if (partner.isCustomer) {
+    determinedType = 'CUSTOMER';
+  } else if (partner.isVendor) {
+    determinedType = partner.type === 'SUBCONTRACTOR' ? 'SUBCONTRACTOR' : 'VENDOR';
+  }
+
+  const primaryAddress = partner.addresses && partner.addresses.length > 0
+    ? partner.addresses[0].fullAddress
+    : partner.address || '';
+
+  const primaryContact = partner.contacts && partner.contacts.length > 0
+    ? partner.contacts[0].name
+    : partner.contactPerson || '';
+
+  const primaryPhone = partner.contacts && partner.contacts.length > 0
+    ? (partner.contacts[0].mobile || partner.contacts[0].phone || '')
+    : partner.phone || '';
+
+  const primaryBank = partner.bankAccounts && partner.bankAccounts.length > 0
+    ? partner.bankAccounts[0]
+    : null;
+
+  const bankName = primaryBank ? primaryBank.bankName : (partner.bankName || '');
+  const bankCode = primaryBank ? primaryBank.bankCode : (partner.bankCode || '');
+  const bankAccount = primaryBank ? primaryBank.accountNumber : (partner.bankAccount || '');
+  const bankAccountName = primaryBank ? primaryBank.accountName : (partner.bankAccountName || partner.name);
+
+  // 1. 寫入主檔 (UPSERT)
+  dbInstance.run(`
+    INSERT INTO business_partners (
+      id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, convertedFromVendorId,
+      serviceCategoryMain, serviceCategorySub, serviceCategories, ownerIdNumber, representative, contactPerson,
+      phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
+      hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
+      isDeleted, version, createdAt, updatedAt
+    ) VALUES (
+      '${targetId}',
+      '${targetCode.replace(/'/g, "''")}',
+      '${partner.name.replace(/'/g, "''")}',
+      '${(partner.taxId || '').replace(/'/g, "''")}',
+      '${partner.entityType || 'CORPORATION'}',
+      '${determinedType}',
+      ${partner.isCustomer ? 1 : 0},
+      ${partner.isVendor ? 1 : 0},
+      ${partner.convertedFromVendorId ? `'${partner.convertedFromVendorId.replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.serviceCategoryMain ? `'${partner.serviceCategoryMain.replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.serviceCategorySub ? `'${partner.serviceCategorySub.replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.serviceCategories && partner.serviceCategories.length > 0 ? `'${JSON.stringify(partner.serviceCategories).replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.ownerIdNumber ? `'${partner.ownerIdNumber.replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.representative ? `'${partner.representative.replace(/'/g, "''")}'` : 'NULL'},
+      '${primaryContact.replace(/'/g, "''")}',
+      '${primaryPhone.replace(/'/g, "''")}',
+      '${(partner.email || '').replace(/'/g, "''")}',
+      '${primaryAddress.replace(/'/g, "''")}',
+      '${bankName.replace(/'/g, "''")}',
+      '${bankCode.replace(/'/g, "''")}',
+      '${bankAccount.replace(/'/g, "''")}',
+      '${bankAccountName.replace(/'/g, "''")}',
+      '${partner.bankFeePayer || 'COMPANY'}',
+      ${partner.hasInvoice !== false ? 1 : 0},
+      ${partner.paymentTermsDays || 30},
+      ${partner.isHighRisk ? 1 : 0},
+      ${partner.riskReason ? `'${partner.riskReason.replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.currentScore ?? 85},
+      '${partner.status || 'ACTIVE'}',
+      '${partner.companyId || 'COMP-01'}',
+      0,
+      ${(partner.version || 1) + 1},
+      '${partner.createdAt || now}',
+      '${now}'
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      bpCode = excluded.bpCode,
+      name = excluded.name,
+      taxId = excluded.taxId,
+      entityType = excluded.entityType,
+      type = excluded.type,
+      isCustomer = excluded.isCustomer,
+      isVendor = excluded.isVendor,
+      convertedFromVendorId = excluded.convertedFromVendorId,
+      serviceCategoryMain = excluded.serviceCategoryMain,
+      serviceCategorySub = excluded.serviceCategorySub,
+      serviceCategories = excluded.serviceCategories,
+      ownerIdNumber = excluded.ownerIdNumber,
+      representative = excluded.representative,
+      contactPerson = excluded.contactPerson,
+      phone = excluded.phone,
+      email = excluded.email,
+      address = excluded.address,
+      bankName = excluded.bankName,
+      bankCode = excluded.bankCode,
+      bankAccount = excluded.bankAccount,
+      bankAccountName = excluded.bankAccountName,
+      bankFeePayer = excluded.bankFeePayer,
+      hasInvoice = excluded.hasInvoice,
+      paymentTermsDays = excluded.paymentTermsDays,
+      isHighRisk = excluded.isHighRisk,
+      riskReason = excluded.riskReason,
+      currentScore = excluded.currentScore,
+      status = excluded.status,
+      companyId = excluded.companyId,
+      isDeleted = 0,
+      version = business_partners.version + 1,
+      updatedAt = '${now}';
+  `);
+
+  // 2. 更新地址清單 (全量同步)
+  if (partner.addresses && partner.addresses.length > 0) {
+    dbInstance.run(`DELETE FROM partner_addresses WHERE partnerId = '${targetId}';`);
+    for (const a of partner.addresses) {
+      if (!a.fullAddress || !a.fullAddress.trim()) continue;
+      const aId = a.id || `PADDR-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 6)}`;
+      dbInstance.run(`
+        INSERT INTO partner_addresses (id, partnerId, addressType, label, postalCode, city, district, fullAddress, isDeleted)
+        VALUES ('${aId}', '${targetId}', '${a.addressType || 'COMMUNICATION'}', ${a.label ? `'${a.label.replace(/'/g, "''")}'` : 'NULL'}, ${a.postalCode ? `'${a.postalCode.replace(/'/g, "''")}'` : 'NULL'}, ${a.city ? `'${a.city.replace(/'/g, "''")}'` : 'NULL'}, ${a.district ? `'${a.district.replace(/'/g, "''")}'` : 'NULL'}, '${a.fullAddress.replace(/'/g, "''")}', 0);
+      `);
+    }
+  }
+
+  // 3. 更新聯絡人清單 (全量同步)
+  if (partner.contacts && partner.contacts.length > 0) {
+    dbInstance.run(`DELETE FROM partner_contacts WHERE partnerId = '${targetId}';`);
+    for (const c of partner.contacts) {
+      if (!c.name || !c.name.trim()) continue;
+      const cId = c.id || `PCON-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 6)}`;
+      dbInstance.run(`
+        INSERT INTO partner_contacts (id, partnerId, contactType, name, title, phone, mobile, extension, email, notes, isDeleted)
+        VALUES (
+          '${cId}',
+          '${targetId}',
+          '${c.contactType || 'PRIMARY'}',
+          '${c.name.replace(/'/g, "''")}',
+          ${c.title ? `'${c.title.replace(/'/g, "''")}'` : 'NULL'},
+          ${c.phone ? `'${c.phone.replace(/'/g, "''")}'` : 'NULL'},
+          ${c.mobile ? `'${c.mobile.replace(/'/g, "''")}'` : 'NULL'},
+          ${c.extension ? `'${c.extension.replace(/'/g, "''")}'` : 'NULL'},
+          ${c.email ? `'${c.email.replace(/'/g, "''")}'` : 'NULL'},
+          ${c.notes ? `'${c.notes.replace(/'/g, "''")}'` : 'NULL'},
+          0
+        );
+      `);
+    }
+  }
+
+  // 4. 更新銀行帳戶清單
+  if (partner.bankAccounts && partner.bankAccounts.length > 0) {
+    dbInstance.run(`DELETE FROM bp_bank_accounts WHERE bpId = '${targetId}';`);
+    for (const b of partner.bankAccounts) {
+      if (!b.accountNumber || !b.accountNumber.trim()) continue;
+      const bId = b.id || `BACC-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 6)}`;
+      dbInstance.run(`
+        INSERT INTO bp_bank_accounts (id, bpId, bankCode, bankName, branchCode, branchName, accountNumber, accountName, isPrimary, passbookFileId, passbookFileData, passbookFiles, isDeleted)
+        VALUES (
+          '${bId}',
+          '${targetId}',
+          '${(b.bankCode || '').replace(/'/g, "''")}',
+          '${(b.bankName || '').replace(/'/g, "''")}',
+          ${b.branchCode ? `'${b.branchCode.replace(/'/g, "''")}'` : 'NULL'},
+          ${b.branchName ? `'${b.branchName.replace(/'/g, "''")}'` : 'NULL'},
+          '${b.accountNumber.replace(/'/g, "''")}',
+          '${(b.accountName || partner.name).replace(/'/g, "''")}',
+          ${b.isPrimary ? 1 : 0},
+          ${b.passbookFileId ? `'${b.passbookFileId.replace(/'/g, "''")}'` : 'NULL'},
+          ${b.passbookFileData ? `'${b.passbookFileData.replace(/'/g, "''")}'` : 'NULL'},
+          ${b.passbookFiles && b.passbookFiles.length > 0 ? `'${JSON.stringify(b.passbookFiles).replace(/'/g, "''")}'` : 'NULL'},
+          0
+        );
+      `);
+    }
+  }
+
+  // 5. 寫入審計日誌
+  try {
+    const actionDesc = isExisting ? '修改資料' : '新增資料';
+    recordAuditLog(operatorName, actionDesc, '商業夥伴', targetId, {
+      夥伴編號: targetCode,
+      夥伴名稱: partner.name,
+      統一編號: partner.taxId,
+      身分型態: partner.isCustomer && partner.isVendor ? '業主暨廠商' : partner.isCustomer ? '業主' : '合作廠商',
+      工項分類: `${partner.serviceCategoryMain || ''} / ${partner.serviceCategorySub || ''}`,
+      手續費負擔: partner.bankFeePayer === 'PARTNER' ? '廠商自付' : '公司自行吸收(不扣)',
+      高風險註記: partner.isHighRisk ? `是 (${partner.riskReason || ''})` : '正常'
+    });
+  } catch (e) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return getBusinessPartnerById(targetId) || partner;
+}
+
+// 軟刪除商業夥伴
+export function deleteBusinessPartner(id: string, operatorName: string = '系統管理員'): boolean {
+  if (!dbInstance) return false;
+  const partner = getBusinessPartnerById(id);
+  if (!partner) return false;
+
+  dbInstance.run(`UPDATE business_partners SET isDeleted = 1, updatedAt = '${new Date().toISOString()}' WHERE id = '${id}';`);
+
+  try {
+    recordAuditLog(operatorName, '刪除資料', '商業夥伴', id, { 夥伴名稱: partner.name, 夥伴編號: partner.bpCode });
+  } catch (e) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 一鍵自合作廠商引薦/加入變業主 (One-Click Vendor-to-Client Conversion)
+export function convertVendorToClient(vendorId: string, operatorName: string = '系統管理員'): BusinessPartner {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+  const vendor = getBusinessPartnerById(vendorId);
+  if (!vendor) throw new Error('找不到該合作廠商');
+
+  // 若該夥伴已存在，直接賦予業主身分，並記錄 SSoT 關聯
+  vendor.isCustomer = true;
+  vendor.type = vendor.isVendor ? 'BOTH' : 'CUSTOMER';
+  vendor.convertedFromVendorId = vendorId;
+
+  const saved = saveBusinessPartner(vendor, operatorName);
+
+  try {
+    recordAuditLog(operatorName, '身分轉換', '商業夥伴', vendorId, {
+      原始身分: '合作廠商',
+      轉換結果: '一鍵加入變業主 (SSoT 單一真實來源)',
+      業主名稱: vendor.name
+    });
+  } catch (e) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return saved;
+}
+
+// 新增/更新支票往來記錄
+export function savePartnerChequeRecord(
+  cheque: PartnerChequeRecord,
+  operatorName: string = '系統管理員'
+): PartnerChequeRecord {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const targetId = cheque.id || `PCHK-${Date.now().toString().slice(-6)}`;
+
+  dbInstance.run(`
+    INSERT INTO partner_cheque_records (
+      id, partnerId, direction, bankCode, bankName, branchName, accountNumber, checkNumber,
+      receivedDate, issueDate, dueDate, amount, payeeName, isNonNegotiable, chequeFileId, chequeFileData,
+      chequeFiles, status, notes, createdAt, updatedAt
+    ) VALUES (
+      '${targetId}',
+      '${cheque.partnerId}',
+      '${cheque.direction || 'RECEIPT'}',
+      '${(cheque.bankCode || '').replace(/'/g, "''")}',
+      '${(cheque.bankName || '').replace(/'/g, "''")}',
+      ${cheque.branchName ? `'${cheque.branchName.replace(/'/g, "''")}'` : 'NULL'},
+      '${(cheque.accountNumber || '').replace(/'/g, "''")}',
+      '${(cheque.checkNumber || '').replace(/'/g, "''")}',
+      ${cheque.receivedDate ? `'${cheque.receivedDate.replace(/'/g, "''")}'` : 'NULL'},
+      '${cheque.issueDate || now.slice(0, 10)}',
+      '${cheque.dueDate || now.slice(0, 10)}',
+      ${Math.max(0, cheque.amount || 0)},
+      '${(cheque.payeeName || '').replace(/'/g, "''")}',
+      ${cheque.isNonNegotiable ? 1 : 0},
+      ${cheque.chequeFileId ? `'${cheque.chequeFileId.replace(/'/g, "''")}'` : 'NULL'},
+      ${cheque.chequeFileData ? `'${cheque.chequeFileData.replace(/'/g, "''")}'` : 'NULL'},
+      ${cheque.chequeFiles && cheque.chequeFiles.length > 0 ? `'${JSON.stringify(cheque.chequeFiles).replace(/'/g, "''")}'` : 'NULL'},
+      '${cheque.status || 'RECEIVED'}',
+      ${cheque.notes ? `'${cheque.notes.replace(/'/g, "''")}'` : 'NULL'},
+      '${cheque.createdAt || now}',
+      '${now}'
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      direction = excluded.direction,
+      bankCode = excluded.bankCode,
+      bankName = excluded.bankName,
+      branchName = excluded.branchName,
+      accountNumber = excluded.accountNumber,
+      checkNumber = excluded.checkNumber,
+      receivedDate = excluded.receivedDate,
+      issueDate = excluded.issueDate,
+      dueDate = excluded.dueDate,
+      amount = excluded.amount,
+      payeeName = excluded.payeeName,
+      isNonNegotiable = excluded.isNonNegotiable,
+      chequeFileId = excluded.chequeFileId,
+      chequeFileData = excluded.chequeFileData,
+      chequeFiles = excluded.chequeFiles,
+      status = excluded.status,
+      notes = excluded.notes,
+      updatedAt = '${now}';
+  `);
+
+  try {
+    const dirText = cheque.direction === 'RECEIPT' ? '收受支票' : '開立支票';
+    recordAuditLog(operatorName, '登記票據', '夥伴支票記錄', targetId, {
+      票據方向: dirText,
+      支票號碼: cheque.checkNumber,
+      票面金額: cheque.amount,
+      到期日: cheque.dueDate
+    });
+  } catch (e) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    ...cheque,
+    id: targetId,
+    updatedAt: now
+  };
+}
+
+// 刪除支票往來記錄
+export function deletePartnerChequeRecord(chequeId: string, operatorName: string = '系統管理員'): boolean {
+  if (!dbInstance) return false;
+  dbInstance.run(`DELETE FROM partner_cheque_records WHERE id = '${chequeId}';`);
+
+  try {
+    recordAuditLog(operatorName, '刪除票據', '夥伴支票記錄', chequeId, { 支票記錄代碼: chequeId });
+  } catch (e) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
 }
 
 // 讀取報價單
@@ -2308,6 +3011,169 @@ export function ensureDatabaseIntegrity(db: Database) {
   } catch (e) {
     // 索引已存在
   }
+
+  // 升級檢測：確保 business_partners 擁有 Phase 3 完整商業夥伴欄位
+  const bpAlterColumns = [
+    { name: 'entityType', type: "TEXT DEFAULT 'CORPORATION'" },
+    { name: 'isCustomer', type: 'INTEGER DEFAULT 0' },
+    { name: 'isVendor', type: 'INTEGER DEFAULT 1' },
+    { name: 'convertedFromVendorId', type: 'TEXT' },
+    { name: 'serviceCategoryMain', type: 'TEXT' },
+    { name: 'serviceCategorySub', type: 'TEXT' },
+    { name: 'serviceCategories', type: 'TEXT' },
+    { name: 'ownerIdNumber', type: 'TEXT' },
+    { name: 'representative', type: 'TEXT' },
+    { name: 'bankAccountName', type: 'TEXT' },
+    { name: 'bankFeePayer', type: "TEXT DEFAULT 'COMPANY'" },
+    { name: 'hasInvoice', type: 'INTEGER DEFAULT 1' },
+    { name: 'currentScore', type: 'REAL DEFAULT 85' },
+    { name: 'status', type: "TEXT DEFAULT 'ACTIVE'" },
+    { name: 'createdAt', type: "TEXT DEFAULT '2026-01-01'" },
+    { name: 'updatedAt', type: "TEXT DEFAULT '2026-01-01'" },
+  ];
+  for (const c of bpAlterColumns) {
+    try {
+      db.run(`ALTER TABLE business_partners ADD COLUMN ${c.name} ${c.type};`);
+    } catch (e) {}
+  }
+
+  // 同步初始化業主與廠商身分旗標及手續費負擔方
+  try {
+    db.run(`UPDATE business_partners SET isCustomer = 1, isVendor = 0 WHERE type = 'CUSTOMER';`);
+    db.run(`UPDATE business_partners SET isCustomer = 0, isVendor = 1 WHERE type IN ('VENDOR', 'SUBCONTRACTOR');`);
+    db.run(`UPDATE business_partners SET isCustomer = 1, isVendor = 1 WHERE type = 'BOTH';`);
+    db.run(`UPDATE business_partners SET bankFeePayer = 'COMPANY' WHERE bankFeePayer IS NULL OR bankFeePayer = '';`);
+  } catch (e) {}
+
+  // 確保子關聯資料表健全
+  db.run(`
+    CREATE TABLE IF NOT EXISTS bp_bank_accounts (
+      id TEXT PRIMARY KEY,
+      bpId TEXT NOT NULL,
+      bankCode TEXT NOT NULL,
+      bankName TEXT NOT NULL,
+      branchCode TEXT,
+      branchName TEXT,
+      accountNumber TEXT NOT NULL,
+      accountName TEXT NOT NULL,
+      isPrimary INTEGER DEFAULT 1,
+      passbookFileId TEXT,
+      passbookFileData TEXT,
+      passbookFiles TEXT,
+      isDeleted INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_addresses (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      addressType TEXT DEFAULT 'COMMUNICATION',
+      label TEXT,
+      postalCode TEXT,
+      city TEXT,
+      district TEXT,
+      fullAddress TEXT NOT NULL,
+      isDeleted INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_contacts (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      contactType TEXT DEFAULT 'PRIMARY',
+      name TEXT NOT NULL,
+      title TEXT,
+      phone TEXT,
+      mobile TEXT,
+      extension TEXT,
+      email TEXT,
+      notes TEXT,
+      isDeleted INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_business_cards (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      name TEXT NOT NULL,
+      title TEXT,
+      companyName TEXT,
+      phone TEXT,
+      mobile TEXT,
+      email TEXT,
+      address TEXT,
+      exchangeDate TEXT,
+      cardFrontUrl TEXT,
+      cardBackUrl TEXT,
+      cardFileType TEXT DEFAULT 'IMAGE',
+      notes TEXT,
+      createdAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS partner_cheque_records (
+      id TEXT PRIMARY KEY,
+      partnerId TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      bankCode TEXT NOT NULL,
+      bankName TEXT NOT NULL,
+      branchName TEXT,
+      accountNumber TEXT NOT NULL,
+      checkNumber TEXT NOT NULL,
+      receivedDate TEXT,
+      issueDate TEXT NOT NULL,
+      dueDate TEXT NOT NULL,
+      statutoryExpiryDate TEXT,
+      amount REAL NOT NULL,
+      payeeName TEXT NOT NULL,
+      isNonNegotiable INTEGER DEFAULT 1,
+      chequeFileId TEXT,
+      chequeFileData TEXT,
+      chequeFiles TEXT,
+      status TEXT DEFAULT 'RECEIVED',
+      notes TEXT,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+  `);
+
+  try { db.run(`ALTER TABLE business_partners ADD COLUMN serviceCategories TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE bp_bank_accounts ADD COLUMN passbookFiles TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_addresses ADD COLUMN postalCode TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_addresses ADD COLUMN city TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_addresses ADD COLUMN district TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_addresses ADD COLUMN streetAddress TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN branchName TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN receivedDate TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN statutoryExpiryDate TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN chequeFiles TEXT;`); } catch (e) {}
+
+  // 若子表為空，自動從既有 business_partners 填補主要地址、聯絡人與銀行帳戶
+  try {
+    const accCountRes = db.exec(`SELECT count(*) FROM bp_bank_accounts;`);
+    if (Number(accCountRes[0]?.values[0]?.[0] || 0) === 0) {
+      const bpRows = db.exec(`SELECT id, name, contactPerson, phone, email, address, bankName, bankCode, bankAccount FROM business_partners WHERE isDeleted = 0;`);
+      if (bpRows.length && bpRows[0].values.length) {
+        for (const r of bpRows[0].values) {
+          const bpId = String(r[0]);
+          const bpName = String(r[1]);
+          const cPerson = String(r[2] || '');
+          const cPhone = String(r[3] || '');
+          const cEmail = String(r[4] || '');
+          const addr = String(r[5] || '');
+          const bName = String(r[6] || '');
+          const bCode = String(r[7] || '');
+          const bAcc = String(r[8] || '');
+
+          if (addr) {
+            db.run(`INSERT INTO partner_addresses (id, partnerId, addressType, label, fullAddress, isDeleted) VALUES ('PADDR-${bpId}', '${bpId}', 'COMMUNICATION', '主要通訊地址', '${addr.replace(/'/g, "''")}', 0);`);
+          }
+          if (cPerson) {
+            db.run(`INSERT INTO partner_contacts (id, partnerId, contactType, name, title, phone, mobile, extension, email, notes, isDeleted) VALUES ('PCON-${bpId}', '${bpId}', 'PRIMARY', '${cPerson.replace(/'/g, "''")}', '業務窗口', '${cPhone.replace(/'/g, "''")}', '${cPhone.replace(/'/g, "''")}', '', '${cEmail.replace(/'/g, "''")}', '', 0);`);
+          }
+          if (bAcc) {
+            db.run(`INSERT INTO bp_bank_accounts (id, bpId, bankCode, bankName, branchCode, branchName, accountNumber, accountName, isPrimary, isDeleted) VALUES ('BACC-${bpId}', '${bpId}', '${bCode}', '${bName.replace(/'/g, "''")}', '', '', '${bAcc.replace(/'/g, "''")}', '${bpName.replace(/'/g, "''")}', 1, 0);`);
+          }
+        }
+      }
+    }
+  } catch (e) {}
 
   // 自動為既有帳號將 groupId 移轉填補至 groupIds 陣列
   try {

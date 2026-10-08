@@ -364,7 +364,10 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 | 欄位 | 用途 |
 |---|---|
 | `id` | 商業夥伴識別碼。 |
-| `isCustomer`、`isVendor` | 是否具有客戶及／或供應商身分。 |
+| `isCustomer`、`isVendor` | 是否具有客戶（業主）及／或供應商（廠商）身分。支援業主名冊與合作廠商名冊雙頁籤切換檢視。 |
+| `convertedFromVendorId` | 若此業主是由合作廠商「一鍵引薦轉換加入變業主」，記錄來源廠商 ID，維持 SSoT 不重複建檔。 |
+| `serviceCategoryMain` | 廠商服務主要大類（第一階多層級下拉選單，如：結構工程、裝修工程、機電工程、假設工程）。 |
+| `serviceCategorySub` | 廠商服務次要子類（第二階多層級下拉選單，如：模板工程、泥作貼磚、油漆塗裝、水電配管）。 |
 | `internalCompanyId` | 集團內部夥伴對應的子公司法人 ID。 |
 | `name` | 夥伴名稱；規格要求唯一，廠區可用名稱後綴區分。 |
 | `taxId` | 統一編號；可重複以支援多廠區。 |
@@ -372,7 +375,7 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 | `telephone` | 聯絡電話；防換殼比對。 |
 | `hasInvoice` | 是否可開立發票。 |
 | `parentBpId` | 母公司／上層商業夥伴 ID。 |
-| `bankFeePayer` | 匯費負擔方：公司或廠商。 |
+| `bankFeePayer` | 匯費與郵費負擔方：預設為 `COMPANY`（公司吸收，工程實務請款 100 全額給付 100 不內扣）。 |
 | `status` | 待核准、正常、警告、停權或付款鎖定等狀態。 |
 | `isHighRisk` | 高風險關聯標記，供採購及報價警示。 |
 | `currentScore` | 廠商評鑑分數快照。 |
@@ -398,10 +401,14 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 |---|---|
 | `id` | 銀行帳戶識別碼。 |
 | `bpId` | 帳戶所屬夥伴 ID。 |
-| `bankCode` | 銀行代碼。 |
+| `bankCode` | 銀行機構代碼（3 碼，如 `004` 臺灣銀行）。 |
+| `bankName` | 銀行中文名稱（如「臺灣銀行」）。 |
+| `branchCode` | 分行代碼（4 碼，如 `0011`）。 |
+| `branchName` | 分行中文名稱（如「營業部」）。 |
 | `accountNumber` | 銀行帳號；異動觸發付款鎖及雙重覆核。 |
 | `accountName` | 銀行帳戶戶名。 |
 | `isPrimary` | 是否為主要付款帳戶。 |
+| `passbookFileId` | 存摺封面照片附件 ID（關聯 `SystemFile.id`，出納放款憑據，支援縮圖與放大預覽）。 |
 
 ### PartnerAddress｜夥伴地址
 
@@ -409,8 +416,8 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 |---|---|
 | `id` | 地址識別碼。 |
 | `partnerId` | 所屬夥伴 ID。 |
-| `addressType` | 登記、帳單或送貨等地址類型。 |
-| `fullAddress` | 完整地址。 |
+| `addressType` | 地址類型，預設為 `COMMUNICATION`（通訊地址），支援擴充公司登記、工廠廠區、工務所等。 |
+| `fullAddress` | 完整地址（支援公司多廠區/多地址動態增刪）。 |
 | `isDeleted` | 軟刪除標記。 |
 
 ### PartnerContact｜夥伴聯絡人
@@ -419,10 +426,36 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 |---|---|
 | `id` | 聯絡人識別碼。 |
 | `partnerId` | 所屬夥伴 ID。 |
-| `contactType` | 財務、工地或採購等聯絡用途。 |
+| `contactType` | 財務、工務、業務或採購等聯絡用途。 |
 | `name` | 聯絡人姓名。 |
-| `phone`、`email` | 聯絡電話及 Email。 |
+| `phone` | 聯絡電話（總機或座機）。 |
+| `mobile` | 行動電話（手機）。 |
+| `extension` | 分機號碼。 |
+| `title` | 職位職稱。 |
+| `email` | 聯絡 Email。 |
+| `notes` | 聯絡備註。 |
 | `isDeleted` | 軟刪除標記。 |
+
+### PartnerChequeRecord｜夥伴支票往來記錄 (`partner_cheque_records`)
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 支票紀錄識別碼。 |
+| `partnerId` | 所屬商業夥伴 ID。 |
+| `direction` | 支票收發方向：`RECEIPT`（收受支票）或 `PAYMENT`（開出支票）。 |
+| `bankCode` | 付款金融機構代碼。 |
+| `bankName` | 付款金融機構名稱。 |
+| `accountNumber` | 支票付款帳號。 |
+| `checkNumber` | 支票號碼。 |
+| `issueDate` | 發票日期／開票日期。 |
+| `dueDate` | 支票到期日／票期。 |
+| `amount` | 支票票面金額。 |
+| `payeeName` | 受款人抬頭。 |
+| `isNonNegotiable` | 是否禁止背書轉讓（`1` 或 `0`）。 |
+| `chequeFileId` | 支票影本／PDF 掃描檔附件 ID（關聯 `SystemFile.id`，支援線上預覽與列印）。 |
+| `status` | 支票狀態：已開立、已收受、已託收、已兌現、退票、作廢。 |
+| `notes` | 備註說明。 |
+| `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
 ### PartnerRelationship｜夥伴關係／介紹分潤
 

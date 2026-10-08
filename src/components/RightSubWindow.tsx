@@ -31,6 +31,7 @@ import { MainCanvasWorkspace } from './MainCanvasWorkspace';
 import { DiscussionRoadmapView } from './DiscussionRoadmapView';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
 import { AccountManagementWorkspace } from './AccountManagementWorkspace';
+import { BusinessPartnerWorkspace } from './BusinessPartnerWorkspace';
 import { useAuth } from '../context/AuthContext';
 import {
   getAllSystemConfigs,
@@ -879,59 +880,11 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           </div>
         )}
 
-        {/* G. 商業夥伴模組（進行需求討論與計畫編寫階段，已清除先前臨時測試代碼） */}
+        {/* G. 商業夥伴模組 (CRM & SRM 完整主檔管理：業主名冊 vs 合作廠商名冊雙頁籤) */}
         {activeNavId === 'PARTNERS' && (
-          <div className="max-w-3xl mx-auto my-6 space-y-4">
-            <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-xs text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center mx-auto shadow-xs">
-                <Users className="w-8 h-8" />
-              </div>
-              <div className="space-y-2">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Phase 3 商業夥伴模組 · 架構討論與計畫草擬中（尚未正式動工）</span>
-                </div>
-                <h3 className="text-lg font-bold text-slate-900">
-                  商業夥伴主檔管理（業主、協力包商、材料供應商）
-                </h3>
-                <p className="text-xs text-slate-500 max-w-xl mx-auto leading-relaxed">
-                  先前畫面呈現之「臨時權限沙盒測試按鈕與簡陋表格」已全數清除。<br />
-                  目前正依據《系統憲法第三篇》與《資料庫欄位總表》，與使用者討論「業主與廠商雙重視角整合、個人與公司實體、防弊防換殼」之標準架構。
-                </p>
-              </div>
-
-              {/* 討論核心議題卡 */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-left pt-2">
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5 mb-1">
-                    <span className="w-2 h-2 rounded-full bg-indigo-500" />
-                    業主與廠商同一模組
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-normal">
-                    共用同一底層資料表 (BusinessPartner)，免除跨模組重複建檔，前台支援依業務型態切換視角。
-                  </p>
-                </div>
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5 mb-1">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    公司法人 vs 自然人
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-normal">
-                    公司綁定統編與發票地址；自建地主或個人工班師傅綁定身分證字號，滿足扣繳申報與防弊。
-                  </p>
-                </div>
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5 mb-1">
-                    <span className="w-2 h-2 rounded-full bg-amber-500" />
-                    雙重身分與對沖
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-normal">
-                    同一夥伴可同時為客戶與廠商，後續財務模組支援一鍵 AR/AP 應收付對沖結算。
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <BusinessPartnerWorkspace
+            onNotify={triggerModuleToast}
+          />
         )}
       </div>
 
