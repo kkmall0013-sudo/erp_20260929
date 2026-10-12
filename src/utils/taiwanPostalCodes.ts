@@ -488,3 +488,9 @@ export function getPostalCode(city: string, district: string): string | undefine
   const found = districts.find(d => d.district === district);
   return found?.postalCode;
 }
+
+/**
+ * 智慧反向查找郵遞區號與縣市別名 (與 parseTaiwanAddress 同義)
+ */
+export const lookupPostalCode = parseTaiwanAddress;
+

@@ -2026,44 +2026,54 @@ export function getAllBusinessPartners(): BusinessPartner[] {
 
   const chequesMap = new Map<string, PartnerChequeRecord[]>();
   try {
-    const chkRes = dbInstance.exec(`SELECT id, partnerId, direction, bankCode, bankName, accountNumber, checkNumber, issueDate, dueDate, amount, payeeName, isNonNegotiable, chequeFileId, chequeFileData, status, notes, createdAt, updatedAt, branchName, receivedDate, chequeFiles, statutoryExpiryDate FROM partner_cheque_records ORDER BY dueDate DESC;`);
+    const chkRes = dbInstance.exec(`SELECT * FROM partner_cheque_records ORDER BY dueDate DESC;`);
     if (chkRes.length && chkRes[0].values) {
+      const cols = chkRes[0].columns;
+      const colIdx: Record<string, number> = {};
+      cols.forEach((c, idx) => { colIdx[c] = idx; });
+      const getVal = (row: any[], cName: string) => colIdx[cName] !== undefined ? row[colIdx[cName]] : undefined;
+
       for (const row of chkRes[0].values) {
-        const pId = String(row[1]);
+        const pId = String(getVal(row, 'partnerId') || '');
+        if (!pId) continue;
         let cFiles: any[] = [];
         try {
-          if (row[20]) cFiles = JSON.parse(String(row[20]));
+          const rawFiles = getVal(row, 'chequeFiles');
+          if (rawFiles) cFiles = JSON.parse(String(rawFiles));
         } catch (e) {}
+
         const chk: PartnerChequeRecord = {
-          id: String(row[0]),
+          id: String(getVal(row, 'id') || ''),
           partnerId: pId,
-          direction: (row[2] as PartnerChequeRecord['direction']) || 'RECEIPT',
-          bankCode: String(row[3] || ''),
-          bankName: String(row[4] || ''),
-          accountNumber: String(row[5] || ''),
-          checkNumber: String(row[6] || ''),
-          issueDate: String(row[7] || ''),
-          dueDate: String(row[8] || ''),
-          amount: Number(row[9] || 0),
-          payeeName: String(row[10] || ''),
-          isNonNegotiable: Boolean(row[11]),
-          chequeFileId: row[12] ? String(row[12]) : undefined,
-          chequeFileData: row[13] ? String(row[13]) : undefined,
-          status: (row[14] as PartnerChequeRecord['status']) || 'RECEIVED',
-          notes: row[15] ? String(row[15]) : undefined,
-          createdAt: String(row[16] || ''),
-          updatedAt: String(row[17] || ''),
-          branchName: row[18] ? String(row[18]) : undefined,
-          receivedDate: row[19] ? String(row[19]) : undefined,
+          direction: (getVal(row, 'direction') as PartnerChequeRecord['direction']) || 'RECEIPT',
+          bankCode: String(getVal(row, 'bankCode') || ''),
+          bankName: String(getVal(row, 'bankName') || ''),
+          branchName: getVal(row, 'branchName') ? String(getVal(row, 'branchName')) : undefined,
+          accountNumber: String(getVal(row, 'accountNumber') || ''),
+          checkNumber: String(getVal(row, 'checkNumber') || ''),
+          receivedDate: getVal(row, 'receivedDate') ? String(getVal(row, 'receivedDate')) : undefined,
+          issueDate: String(getVal(row, 'issueDate') || ''),
+          dueDate: String(getVal(row, 'dueDate') || ''),
+          statutoryExpiryDate: getVal(row, 'statutoryExpiryDate') ? String(getVal(row, 'statutoryExpiryDate')) : undefined,
+          amount: Number(getVal(row, 'amount') || 0),
+          payeeName: String(getVal(row, 'payeeName') || ''),
+          isNonNegotiable: Boolean(getVal(row, 'isNonNegotiable')),
+          chequeFileId: getVal(row, 'chequeFileId') ? String(getVal(row, 'chequeFileId')) : undefined,
+          chequeFileData: getVal(row, 'chequeFileData') ? String(getVal(row, 'chequeFileData')) : undefined,
           chequeFiles: cFiles,
-          statutoryExpiryDate: row[21] ? String(row[21]) : undefined
+          status: (getVal(row, 'status') as PartnerChequeRecord['status']) || 'RECEIVED',
+          notes: getVal(row, 'notes') ? String(getVal(row, 'notes')) : undefined,
+          createdAt: String(getVal(row, 'createdAt') || ''),
+          updatedAt: String(getVal(row, 'updatedAt') || '')
         };
         const list = chequesMap.get(pId) || [];
         list.push(chk);
         chequesMap.set(pId, list);
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('Failed to load partner_cheque_records:', e);
+  }
 
   return bpRes[0].values.map(v => {
     const id = String(v[0]);
@@ -2313,7 +2323,38 @@ export function saveBusinessPartner(
     }
   }
 
-  // 5. 寫入審計日誌
+  // 5. 更新名片清單 (全量同步)
+  if (partner.businessCards && partner.businessCards.length > 0) {
+    dbInstance.run(`DELETE FROM partner_business_cards WHERE partnerId = '${targetId}';`);
+    for (const card of partner.businessCards) {
+      if (!card.name && !card.cardFrontUrl) continue;
+      const cId = card.id || `PBC-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 6)}`;
+      dbInstance.run(`
+        INSERT INTO partner_business_cards (
+          id, partnerId, name, title, companyName, phone, mobile, email, address,
+          exchangeDate, cardFrontUrl, cardBackUrl, cardFileType, notes, createdAt
+        ) VALUES (
+          '${cId}',
+          '${targetId}',
+          '${(card.name || partner.name).replace(/'/g, "''")}',
+          ${card.title ? `'${card.title.replace(/'/g, "''")}'` : 'NULL'},
+          ${card.companyName ? `'${card.companyName.replace(/'/g, "''")}'` : `'${partner.name.replace(/'/g, "''")}'`},
+          ${card.phone ? `'${card.phone.replace(/'/g, "''")}'` : 'NULL'},
+          ${card.mobile ? `'${card.mobile.replace(/'/g, "''")}'` : 'NULL'},
+          ${card.email ? `'${card.email.replace(/'/g, "''")}'` : 'NULL'},
+          ${card.address ? `'${card.address.replace(/'/g, "''")}'` : 'NULL'},
+          ${card.exchangeDate ? `'${card.exchangeDate.replace(/'/g, "''")}'` : 'NULL'},
+          ${card.cardFrontUrl ? `'${card.cardFrontUrl.replace(/'/g, "''")}'` : 'NULL'},
+          ${card.cardBackUrl ? `'${card.cardBackUrl.replace(/'/g, "''")}'` : 'NULL'},
+          '${card.cardFileType || 'IMAGE'}',
+          ${card.notes ? `'${card.notes.replace(/'/g, "''")}'` : 'NULL'},
+          '${card.createdAt || now}'
+        );
+      `);
+    }
+  }
+
+  // 6. 寫入審計日誌
   try {
     const actionDesc = isExisting ? '修改資料' : '新增資料';
     recordAuditLog(operatorName, actionDesc, '商業夥伴', targetId, {
@@ -2386,10 +2427,20 @@ export function savePartnerChequeRecord(
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
   const targetId = cheque.id || `PCHK-${Date.now().toString().slice(-6)}`;
 
+  const calcStatutoryExpiry = cheque.statutoryExpiryDate || (cheque.issueDate ? (() => {
+    try {
+      const d = new Date(cheque.issueDate);
+      d.setFullYear(d.getFullYear() + 1);
+      return d.toISOString().slice(0, 10);
+    } catch (e) {
+      return null;
+    }
+  })() : null);
+
   dbInstance.run(`
     INSERT INTO partner_cheque_records (
       id, partnerId, direction, bankCode, bankName, branchName, accountNumber, checkNumber,
-      receivedDate, issueDate, dueDate, amount, payeeName, isNonNegotiable, chequeFileId, chequeFileData,
+      receivedDate, issueDate, dueDate, statutoryExpiryDate, amount, payeeName, isNonNegotiable, chequeFileId, chequeFileData,
       chequeFiles, status, notes, createdAt, updatedAt
     ) VALUES (
       '${targetId}',
@@ -2403,6 +2454,7 @@ export function savePartnerChequeRecord(
       ${cheque.receivedDate ? `'${cheque.receivedDate.replace(/'/g, "''")}'` : 'NULL'},
       '${cheque.issueDate || now.slice(0, 10)}',
       '${cheque.dueDate || now.slice(0, 10)}',
+      ${calcStatutoryExpiry ? `'${calcStatutoryExpiry}'` : 'NULL'},
       ${Math.max(0, cheque.amount || 0)},
       '${(cheque.payeeName || '').replace(/'/g, "''")}',
       ${cheque.isNonNegotiable ? 1 : 0},
@@ -2424,6 +2476,7 @@ export function savePartnerChequeRecord(
       receivedDate = excluded.receivedDate,
       issueDate = excluded.issueDate,
       dueDate = excluded.dueDate,
+      statutoryExpiryDate = excluded.statutoryExpiryDate,
       amount = excluded.amount,
       payeeName = excluded.payeeName,
       isNonNegotiable = excluded.isNonNegotiable,
@@ -2462,6 +2515,78 @@ export function deletePartnerChequeRecord(chequeId: string, operatorName: string
 
   try {
     recordAuditLog(operatorName, '刪除票據', '夥伴支票記錄', chequeId, { 支票記錄代碼: chequeId });
+  } catch (e) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 新增/更新名片資料
+export function savePartnerBusinessCard(
+  card: PartnerBusinessCard,
+  operatorName: string = '系統管理員'
+): PartnerBusinessCard {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const targetId = card.id || `PBC-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 6)}`;
+
+  dbInstance.run(`
+    INSERT INTO partner_business_cards (
+      id, partnerId, name, title, companyName, phone, mobile, email, address,
+      exchangeDate, cardFrontUrl, cardBackUrl, cardFileType, notes, createdAt
+    ) VALUES (
+      '${targetId}',
+      '${card.partnerId}',
+      '${(card.name || '').replace(/'/g, "''")}',
+      ${card.title ? `'${card.title.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.companyName ? `'${card.companyName.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.phone ? `'${card.phone.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.mobile ? `'${card.mobile.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.email ? `'${card.email.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.address ? `'${card.address.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.exchangeDate ? `'${card.exchangeDate.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.cardFrontUrl ? `'${card.cardFrontUrl.replace(/'/g, "''")}'` : 'NULL'},
+      ${card.cardBackUrl ? `'${card.cardBackUrl.replace(/'/g, "''")}'` : 'NULL'},
+      '${card.cardFileType || 'IMAGE'}',
+      ${card.notes ? `'${card.notes.replace(/'/g, "''")}'` : 'NULL'},
+      '${card.createdAt || now}'
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      title = excluded.title,
+      companyName = excluded.companyName,
+      phone = excluded.phone,
+      mobile = excluded.mobile,
+      email = excluded.email,
+      address = excluded.address,
+      exchangeDate = excluded.exchangeDate,
+      cardFrontUrl = excluded.cardFrontUrl,
+      cardBackUrl = excluded.cardBackUrl,
+      cardFileType = excluded.cardFileType,
+      notes = excluded.notes;
+  `);
+
+  try {
+    recordAuditLog(operatorName, '儲存名片', '商業夥伴名片', targetId, {
+      夥伴ID: card.partnerId,
+      姓名: card.name,
+      職稱: card.title
+    });
+  } catch (e) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return { ...card, id: targetId };
+}
+
+// 刪除名片資料
+export function deletePartnerBusinessCard(cardId: string, operatorName: string = '系統管理員'): boolean {
+  if (!dbInstance) return false;
+  dbInstance.run(`DELETE FROM partner_business_cards WHERE id = '${cardId}';`);
+
+  try {
+    recordAuditLog(operatorName, '刪除名片', '商業夥伴名片', cardId, { 名片ID: cardId });
   } catch (e) {}
 
   saveDatabaseSnapshot();

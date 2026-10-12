@@ -32,6 +32,7 @@ import { DiscussionRoadmapView } from './DiscussionRoadmapView';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
 import { AccountManagementWorkspace } from './AccountManagementWorkspace';
 import { BusinessPartnerWorkspace } from './BusinessPartnerWorkspace';
+import { MiniAppsWorkspace } from './MiniAppsWorkspace';
 import { useAuth } from '../context/AuthContext';
 import {
   getAllSystemConfigs,
@@ -64,6 +65,7 @@ const NAV_TO_MODULE_KEY: Record<LeftNavId, ModuleKey> = {
   PROJECTS: 'PROJECTS',
   FLOWCHART: 'PROJECTS',
   PARTNERS: 'PARTNERS',
+  MINI_APPS: 'SYSTEM_CONFIGS',
   QUOTATIONS: 'QUOTATIONS',
   PROCUREMENT: 'PURCHASE_ORDERS',
   VALUATIONS: 'VALUATIONS',
@@ -883,6 +885,13 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         {/* G. 商業夥伴模組 (CRM & SRM 完整主檔管理：業主名冊 vs 合作廠商名冊雙頁籤) */}
         {activeNavId === 'PARTNERS' && (
           <BusinessPartnerWorkspace
+            onNotify={triggerModuleToast}
+          />
+        )}
+
+        {/* H. 通用小程式專區 (Mini-Apps Hub) */}
+        {activeNavId === 'MINI_APPS' && (
+          <MiniAppsWorkspace
             onNotify={triggerModuleToast}
           />
         )}

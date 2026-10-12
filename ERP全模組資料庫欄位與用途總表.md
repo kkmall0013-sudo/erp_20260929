@@ -443,19 +443,44 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 | `id` | 支票紀錄識別碼。 |
 | `partnerId` | 所屬商業夥伴 ID。 |
 | `direction` | 支票收發方向：`RECEIPT`（收受支票）或 `PAYMENT`（開出支票）。 |
-| `bankCode` | 付款金融機構代碼。 |
+| `bankCode` | 付款金融機構代碼 (3 碼)。 |
 | `bankName` | 付款金融機構名稱。 |
-| `accountNumber` | 支票付款帳號。 |
+| `branchName` | 付款分行名稱。 |
+| `accountNumber` | 支票扣款／支存帳號。 |
 | `checkNumber` | 支票號碼。 |
-| `issueDate` | 發票日期／開票日期。 |
-| `dueDate` | 支票到期日／票期。 |
+| `receivedDate` | 收到支票時間（收票時）或交付時間（開票時）。 |
+| `issueDate` | 發票日期／開票日期（票面法定發票基準日）。 |
+| `dueDate` | 支票到期日／約定提示兌現日期。 |
+| `statutoryExpiryDate` | 票據法第22條第1項法定追索消滅時效日（發票日+1年，系統自動推算）。 |
 | `amount` | 支票票面金額。 |
 | `payeeName` | 受款人抬頭。 |
 | `isNonNegotiable` | 是否禁止背書轉讓（`1` 或 `0`）。 |
-| `chequeFileId` | 支票影本／PDF 掃描檔附件 ID（關聯 `SystemFile.id`，支援線上預覽與列印）。 |
+| `chequeFileId` | 支票影本／PDF 掃描檔附件 ID。 |
+| `chequeFileData` | 支票縮圖或預覽 Data URL。 |
+| `chequeFiles` | 多影本或 PDF 掃描檔清單 JSON。 |
 | `status` | 支票狀態：已開立、已收受、已託收、已兌現、退票、作廢。 |
-| `notes` | 備註說明。 |
+| `notes` | 完整備註說明（款項用途、合約期數）。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+
+### PartnerBusinessCard｜商業夥伴名片往來 (`partner_business_cards`)
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 名片紀錄識別碼。 |
+| `partnerId` | 所屬商業夥伴 ID。 |
+| `name` | 名片姓名（稱謂）。 |
+| `title` | 職稱／業務角色。 |
+| `companyName` | 名片公司名稱。 |
+| `phone` | 總機／市話。 |
+| `mobile` | 行動電話（手機）。 |
+| `email` | 電子郵件信箱。 |
+| `address` | 名片地址。 |
+| `exchangeDate` | 交換名片日期 (YYYY-MM-DD)。 |
+| `cardFrontUrl` | 名片正面圖檔或 PDF 掃描檔 Data URL。 |
+| `cardBackUrl` | 名片背面圖檔。 |
+| `cardFileType` | 檔案類型：`IMAGE` 或 `PDF`。 |
+| `notes` | 名片往來備註。 |
+| `createdAt` | 建立時間。 |
 
 ### PartnerRelationship｜夥伴關係／介紹分潤
 

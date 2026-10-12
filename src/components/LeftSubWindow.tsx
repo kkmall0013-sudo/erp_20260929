@@ -13,7 +13,8 @@ import {
   HardHat,
   LineChart,
   UserCog,
-  Lock
+  Lock,
+  Sparkles
 } from 'lucide-react';
 
 export type LeftNavId =
@@ -23,6 +24,7 @@ export type LeftNavId =
   | 'PROJECTS'
   | 'FLOWCHART'
   | 'PARTNERS'
+  | 'MINI_APPS'
   | 'QUOTATIONS'
   | 'PROCUREMENT'
   | 'VALUATIONS'
@@ -92,6 +94,7 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     { id: 'PROJECTS', label: '專案案場', icon: FolderGit2, badgeCount: 3 },
     { id: 'FLOWCHART', label: '業務流程', icon: Home },
     { id: 'PARTNERS', label: '商業夥伴', icon: Users2 },
+    { id: 'MINI_APPS', label: '小程式庫', icon: Sparkles },
     { id: 'QUOTATIONS', label: '報價銷售', icon: FileSpreadsheet },
     { id: 'PROCUREMENT', label: '採購發包', icon: ShoppingCart },
     { id: 'VALUATIONS', label: '合約估驗', icon: HardHat },
