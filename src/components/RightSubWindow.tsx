@@ -33,6 +33,8 @@ import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
 import { AccountManagementWorkspace } from './AccountManagementWorkspace';
 import { BusinessPartnerWorkspace } from './BusinessPartnerWorkspace';
 import { MiniAppsWorkspace } from './MiniAppsWorkspace';
+import { UniversalVaultWorkspace } from './attachments/UniversalVaultWorkspace';
+import { QuotationWorkspace } from './quotations/QuotationWorkspace';
 import { useAuth } from '../context/AuthContext';
 import {
   getAllSystemConfigs,
@@ -66,6 +68,7 @@ const NAV_TO_MODULE_KEY: Record<LeftNavId, ModuleKey> = {
   FLOWCHART: 'PROJECTS',
   PARTNERS: 'PARTNERS',
   MINI_APPS: 'SYSTEM_CONFIGS',
+  VAULT: 'SYSTEM_CONFIGS',
   QUOTATIONS: 'QUOTATIONS',
   PROCUREMENT: 'PURCHASE_ORDERS',
   VALUATIONS: 'VALUATIONS',
@@ -157,6 +160,10 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         return '系統架構討論與重構藍圖總綱';
       case 'SETTINGS':
         return '全域共用設定與底層參數';
+      case 'VAULT':
+        return '通用無紙化附件金庫與圖說工作桌 (Universal Vault & Workspace)';
+      case 'MINI_APPS':
+        return '通用小程式專區 (Mini-Apps Hub)';
       default:
         return '營造工程工作台';
     }
@@ -633,7 +640,10 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           'ROADMAP',
           'FLOWCHART',
           'SETTINGS',
-          'PARTNERS'
+          'PARTNERS',
+          'MINI_APPS',
+          'VAULT',
+          'QUOTATIONS'
         ].includes(activeNavId) && (
           <div className="space-y-4">
             {/* 頂部權限實測控制台 */}
@@ -892,6 +902,20 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         {/* H. 通用小程式專區 (Mini-Apps Hub) */}
         {activeNavId === 'MINI_APPS' && (
           <MiniAppsWorkspace
+            onNotify={triggerModuleToast}
+          />
+        )}
+
+        {/* I. 通用無紙化附件金庫與圖說工作桌 (Universal Vault & Workspace - Phase 9) */}
+        {activeNavId === 'VAULT' && (
+          <UniversalVaultWorkspace
+            onNotify={triggerModuleToast}
+          />
+        )}
+
+        {/* J. 報價與銷售管理工作台 (Quotation & Sales CPQ - Phase 4) */}
+        {activeNavId === 'QUOTATIONS' && (
+          <QuotationWorkspace
             onNotify={triggerModuleToast}
           />
         )}

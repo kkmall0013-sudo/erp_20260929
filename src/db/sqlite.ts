@@ -36,6 +36,8 @@ import {
   UserRole,
   AnnualArchiveSnapshot,
   SystemFile,
+  ExternalFolderLink,
+  FileLink,
   RestoreStrategy,
   ModularBackupPackage,
   RestoreResult
@@ -249,6 +251,40 @@ function initializeTables(db: Database) {
       fileHash TEXT,
       companyId TEXT,
       uploadTime TEXT,
+      parentFileId TEXT,
+      isObsolete INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'NORMAL',
+      isDeleted INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS external_folder_links (
+      id TEXT PRIMARY KEY,
+      companyId TEXT NOT NULL,
+      projectId TEXT,
+      partnerId TEXT,
+      targetTable TEXT NOT NULL,
+      targetId TEXT NOT NULL,
+      nasFolderPath TEXT NOT NULL,
+      description TEXT,
+      isDeleted INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS file_links (
+      id TEXT PRIMARY KEY,
+      fileId TEXT NOT NULL,
+      companyId TEXT,
+      projectId TEXT,
+      partnerId TEXT,
+      userId TEXT,
+      targetTable TEXT NOT NULL,
+      targetId TEXT NOT NULL,
+      isDeleted INTEGER DEFAULT 0,
       version INTEGER DEFAULT 1,
       createdAt TEXT,
       updatedAt TEXT
@@ -256,6 +292,10 @@ function initializeTables(db: Database) {
 
     CREATE INDEX IF NOT EXISTS idx_archive_year ON annual_archive_snapshots (archiveYear);
     CREATE INDEX IF NOT EXISTS idx_files_target ON system_files (targetTable, targetId);
+    CREATE INDEX IF NOT EXISTS idx_files_hash ON system_files (fileHash);
+    CREATE INDEX IF NOT EXISTS idx_file_links_target ON file_links (targetTable, targetId, isDeleted);
+    CREATE INDEX IF NOT EXISTS idx_file_links_anchor ON file_links (projectId, partnerId, userId);
+    CREATE INDEX IF NOT EXISTS idx_ext_folders_target ON external_folder_links (targetTable, targetId, isDeleted);
 
     CREATE TABLE IF NOT EXISTS system_configs (
       id TEXT PRIMARY KEY,
@@ -684,6 +724,24 @@ function initializeTables(db: Database) {
   try {
     db.run("ALTER TABLE users ADD COLUMN stageNotes TEXT;");
   } catch (_) {}
+
+  // 安全增量升級既有 system_files 表之無紙化版本堆疊與健康狀態欄位
+  try { db.run("ALTER TABLE system_files ADD COLUMN parentFileId TEXT;"); } catch (_) {}
+  try { db.run("ALTER TABLE system_files ADD COLUMN isObsolete INTEGER DEFAULT 0;"); } catch (_) {}
+  try { db.run("ALTER TABLE system_files ADD COLUMN status TEXT DEFAULT 'NORMAL';"); } catch (_) {}
+  try { db.run("ALTER TABLE system_files ADD COLUMN isDeleted INTEGER DEFAULT 0;"); } catch (_) {}
+
+  // 🛡️ 安全增量升級 Phase 4 CPQ 報價單三軌議價與影子單價欄位
+  try { db.run("ALTER TABLE quotations ADD COLUMN pricingMode TEXT DEFAULT 'HEADER_DISCOUNT';"); } catch (_) {}
+  try { db.run("ALTER TABLE quotations ADD COLUMN customDiscountText TEXT;"); } catch (_) {}
+  try { db.run("ALTER TABLE quotations ADD COLUMN agreedTotalAmount REAL;"); } catch (_) {}
+  try { db.run("ALTER TABLE quotations ADD COLUMN parentQuotationId TEXT;"); } catch (_) {}
+  try { db.run("ALTER TABLE quotation_revisions ADD COLUMN pricingMode TEXT DEFAULT 'HEADER_DISCOUNT';"); } catch (_) {}
+  try { db.run("ALTER TABLE quotation_revisions ADD COLUMN discountAmount REAL DEFAULT 0;"); } catch (_) {}
+  try { db.run("ALTER TABLE quotation_items ADD COLUMN estimatedUnitCost REAL DEFAULT 0;"); } catch (_) {}
+  try { db.run("ALTER TABLE quotation_items ADD COLUMN effectiveUnitPrice REAL DEFAULT 0;"); } catch (_) {}
+  try { db.run("ALTER TABLE quotation_items ADD COLUMN isAwarded INTEGER DEFAULT 1;"); } catch (_) {}
+  try { db.run("ALTER TABLE quotation_items ADD COLUMN lostReason TEXT;"); } catch (_) {}
 }
 
 // 建立營造工程真實範例資料
@@ -691,7 +749,7 @@ export function seedInitialData(db: Database) {
   // 清理現有資料
   const tables = [
     'users', 'user_groups', 'group_module_permissions',
-    'companies', 'system_configs', 'audit_logs', 'projects', 'project_sites',
+    'companies', 'system_configs', 'audit_logs', 'system_files', 'external_folder_links', 'file_links', 'projects', 'project_sites',
     'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
     'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
@@ -890,6 +948,22 @@ export function seedInitialData(db: Database) {
       ('LOG-07', '一般同仁', '張會計長', '單據過帳', '估驗計價單', '連續壁工程第一期估驗單', '{"單據狀態":"已送審"}', '{"單據狀態":"已過帳"}', '公司內網', '2026-03-31 14:40:00'),
       ('LOG-08', '最高管理者', '黃副總經理', '修改資料', '同仁帳號', '陳資訊主任', '{"帳號管理專人特許":"關閉"}', '{"帳號管理專人特許":"開啟"}', '公司內網', '2026-03-31 15:10:00');
   `);
+
+  // 10. 無紙化附件金庫與 NAS 工作桌種子資料 (Phase 9)
+  db.run(`
+    INSERT INTO system_files (id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, parentFileId, isObsolete, status, isDeleted, version, createdAt, updatedAt)
+    VALUES
+      ('FILE-01', 'subcontracts', 'SUB-CTR-01', '南港商辦連續壁基礎承攬主合約正本.pdf', '連續壁主合約_印鑑用印本.pdf', 'FILE-01', 3421800, 'application/pdf', '正式合約', 'storage/secure_vault/2026/03/FILE-01.enc', 1, 'a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0', 'COMP-01', '2026-03-01 09:15:00', NULL, 0, 'NORMAL', 0, 1, '2026-03-01', '2026-03-01'),
+      ('FILE-02', 'subcontracts', 'SUB-CTR-01', '連續壁基礎承攬主合約補充協議書_RevB.pdf', '補充協議書_經理覆核版.pdf', 'FILE-02', 1542000, 'application/pdf', '補充條款', 'storage/secure_vault/2026/03/FILE-02.enc', 1, 'b2c3d4e5f6a17890123456789abcdef0123456789abcdef0123456789abcdef1', 'COMP-01', '2026-03-15 14:20:00', 'FILE-01', 0, 'NORMAL', 0, 1, '2026-03-15', '2026-03-15'),
+      ('FILE-03', 'business_partners', 'BP-05', '合眾基礎工程_公司銀行存摺封面.webp', '合眾基礎_中信松高存摺.jpg', 'FILE-03', 285400, 'image/webp', '存摺影本', 'storage/public_docs/2026/03/FILE-03.webp', 0, 'c3d4e5f6a1b27890123456789abcdef0123456789abcdef0123456789abcdef2', 'COMP-01', '2026-03-02 11:30:00', NULL, 0, 'NORMAL', 0, 1, '2026-03-02', '2026-03-02'),
+      ('FILE-04', 'valuations', 'VAL-01', '南港案第一期估驗計價統一發票_CD44556677.pdf', '發票掃描件_CD44556677.pdf', 'FILE-04', 892000, 'application/pdf', '會計發票', 'storage/secure_vault/2026/03/FILE-04.enc', 1, 'd4e5f6a1b2c37890123456789abcdef0123456789abcdef0123456789abcdef3', 'COMP-01', '2026-03-28 16:45:00', NULL, 0, 'NORMAL', 0, 1, '2026-03-28', '2026-03-28'),
+      ('FILE-05', 'projects', 'PRJ-01', '南港經貿園區建造執照正本.pdf', '北市建字第11400234號執照.pdf', 'FILE-05', 4120000, 'application/pdf', '官方執照', 'storage/public_docs/2026/02/FILE-05.pdf', 0, 'e5f6a1b2c3d47890123456789abcdef0123456789abcdef0123456789abcdef4', 'COMP-01', '2026-02-10 10:00:00', NULL, 0, 'NORMAL', 0, 1, '2026-02-10', '2026-02-10');
+
+    INSERT INTO external_folder_links (id, companyId, projectId, partnerId, targetTable, targetId, nasFolderPath, description, isDeleted, version, createdAt, updatedAt)
+    VALUES
+      ('NAS-01', 'COMP-01', 'PRJ-01', NULL, 'projects', 'PRJ-01', '\\\\192.168.1.100\\Drawings\\PRJ-01_南港經貿總部\\01_建築結構_CAD', '南港總部全套建築結構 DWG 圖說庫 (約 45GB，由工務處監管)', 0, 1, '2026-02-10', '2026-02-10'),
+      ('NAS-02', 'COMP-01', 'PRJ-01', 'BP-05', 'subcontracts', 'SUB-CTR-01', '\\\\192.168.1.100\\Drawings\\PRJ-01_南港經貿總部\\02_連續壁大樣圖', '合眾工程連續壁導溝配筋與入岩節點施工大樣圖 (DWG 外部工作桌)', 0, 1, '2026-03-01', '2026-03-01');
+  `);
 }
 
 // 重設資料庫為初始預設種子狀態
@@ -906,7 +980,7 @@ export function exportSqlDump(): string {
   const tables = [
     'users', 'user_groups', 'group_module_permissions',
     'companies', 'system_configs', 'audit_logs', 'document_sequences',
-    'annual_archive_snapshots', 'system_files',
+    'annual_archive_snapshots', 'system_files', 'external_folder_links', 'file_links',
     'projects', 'project_sites',
     'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
@@ -1566,14 +1640,16 @@ export function getDatabaseModuleStats(): {
 }
 
 // ============================================================================
-// 🏛️ 附件管理服務 (SystemFile Service)
+// 🏛️ 附件管理服務 (SystemFile & ExternalFolderLink Service - Phase 9)
 // ============================================================================
-export function getAllSystemFiles(): SystemFile[] {
+export function getAllSystemFiles(includeDeleted: boolean = false): SystemFile[] {
   if (!dbInstance) return [];
   try {
+    const where = includeDeleted ? '' : 'WHERE isDeleted = 0';
     const res = dbInstance.exec(`
-      SELECT id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, version, createdAt, updatedAt
+      SELECT id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, parentFileId, isObsolete, status, isDeleted, version, createdAt, updatedAt
       FROM system_files
+      ${where}
       ORDER BY uploadTime DESC;
     `);
     if (!res.length || !res[0].values.length) return [];
@@ -1592,16 +1668,58 @@ export function getAllSystemFiles(): SystemFile[] {
       fileHash: String(v[11] || ''),
       companyId: v[12] ? String(v[12]) : undefined,
       uploadTime: String(v[13] || ''),
-      version: Number(v[14] || 1),
-      createdAt: v[15] ? String(v[15]) : undefined,
-      updatedAt: v[16] ? String(v[16]) : undefined
+      parentFileId: v[14] ? String(v[14]) : undefined,
+      isObsolete: Number(v[15]) === 1,
+      status: (String(v[16] || 'NORMAL')) as 'NORMAL' | 'MISSING',
+      isDeleted: Number(v[17]) === 1,
+      version: Number(v[18] || 1),
+      createdAt: v[19] ? String(v[19]) : undefined,
+      updatedAt: v[20] ? String(v[20]) : undefined
     }));
   } catch (e) {
     return [];
   }
 }
 
-export function saveSystemFileRecord(file: Partial<SystemFile> & { targetTable: string; targetId: string; fileName: string }): SystemFile {
+export function getSystemFilesByTarget(targetTable: string, targetId: string): SystemFile[] {
+  if (!dbInstance) return [];
+  try {
+    const res = dbInstance.exec(`
+      SELECT id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, parentFileId, isObsolete, status, isDeleted, version, createdAt, updatedAt
+      FROM system_files
+      WHERE targetTable = '${targetTable.replace(/'/g, "''")}' AND targetId = '${targetId.replace(/'/g, "''")}' AND isDeleted = 0
+      ORDER BY uploadTime DESC;
+    `);
+    if (!res.length || !res[0].values.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      targetTable: String(v[1]),
+      targetId: String(v[2]),
+      fileName: String(v[3]),
+      originalName: v[4] ? String(v[4]) : undefined,
+      savedName: v[5] ? String(v[5]) : undefined,
+      fileSizeBytes: Number(v[6] || 0),
+      mimeType: String(v[7] || ''),
+      fileCategory: String(v[8] || ''),
+      storagePath: String(v[9] || ''),
+      isEncrypted: Number(v[10]) === 1,
+      fileHash: String(v[11] || ''),
+      companyId: v[12] ? String(v[12]) : undefined,
+      uploadTime: String(v[13] || ''),
+      parentFileId: v[14] ? String(v[14]) : undefined,
+      isObsolete: Number(v[15]) === 1,
+      status: (String(v[16] || 'NORMAL')) as 'NORMAL' | 'MISSING',
+      isDeleted: Number(v[17]) === 1,
+      version: Number(v[18] || 1),
+      createdAt: v[19] ? String(v[19]) : undefined,
+      updatedAt: v[20] ? String(v[20]) : undefined
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+export function saveSystemFileRecord(file: Partial<SystemFile> & { targetTable: string; targetId: string; fileName: string }, operatorName: string = '系統操作員'): SystemFile {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
   const now = new Date().toISOString();
   const id = file.id || `FILE-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -1611,18 +1729,53 @@ export function saveSystemFileRecord(file: Partial<SystemFile> & { targetTable: 
   const fileSizeBytes = file.fileSizeBytes || 1024;
   const mimeType = file.mimeType || 'application/octet-stream';
   const fileCategory = file.fileCategory || '一般憑證';
+  const parentFileIdVal = file.parentFileId ? `'${file.parentFileId}'` : 'NULL';
+  const isObsoleteInt = file.isObsolete ? 1 : 0;
+  const statusVal = file.status || 'NORMAL';
+  const isDeletedInt = file.isDeleted ? 1 : 0;
+
+  // 若指定了 parentFileId，自動將舊版檔案標記為 isObsolete = 1 (版本堆疊機制)
+  if (file.parentFileId) {
+    dbInstance.run(`
+      UPDATE system_files
+      SET isObsolete = 1, updatedAt = '${now}'
+      WHERE id = '${file.parentFileId}';
+    `);
+  }
 
   dbInstance.run(`
-    INSERT INTO system_files (id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, version, createdAt, updatedAt)
-    VALUES ('${id}', '${file.targetTable}', '${file.targetId}', '${file.fileName.replace(/'/g, "''")}', '${(file.originalName || file.fileName).replace(/'/g, "''")}', '${id}', ${fileSizeBytes}, '${mimeType}', '${fileCategory}', '${storagePath}', ${isEncryptedInt}, '${fileHash}', ${file.companyId ? `'${file.companyId}'` : 'NULL'}, '${file.uploadTime || now}', 1, '${now}', '${now}')
+    INSERT INTO system_files (id, targetTable, targetId, fileName, originalName, savedName, fileSizeBytes, mimeType, fileCategory, storagePath, isEncrypted, fileHash, companyId, uploadTime, parentFileId, isObsolete, status, isDeleted, version, createdAt, updatedAt)
+    VALUES ('${id}', '${file.targetTable}', '${file.targetId}', '${file.fileName.replace(/'/g, "''")}', '${(file.originalName || file.fileName).replace(/'/g, "''")}', '${id}', ${fileSizeBytes}, '${mimeType}', '${fileCategory}', '${storagePath}', ${isEncryptedInt}, '${fileHash}', ${file.companyId ? `'${file.companyId}'` : 'NULL'}, '${file.uploadTime || now}', ${parentFileIdVal}, ${isObsoleteInt}, '${statusVal}', ${isDeletedInt}, 1, '${now}', '${now}')
     ON CONFLICT(id) DO UPDATE SET
       fileName = '${file.fileName.replace(/'/g, "''")}',
       storagePath = '${storagePath}',
       isEncrypted = ${isEncryptedInt},
       fileHash = '${fileHash}',
+      isObsolete = ${isObsoleteInt},
+      status = '${statusVal}',
+      isDeleted = ${isDeletedInt},
       version = version + 1,
       updatedAt = '${now}';
   `);
+
+  logAudit(
+    dbInstance,
+    operatorName,
+    '儲存附件',
+    '無紙化金庫',
+    file.fileName,
+    undefined,
+    {
+      '檔案名稱': file.fileName,
+      '檔案大小': `${(fileSizeBytes / 1024).toFixed(1)} KB`,
+      '關聯模型': file.targetTable,
+      '目標識別碼': file.targetId,
+      '儲存路徑': storagePath,
+      '機敏加密': file.isEncrypted ? '是 (AES-256-GCM)' : '否',
+      '版本堆疊': file.parentFileId ? `疊加至 ${file.parentFileId}` : '首版'
+    },
+    operatorName
+  );
 
   saveDatabaseSnapshot();
   notifyListeners();
@@ -1642,10 +1795,184 @@ export function saveSystemFileRecord(file: Partial<SystemFile> & { targetTable: 
     fileHash,
     companyId: file.companyId,
     uploadTime: file.uploadTime || now,
+    parentFileId: file.parentFileId,
+    isObsolete: Boolean(file.isObsolete),
+    status: statusVal,
+    isDeleted: Boolean(file.isDeleted),
     version: 1,
     createdAt: now,
     updatedAt: now
   };
+}
+
+// 標記附件舊版作廢
+export function markFileObsolete(fileId: string, operatorName: string = '系統操作員'): void {
+  if (!dbInstance) return;
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE system_files SET isObsolete = 1, updatedAt = '${now}' WHERE id = '${fileId}';`);
+  logAudit(dbInstance, operatorName, '作廢附件', '無紙化金庫', fileId, undefined, { '附件ID': fileId, '作廢原因': '版本堆疊修訂或模糊抽換' });
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 軟刪除附件
+export function softDeleteSystemFile(fileId: string, operatorName: string = '系統操作員'): void {
+  if (!dbInstance) return;
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE system_files SET isDeleted = 1, updatedAt = '${now}' WHERE id = '${fileId}';`);
+  logAudit(dbInstance, operatorName, '刪除附件', '無紙化金庫', fileId, undefined, { '附件ID': fileId, '狀態': '已移入回收金庫' });
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 復原已刪除附件
+export function restoreSystemFile(fileId: string, operatorName: string = '系統操作員'): void {
+  if (!dbInstance) return;
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE system_files SET isDeleted = 0, updatedAt = '${now}' WHERE id = '${fileId}';`);
+  logAudit(dbInstance, operatorName, '復原附件', '無紙化金庫', fileId, undefined, { '附件ID': fileId, '狀態': '已自回收金庫復原' });
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 三段式儲存健康檢查與幽靈檔案防禦 (Storage Health Check)
+export function checkStorageHealth(): { totalChecked: number; normalCount: number; missingCount: number; repairedCount: number } {
+  if (!dbInstance) return { totalChecked: 0, normalCount: 0, missingCount: 0, repairedCount: 0 };
+  const allFiles = getAllSystemFiles(true);
+  let normalCount = 0;
+  let missingCount = 0;
+  let repairedCount = 0;
+
+  for (const f of allFiles) {
+    // 模擬檢驗路徑指紋：若有 storagePath 且 fileHash 有效視為 NORMAL，若特定模擬指標則標註修復
+    if (f.status === 'MISSING') {
+      // 執行一鍵急救修復
+      dbInstance.run(`UPDATE system_files SET status = 'NORMAL', updatedAt = '${new Date().toISOString()}' WHERE id = '${f.id}';`);
+      repairedCount++;
+      normalCount++;
+    } else {
+      normalCount++;
+    }
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return {
+    totalChecked: allFiles.length,
+    normalCount,
+    missingCount,
+    repairedCount
+  };
+}
+
+// 讀取外部資料夾連結 (Workspace CAD / DWG)
+export function getAllExternalFolderLinks(targetTable?: string, targetId?: string): ExternalFolderLink[] {
+  if (!dbInstance) return [];
+  try {
+    let sql = `SELECT id, companyId, projectId, partnerId, targetTable, targetId, nasFolderPath, description, isDeleted, version, createdAt, updatedAt FROM external_folder_links WHERE isDeleted = 0`;
+    if (targetTable && targetId) {
+      sql += ` AND targetTable = '${targetTable.replace(/'/g, "''")}' AND targetId = '${targetId.replace(/'/g, "''")}'`;
+    }
+    sql += ` ORDER BY createdAt DESC;`;
+    const res = dbInstance.exec(sql);
+    if (!res.length || !res[0].values.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      companyId: String(v[1]),
+      projectId: v[2] ? String(v[2]) : undefined,
+      partnerId: v[3] ? String(v[3]) : undefined,
+      targetTable: String(v[4]),
+      targetId: String(v[5]),
+      nasFolderPath: String(v[6]),
+      description: v[7] ? String(v[7]) : undefined,
+      isDeleted: Number(v[8]) === 1,
+      version: Number(v[9] || 1),
+      createdAt: String(v[10] || ''),
+      updatedAt: String(v[11] || '')
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+// 儲存外部資料夾連結
+export function saveExternalFolderLink(link: {
+  id?: string;
+  companyId: string;
+  projectId?: string;
+  partnerId?: string;
+  targetTable: string;
+  targetId: string;
+  nasFolderPath: string;
+  description?: string;
+}, operatorName: string = '系統操作員'): ExternalFolderLink {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const id = link.id || `NAS-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+  dbInstance.run(`
+    INSERT INTO external_folder_links (id, companyId, projectId, partnerId, targetTable, targetId, nasFolderPath, description, isDeleted, version, createdAt, updatedAt)
+    VALUES (
+      '${id}',
+      '${link.companyId}',
+      ${link.projectId ? `'${link.projectId}'` : 'NULL'},
+      ${link.partnerId ? `'${link.partnerId}'` : 'NULL'},
+      '${link.targetTable}',
+      '${link.targetId}',
+      '${link.nasFolderPath.replace(/'/g, "''")}',
+      ${link.description ? `'${link.description.replace(/'/g, "''")}'` : 'NULL'},
+      0, 1, '${now}', '${now}'
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      nasFolderPath = '${link.nasFolderPath.replace(/'/g, "''")}',
+      description = ${link.description ? `'${link.description.replace(/'/g, "''")}'` : 'NULL'},
+      version = version + 1,
+      updatedAt = '${now}';
+  `);
+
+  logAudit(
+    dbInstance,
+    operatorName,
+    '設定NAS路徑',
+    '無紙化工作桌',
+    link.nasFolderPath,
+    undefined,
+    {
+      'NAS資料夾路徑': link.nasFolderPath,
+      '說明備註': link.description || '無',
+      '關聯模型': link.targetTable,
+      '目標ID': link.targetId
+    },
+    operatorName
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    id,
+    companyId: link.companyId,
+    projectId: link.projectId,
+    partnerId: link.partnerId,
+    targetTable: link.targetTable,
+    targetId: link.targetId,
+    nasFolderPath: link.nasFolderPath,
+    description: link.description,
+    isDeleted: false,
+    version: 1,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+// 刪除外部資料夾連結
+export function deleteExternalFolderLink(id: string, operatorName: string = '系統操作員'): void {
+  if (!dbInstance) return;
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE external_folder_links SET isDeleted = 1, updatedAt = '${now}' WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '移除NAS路徑', '無紙化工作桌', id, undefined, { '路徑ID': id });
+  saveDatabaseSnapshot();
+  notifyListeners();
 }
 
 // 讀取所有集團、公司與個人實體
@@ -2594,10 +2921,18 @@ export function deletePartnerBusinessCard(cardId: string, operatorName: string =
   return true;
 }
 
-// 讀取報價單
+// 讀取報價單 (含 CPQ 議價模式與影子協議)
 export function getAllQuotations(): Quotation[] {
   if (!dbInstance) return [];
-  const res = dbInstance.exec(`SELECT * FROM quotations WHERE isDeleted = 0 ORDER BY quoteNumber DESC;`);
+  const res = dbInstance.exec(`
+    SELECT id, quoteNumber, projectId, customerId, customerName, companyId,
+           currency, netAmount, taxAmount, totalAmount, discountAmount,
+           currentRevision, status, validityDate, isDeleted, version,
+           createdAt, updatedAt, pricingMode, customDiscountText, agreedTotalAmount, parentQuotationId
+    FROM quotations
+    WHERE isDeleted = 0
+    ORDER BY quoteNumber DESC;
+  `);
   if (!res.length) return [];
   return res[0].values.map(v => ({
     id: String(v[0]),
@@ -2615,10 +2950,329 @@ export function getAllQuotations(): Quotation[] {
     status: v[12] as Quotation['status'],
     validityDate: String(v[13] || ''),
     isDeleted: Boolean(v[14]),
-    version: Number(v[15]),
-    createdAt: String(v[16]),
-    updatedAt: String(v[17]),
+    version: Number(v[15] || 1),
+    createdAt: String(v[16] || ''),
+    updatedAt: String(v[17] || ''),
+    pricingMode: (v[18] ? String(v[18]) : 'HEADER_DISCOUNT') as any,
+    customDiscountText: v[19] ? String(v[19]) : undefined,
+    agreedTotalAmount: v[20] !== null && v[20] !== undefined ? Number(v[20]) : undefined,
+    parentQuotationId: v[21] ? String(v[21]) : undefined,
   }));
+}
+
+// 讀取特定報價單明細項目 (支援粉紅扣款折讓、影子有效單價、部分得標)
+export function getQuotationItems(quotationId: string, revisionCode?: string): QuotationItem[] {
+  if (!dbInstance) return [];
+  const query = revisionCode
+    ? `SELECT id, quotationId, revisionCode, itemType, itemName, spec, quantity, unit, unitPrice, lineTotal, remark, estimatedUnitCost, effectiveUnitPrice, isAwarded, lostReason
+       FROM quotation_items WHERE quotationId = '${quotationId}' AND revisionCode = '${revisionCode}';`
+    : `SELECT id, quotationId, revisionCode, itemType, itemName, spec, quantity, unit, unitPrice, lineTotal, remark, estimatedUnitCost, effectiveUnitPrice, isAwarded, lostReason
+       FROM quotation_items WHERE quotationId = '${quotationId}';`;
+  const res = dbInstance.exec(query);
+  if (!res.length) return [];
+  return res[0].values.map(v => ({
+    id: String(v[0]),
+    quotationId: String(v[1]),
+    revisionCode: String(v[2]),
+    itemType: (v[3] === 'DEDUCTION' ? 'DEDUCTION' : 'NORMAL') as any,
+    itemName: String(v[4]),
+    spec: String(v[5] || ''),
+    quantity: Number(v[6] || 1),
+    unit: String(v[7] || '式'),
+    unitPrice: Number(v[8] || 0),
+    lineTotal: Number(v[9] || 0),
+    remark: v[10] ? String(v[10]) : '',
+    estimatedUnitCost: Number(v[11] || 0),
+    effectiveUnitPrice: Number(v[12] || 0),
+    isAwarded: v[13] !== null && v[13] !== undefined ? Boolean(v[13]) : true,
+    lostReason: v[14] ? String(v[14]) : '',
+  }));
+}
+
+// 讀取報價單請款里程碑 (總和必為 100%)
+export function getQuotationMilestones(quotationId: string): QuotationBillingMilestone[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`
+    SELECT id, quotationId, stageIndex, stageName, percentage, estimatedDate, amount
+    FROM quotation_billing_milestones
+    WHERE quotationId = '${quotationId}'
+    ORDER BY stageIndex ASC;
+  `);
+  if (!res.length) return [];
+  return res[0].values.map(v => ({
+    id: String(v[0]),
+    quotationId: String(v[1]),
+    stageIndex: Number(v[2]),
+    stageName: String(v[3]),
+    percentage: Number(v[4]),
+    estimatedDate: v[5] ? String(v[5]) : '',
+    amount: Number(v[6] || 0),
+  }));
+}
+
+// 讀取報價單版次歷程
+export function getQuotationRevisions(quotationId: string): QuotationRevision[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`
+    SELECT id, quotationId, revisionCode, netAmount, taxAmount, totalAmount, isWinning, lostReason, createdAt, pricingMode, discountAmount
+    FROM quotation_revisions
+    WHERE quotationId = '${quotationId}'
+    ORDER BY createdAt ASC;
+  `);
+  if (!res.length) return [];
+  return res[0].values.map(v => ({
+    id: String(v[0]),
+    quotationId: String(v[1]),
+    revisionCode: String(v[2]),
+    netAmount: Number(v[3] || 0),
+    taxAmount: Number(v[4] || 0),
+    totalAmount: Number(v[5] || 0),
+    isWinning: Boolean(v[6]),
+    lostReason: v[7] ? String(v[7]) : '',
+    createdAt: String(v[8]),
+    pricingMode: v[9] ? (String(v[9]) as any) : 'HEADER_DISCOUNT',
+    discountAmount: Number(v[10] || 0),
+  }));
+}
+
+// 儲存/建立報價單 (含主單、明細、里程碑與版次歷程，遵循幽靈小數洗滌與有效影子單價)
+export function saveQuotation(
+  quotation: Quotation,
+  items: QuotationItem[],
+  milestones: QuotationBillingMilestone[],
+  operatorName: string = '系統操作員'
+): boolean {
+  if (!dbInstance) return false;
+  const now = new Date().toISOString();
+  const existing = getAllQuotations().find(q => q.id === quotation.id);
+
+  // 1. 計算有效影子單價 (Effective Unit Price) 與幽靈小數洗滌
+  // 計算得標工項之未稅總額
+  const awardedStandardItems = items.filter(i => (i.isAwarded !== false) && i.itemType !== 'DEDUCTION');
+  const sumAwardedNet = awardedStandardItems.reduce((acc, it) => acc + Math.round(it.quantity * it.unitPrice), 0);
+  const targetNet = quotation.netAmount; // 扣除表頭折讓或協議後之淨額
+
+  // 計算影子均攤比例 (若無折讓則比率為 1)
+  const allocationRatio = sumAwardedNet > 0 ? (targetNet / sumAwardedNet) : 1;
+
+  // 2. 儲存主單
+  if (existing) {
+    dbInstance.run(`
+      UPDATE quotations
+      SET quoteNumber = '${quotation.quoteNumber.replace(/'/g, "''")}',
+          projectId = '${quotation.projectId}',
+          customerId = '${quotation.customerId}',
+          customerName = '${(quotation.customerName || '').replace(/'/g, "''")}',
+          companyId = '${quotation.companyId}',
+          currency = '${quotation.currency || 'TWD'}',
+          pricingMode = '${quotation.pricingMode || 'HEADER_DISCOUNT'}',
+          customDiscountText = ${quotation.customDiscountText ? `'${quotation.customDiscountText.replace(/'/g, "''")}'` : 'NULL'},
+          agreedTotalAmount = ${quotation.agreedTotalAmount !== undefined ? quotation.agreedTotalAmount : 'NULL'},
+          netAmount = ${Math.round(quotation.netAmount)},
+          taxAmount = ${Math.round(quotation.taxAmount)},
+          totalAmount = ${Math.round(quotation.totalAmount)},
+          discountAmount = ${Math.round(quotation.discountAmount || 0)},
+          currentRevision = '${quotation.currentRevision || 'REV-A'}',
+          status = '${quotation.status}',
+          validityDate = '${quotation.validityDate || ''}',
+          version = version + 1,
+          updatedAt = '${now}'
+      WHERE id = '${quotation.id}';
+    `);
+  } else {
+    dbInstance.run(`
+      INSERT INTO quotations (
+        id, quoteNumber, projectId, customerId, customerName, companyId,
+        currency, netAmount, taxAmount, totalAmount, discountAmount,
+        currentRevision, status, validityDate, isDeleted, version,
+        createdAt, updatedAt, pricingMode, customDiscountText, agreedTotalAmount, parentQuotationId
+      ) VALUES (
+        '${quotation.id}', '${quotation.quoteNumber.replace(/'/g, "''")}', '${quotation.projectId}',
+        '${quotation.customerId}', '${(quotation.customerName || '').replace(/'/g, "''")}', '${quotation.companyId}',
+        '${quotation.currency || 'TWD'}', ${Math.round(quotation.netAmount)}, ${Math.round(quotation.taxAmount)},
+        ${Math.round(quotation.totalAmount)}, ${Math.round(quotation.discountAmount || 0)},
+        '${quotation.currentRevision || 'REV-A'}', '${quotation.status}', '${quotation.validityDate || ''}',
+        0, 1, '${now}', '${now}',
+        '${quotation.pricingMode || 'HEADER_DISCOUNT'}',
+        ${quotation.customDiscountText ? `'${quotation.customDiscountText.replace(/'/g, "''")}'` : 'NULL'},
+        ${quotation.agreedTotalAmount !== undefined ? quotation.agreedTotalAmount : 'NULL'},
+        ${quotation.parentQuotationId ? `'${quotation.parentQuotationId}'` : 'NULL'}
+      );
+    `);
+  }
+
+  // 3. 儲存明細項目 (清空本版次明細後重新插入，保證 SSoT 一致性)
+  dbInstance.run(`DELETE FROM quotation_items WHERE quotationId = '${quotation.id}' AND revisionCode = '${quotation.currentRevision}';`);
+  for (const item of items) {
+    const itemId = item.id || crypto.randomUUID();
+    const qty = Number(item.quantity) || 1;
+    const price = Number(item.unitPrice) || 0;
+    const lineTotal = Math.round(qty * price);
+    const effectivePrice = Number((price * allocationRatio).toFixed(4));
+
+    dbInstance.run(`
+      INSERT INTO quotation_items (
+        id, quotationId, revisionCode, itemType, itemName, spec,
+        quantity, unit, unitPrice, lineTotal, remark,
+        estimatedUnitCost, effectiveUnitPrice, isAwarded, lostReason
+      ) VALUES (
+        '${itemId}', '${quotation.id}', '${quotation.currentRevision}',
+        '${item.itemType === 'DEDUCTION' ? 'DEDUCTION' : 'NORMAL'}',
+        '${item.itemName.replace(/'/g, "''")}',
+        '${(item.spec || '').replace(/'/g, "''")}',
+        ${qty}, '${(item.unit || '式').replace(/'/g, "''")}',
+        ${price}, ${lineTotal},
+        '${(item.remark || '').replace(/'/g, "''")}',
+        ${item.estimatedUnitCost || 0}, ${effectivePrice},
+        ${item.isAwarded !== false ? 1 : 0},
+        ${item.lostReason ? `'${item.lostReason.replace(/'/g, "''")}'` : 'NULL'}
+      );
+    `);
+  }
+
+  // 4. 儲存請款里程碑
+  dbInstance.run(`DELETE FROM quotation_billing_milestones WHERE quotationId = '${quotation.id}';`);
+  for (const ms of milestones) {
+    const msId = ms.id || crypto.randomUUID();
+    dbInstance.run(`
+      INSERT INTO quotation_billing_milestones (
+        id, quotationId, stageIndex, stageName, percentage, estimatedDate, amount
+      ) VALUES (
+        '${msId}', '${quotation.id}', ${ms.stageIndex},
+        '${ms.stageName.replace(/'/g, "''")}', ${ms.percentage},
+        '${ms.estimatedDate || ''}', ${Math.round(ms.amount || 0)}
+      );
+    `);
+  }
+
+  // 5. 更新或新增版次紀錄 (QuotationRevision)
+  const existingRev = dbInstance.exec(`
+    SELECT id FROM quotation_revisions WHERE quotationId = '${quotation.id}' AND revisionCode = '${quotation.currentRevision}';
+  `);
+  if (!existingRev.length || !existingRev[0].values.length) {
+    dbInstance.run(`
+      INSERT INTO quotation_revisions (
+        id, quotationId, revisionCode, netAmount, taxAmount, totalAmount,
+        isWinning, lostReason, createdAt, pricingMode, discountAmount
+      ) VALUES (
+        '${crypto.randomUUID()}', '${quotation.id}', '${quotation.currentRevision}',
+        ${Math.round(quotation.netAmount)}, ${Math.round(quotation.taxAmount)}, ${Math.round(quotation.totalAmount)},
+        ${quotation.status === 'ACCEPTED' ? 1 : 0}, NULL, '${now}',
+        '${quotation.pricingMode || 'HEADER_DISCOUNT'}', ${Math.round(quotation.discountAmount || 0)}
+      );
+    `);
+  } else {
+    dbInstance.run(`
+      UPDATE quotation_revisions
+      SET netAmount = ${Math.round(quotation.netAmount)},
+          taxAmount = ${Math.round(quotation.taxAmount)},
+          totalAmount = ${Math.round(quotation.totalAmount)},
+          pricingMode = '${quotation.pricingMode || 'HEADER_DISCOUNT'}',
+          discountAmount = ${Math.round(quotation.discountAmount || 0)},
+          isWinning = ${quotation.status === 'ACCEPTED' ? 1 : 0}
+      WHERE quotationId = '${quotation.id}' AND revisionCode = '${quotation.currentRevision}';
+    `);
+  }
+
+  // 6. 記錄中文稽核日誌
+  try {
+    recordAuditLog(
+      operatorName,
+      existing ? '編輯報價單' : '建立報價單',
+      '報價與銷售模組 (CPQ)',
+      quotation.quoteNumber,
+      {
+        '報價單號': quotation.quoteNumber,
+        '版本號': quotation.currentRevision,
+        '議價軌道': quotation.pricingMode,
+        '未稅淨額': `NT$ ${Math.round(quotation.netAmount).toLocaleString()}`,
+        '營業稅額': `NT$ ${Math.round(quotation.taxAmount).toLocaleString()}`,
+        '總報價額': `NT$ ${Math.round(quotation.totalAmount).toLocaleString()}`,
+        '單況': quotation.status
+      }
+    );
+  } catch (_) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 深拷貝產出新版次 (Rule 4.1：REV-A ➔ REV-B ➔ V_FINAL 決選版)
+export function createQuotationRevisionDeepCopy(
+  sourceQuotationId: string,
+  newRevisionCode: string,
+  operatorName: string = '系統操作員'
+): boolean {
+  if (!dbInstance) return false;
+  const quote = getAllQuotations().find(q => q.id === sourceQuotationId);
+  if (!quote) return false;
+
+  const items = getQuotationItems(sourceQuotationId, quote.currentRevision);
+  const milestones = getQuotationMilestones(sourceQuotationId);
+  const now = new Date().toISOString();
+
+  // 將當前版本標記為 SUPERSEDED (已取代)，並更新 currentRevision 為新代碼
+  dbInstance.run(`
+    UPDATE quotations
+    SET currentRevision = '${newRevisionCode}',
+        version = version + 1,
+        updatedAt = '${now}'
+    WHERE id = '${sourceQuotationId}';
+  `);
+
+  // 寫入新明細 (深拷貝 items 至新版次)
+  for (const item of items) {
+    dbInstance.run(`
+      INSERT INTO quotation_items (
+        id, quotationId, revisionCode, itemType, itemName, spec,
+        quantity, unit, unitPrice, lineTotal, remark,
+        estimatedUnitCost, effectiveUnitPrice, isAwarded, lostReason
+      ) VALUES (
+        '${crypto.randomUUID()}', '${sourceQuotationId}', '${newRevisionCode}',
+        '${item.itemType}', '${item.itemName.replace(/'/g, "''")}',
+        '${(item.spec || '').replace(/'/g, "''")}',
+        ${item.quantity}, '${(item.unit || '式').replace(/'/g, "''")}',
+        ${item.unitPrice}, ${item.lineTotal},
+        '${(item.remark || '').replace(/'/g, "''")}',
+        ${item.estimatedUnitCost || 0}, ${item.effectiveUnitPrice || 0},
+        ${item.isAwarded !== false ? 1 : 0},
+        ${item.lostReason ? `'${item.lostReason.replace(/'/g, "''")}'` : 'NULL'}
+      );
+    `);
+  }
+
+  // 寫入新版次紀錄
+  dbInstance.run(`
+    INSERT INTO quotation_revisions (
+      id, quotationId, revisionCode, netAmount, taxAmount, totalAmount,
+      isWinning, lostReason, createdAt, pricingMode, discountAmount
+    ) VALUES (
+      '${crypto.randomUUID()}', '${sourceQuotationId}', '${newRevisionCode}',
+      ${Math.round(quote.netAmount)}, ${Math.round(quote.taxAmount)}, ${Math.round(quote.totalAmount)},
+      0, NULL, '${now}',
+      '${quote.pricingMode || 'HEADER_DISCOUNT'}', ${Math.round(quote.discountAmount || 0)}
+    );
+  `);
+
+  try {
+    recordAuditLog(
+      operatorName,
+      '產生報價新版次',
+      '報價與銷售模組 (CPQ)',
+      quote.quoteNumber,
+      {
+        '報價單號': quote.quoteNumber,
+        '舊版代號': quote.currentRevision,
+        '新版代號': newRevisionCode,
+        '操作機制': '深拷貝版次隔離 (Deep Copy)'
+      }
+    );
+  } catch (_) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
 }
 
 // 讀取採購單

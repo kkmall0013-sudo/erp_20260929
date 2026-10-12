@@ -337,6 +337,8 @@ export interface Item {
   isDeleted: boolean;
 }
 
+export type QuotationPricingMode = 'HEADER_DISCOUNT' | 'UNIT_PRICE_ADJUSTMENT' | 'SHADOW_ALLOCATION';
+
 export interface Quotation {
   id: string;
   quoteNumber: string;
@@ -345,13 +347,17 @@ export interface Quotation {
   customerName: string;
   companyId: string;
   currency: string;
+  pricingMode?: QuotationPricingMode; // 🛡️ 三軌並行議價模式：表頭折讓 / 單價微調 / 影子均攤備註
+  customDiscountText?: string; // 軌道三專用自訂協議文字 (例如：「經雙方協議同意以 150,000 承製」)
+  agreedTotalAmount?: number; // 軌道三約定成交總價
   netAmount: number;
   taxAmount: number;
   totalAmount: number;
   discountAmount: number;
   currentRevision: string;
-  status: 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED';
+  status: 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED' | 'CONVERTED';
   validityDate: string;
+  parentQuotationId?: string; // 歷史血緣追蹤 (Rule 4.1 深拷貝版本鏈)
   isDeleted: boolean;
   version: number;
   createdAt: string;
@@ -361,10 +367,12 @@ export interface Quotation {
 export interface QuotationRevision {
   id: string;
   quotationId: string;
-  revisionCode: string; // REV-A, REV-B
+  revisionCode: string; // REV-A, REV-B, V_FINAL
+  pricingMode?: QuotationPricingMode;
   netAmount: number;
   taxAmount: number;
   totalAmount: number;
+  discountAmount?: number;
   isWinning: boolean;
   lostReason?: string;
   createdAt: string;
@@ -374,13 +382,17 @@ export interface QuotationItem {
   id: string;
   quotationId: string;
   revisionCode: string;
-  itemType: 'NORMAL' | 'DEDUCTION'; // 憲法規範：粉紅扣款折讓
+  itemType: 'NORMAL' | 'DEDUCTION'; // 憲法規範：粉紅扣款折讓 (DEDUCTION 嚴格存正數)
   itemName: string;
   spec: string;
   quantity: number;
   unit: string;
-  unitPrice: number;
-  lineTotal: number;
+  unitPrice: number; // 對外報價單價 (最多 2 位小數)
+  lineTotal: number; // 明細小計
+  estimatedUnitCost?: number; // 預估單位成本
+  effectiveUnitPrice?: number; // 歸一化影子有效單價 (折讓後有效退款基準，防止追加減溢退)
+  isAwarded?: boolean; // 🛡️ 部分得標開關 (Rule 4.1，V_FINAL 決選版未得標不刪除)
+  lostReason?: string; // 失標原因 (如：業主預算不足砍項、非關鍵次要項目等)
   remark?: string;
 }
 
@@ -565,7 +577,41 @@ export interface SystemFile {
   fileHash: string; // SHA-256 指紋
   companyId?: string;
   uploadTime: string;
+  parentFileId?: string; // 前一版本檔案 ID，建立版本堆疊
+  isObsolete?: boolean; // 舊版或模糊發票作廢標記
+  status?: 'NORMAL' | 'MISSING'; // 實體健康檢查狀態
+  isDeleted?: boolean; // 軟刪除標記
   version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ExternalFolderLink {
+  id: string;
+  companyId: string;
+  projectId?: string; // 綁定案場 CAD 圖庫
+  partnerId?: string; // 綁定特定廠商共用區
+  targetTable: string; // 關聯主模組 (如 'projects', 'business_partners')
+  targetId: string; // 關聯單據 ID
+  nasFolderPath: string; // 實體 NAS 共用資料夾路徑 (如 \\192.168.1.10\Drawings\Project-A)
+  description?: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FileLink {
+  id: string;
+  fileId: string;
+  companyId?: string; // 法人隔離錨點
+  projectId?: string; // 專案授權穿透錨點
+  partnerId?: string; // 夥伴授權穿透錨點
+  userId?: string; // 人資身分授權錨點
+  targetTable: string; // 關聯主單據 (如 'business_partners', 'purchase_orders', 'valuations')
+  targetId: string; // 關聯主單據 ID
+  isDeleted: boolean;
+  version: number;
   createdAt?: string;
   updatedAt?: string;
 }

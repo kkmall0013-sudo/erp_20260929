@@ -23,6 +23,7 @@ import {
   Upload,
   Eye,
   Trash2,
+  FolderLock,
   Edit,
   Save,
   HelpCircle,
@@ -100,6 +101,7 @@ import { TaiwanBankPickerWidget } from './widgets/TaiwanBankPickerWidget';
 import { MediaPreviewLightbox, MediaPreviewItem } from './widgets/MediaPreviewLightbox';
 import { ChequeDetailModal } from './widgets/ChequeDetailModal';
 import { MiniAppsWorkspace } from './MiniAppsWorkspace';
+import { AttachmentUploader } from './attachments/AttachmentUploader';
 
 interface BusinessPartnerWorkspaceProps {
   onNotify?: (message: string) => void;
@@ -176,7 +178,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingPartner, setEditingPartner] = useState<BusinessPartner | null>(null);
   const [activeEditorTab, setActiveEditorTab] = useState<
-    'BASIC' | 'CATEGORY' | 'ADDRESSES' | 'CONTACTS' | 'BANK' | 'CHEQUES' | 'CARDS'
+    'BASIC' | 'CATEGORY' | 'ADDRESSES' | 'CONTACTS' | 'BANK' | 'CHEQUES' | 'CARDS' | 'VAULT'
   >('BASIC');
 
   // 快速新增名片彈窗
@@ -1716,7 +1718,8 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                 { key: 'CONTACTS', label: '4. 聯絡人名冊', icon: Users2 },
                 { key: 'BANK', label: '5. 金融帳戶與存摺', icon: Landmark },
                 { key: 'CHEQUES', label: `6. 支票往來 (${editingPartner.chequeRecords?.length || 0})`, icon: Receipt },
-                { key: 'CARDS', label: `7. 名片管理 (${editingPartner.businessCards?.length || 0})`, icon: Contact }
+                { key: 'CARDS', label: `7. 名片管理 (${editingPartner.businessCards?.length || 0})`, icon: Contact },
+                { key: 'VAULT', label: '8. 無紙化金庫與圖說', icon: FolderLock }
               ].map(tab => {
                 const Icon = tab.icon;
                 const isActive = activeEditorTab === tab.key;
@@ -2652,6 +2655,19 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                       尚未收存任何名片
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TAB 8: 無紙化金庫與圖說 (直接調用全系統通用 AttachmentUploader 元件) */}
+              {activeEditorTab === 'VAULT' && (
+                <div className="space-y-4">
+                  <AttachmentUploader
+                    targetTable="business_partners"
+                    targetId={editingPartner.id}
+                    partnerId={editingPartner.id}
+                    title={`【${editingPartner.name}】專屬無紙化金庫與合約圖說`}
+                    defaultCategory="正式合約"
+                  />
                 </div>
               )}
             </div>

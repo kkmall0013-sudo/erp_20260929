@@ -14,6 +14,7 @@ import {
   LineChart,
   UserCog,
   Lock,
+  FolderLock,
   Sparkles
 } from 'lucide-react';
 
@@ -25,6 +26,7 @@ export type LeftNavId =
   | 'FLOWCHART'
   | 'PARTNERS'
   | 'MINI_APPS'
+  | 'VAULT'
   | 'QUOTATIONS'
   | 'PROCUREMENT'
   | 'VALUATIONS'
@@ -61,6 +63,8 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
         return can('PROJECTS', 'read');
       case 'PARTNERS':
         return can('PARTNERS', 'read');
+      case 'VAULT':
+        return true;
       case 'QUOTATIONS':
         return can('QUOTATIONS', 'read');
       case 'PROCUREMENT':
@@ -95,6 +99,7 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     { id: 'FLOWCHART', label: '業務流程', icon: Home },
     { id: 'PARTNERS', label: '商業夥伴', icon: Users2 },
     { id: 'MINI_APPS', label: '小程式庫', icon: Sparkles },
+    { id: 'VAULT', label: '檔案金庫', icon: FolderLock },
     { id: 'QUOTATIONS', label: '報價銷售', icon: FileSpreadsheet },
     { id: 'PROCUREMENT', label: '採購發包', icon: ShoppingCart },
     { id: 'VALUATIONS', label: '合約估驗', icon: HardHat },
