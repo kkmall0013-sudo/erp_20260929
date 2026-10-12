@@ -11,12 +11,19 @@ import {
   Check,
   ExternalLink,
   Info,
-  Scale
+  Scale,
+  Search
 } from 'lucide-react';
 import { TaiwanAddressPicker, TaiwanAddressValue } from './widgets/TaiwanAddressPicker';
 import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget';
 import { TaiwanBankPickerWidget } from './widgets/TaiwanBankPickerWidget';
 import { MediaPreviewLightbox, MediaPreviewItem } from './widgets/MediaPreviewLightbox';
+import {
+  TAIWAN_BANKS,
+  BANK_CATEGORIES,
+  BankCategory,
+  searchTaiwanBanks
+} from '../utils/taiwanBanks';
 
 export interface MiniAppsWorkspaceProps {
   onNotify?: (msg: string) => void;
@@ -29,10 +36,10 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
   // 1. 地址小程式測試狀態
   const [demoAddress, setDemoAddress] = useState<TaiwanAddressValue>({
     postalCode: '100',
-    city: '台北市',
+    city: '臺北市',
     district: '中正區',
     streetAddress: '重慶南路一段122號',
-    fullAddress: '100 台北市中正區重慶南路一段122號'
+    fullAddress: '100 臺北市中正區重慶南路一段122號'
   });
 
   // 2. 統編/身分證小程式測試狀態
@@ -44,6 +51,8 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
     bankCode: '004',
     bankName: '臺灣銀行'
   });
+  const [bankDirSearch, setBankDirSearch] = useState<string>('');
+  const [bankDirCategory, setBankDirCategory] = useState<'ALL' | BankCategory>('ALL');
 
   // 4. 票據試算狀態
   const [calcIssueDate, setCalcIssueDate] = useState<string>(new Date().toISOString().slice(0, 10));
@@ -192,7 +201,7 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
                       小程式：臺灣標準郵遞地址輸入元件
                     </h3>
                     <p className="text-xs text-slate-500">
-                      中華郵政全國縣市鄉鎮市區連動，自動帶出 3 碼 / 3+2 碼郵遞區號
+                      排列順序：【郵遞區號 ➔ 縣市 ➔ 鄉鎮 ➔ 住址】雙向自動連動，剩餘住址由人工輸入
                     </p>
                   </div>
                 </div>
@@ -200,7 +209,7 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
 
               {/* 實體小程式互動預覽 */}
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                <span className="text-xs font-bold text-slate-700">互動即時體驗區</span>
+                <span className="text-xs font-bold text-slate-700">互動即時體驗區（可試著直接修改最前面的郵遞區號如 248、407、802，或下拉選擇縣市鄉鎮）</span>
                 <TaiwanAddressPicker
                   label="營業登記地址 / 施工工地地址"
                   value={demoAddress}
@@ -254,9 +263,9 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
                     <strong>特性：</strong>
                   </p>
                   <ul className="list-disc pl-5 space-y-1 text-slate-500 text-[11px]">
-                    <li>全自動 22 個縣市與 368 個鄉鎮市區郵政編碼資料庫。</li>
-                    <li>支援智慧反向貼上解析，快速剖析地址。</li>
-                    <li>地址拆分：縣市、行政區、郵遞區號、門牌完整分離。</li>
+                    <li>排列順序固定為：<strong>郵遞區號 ➔ 縣市 ➔ 鄉鎮 ➔ 住址</strong>。</li>
+                    <li>雙向連動：選擇縣市及鄉鎮，最前面的郵遞區號自動改變；輸入郵遞區號後，後面的縣市與鄉鎮自動改變。</li>
+                    <li>剩餘住址（路街段巷弄號樓）由人工輸入並完整保留。</li>
                   </ul>
                 </div>
 
@@ -434,10 +443,10 @@ import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">
-                      小程式：全國金融機構與農漁會速查選取元件
+                      小程式：全國金融機構與農漁會速查選取元件（財金公司 FISC 官方資料庫）
                     </h3>
                     <p className="text-xs text-slate-500">
-                      涵蓋全國銀行、郵局、信用合作社、各鄉鎮農漁會信用部
+                      同步財金資訊股份有限公司 (twd.txt) 官方清冊：完整涵蓋全國銀行、郵局、信合社及全臺 311 家農漁會信用部（如 616 雲林縣斗南鎮農會）
                     </p>
                   </div>
                 </div>
@@ -445,7 +454,33 @@ import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget
 
               {/* 實體測試區 */}
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                <span className="text-xs font-bold text-slate-700">互動選取測試</span>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-xs font-bold text-slate-700">互動選取測試（支援左側輸入 3 碼/7 碼代號或右側搜尋篩選）</span>
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <span className="text-slate-400">快速測試：</span>
+                    <button
+                      type="button"
+                      onClick={() => setDemoBank({ bankCode: '616', bankName: '雲林縣斗南鎮農會' })}
+                      className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono font-bold hover:bg-indigo-100"
+                    >
+                      616 斗南鎮農會
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDemoBank({ bankCode: '004', bankName: '臺灣銀行' })}
+                      className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 font-mono font-bold hover:bg-slate-200"
+                    >
+                      004 臺灣銀行
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDemoBank({ bankCode: '700', bankName: '中華郵政股份有限公司' })}
+                      className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 font-mono font-bold hover:bg-slate-200"
+                    >
+                      700 中華郵政
+                    </button>
+                  </div>
+                </div>
                 <TaiwanBankPickerWidget
                   bankCode={demoBank.bankCode}
                   bankName={demoBank.bankName}
@@ -458,6 +493,105 @@ import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget
                   <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
                     [{demoBank.bankCode}] {demoBank.bankName}
                   </span>
+                </div>
+              </div>
+
+              {/* 全國金融機構清冊總覽與快速點選區 */}
+              <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900">
+                      財金公司 (FISC) 全國跨行通匯金融機構官方名錄（共 {TAIWAN_BANKS.length} 家）
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      點擊任一列即可直接帶入上方測試元件；包含 3 碼總機構代號與 7 碼總行/本會通匯代號（如斗南鎮農會 616 / 6160056）
+                    </p>
+                  </div>
+                  <div className="relative w-full sm:w-56">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={bankDirSearch}
+                      onChange={e => setBankDirSearch(e.target.value)}
+                      placeholder="搜尋代號(如 616)或名稱(斗南)..."
+                      className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-indigo-500 outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                {/* 分類切換標籤與各類家數統計 */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {BANK_CATEGORIES.map(cat => {
+                    const count =
+                      cat.key === 'ALL'
+                        ? TAIWAN_BANKS.length
+                        : TAIWAN_BANKS.filter(b => b.category === cat.key).length;
+                    const active = bankDirCategory === cat.key;
+                    return (
+                      <button
+                        key={cat.key}
+                        type="button"
+                        onClick={() => setBankDirCategory(cat.key)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                          active
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        <span>{cat.label}</span>
+                        <span
+                          className={`text-[10px] font-mono px-1 rounded ${
+                            active ? 'bg-indigo-700 text-indigo-100' : 'bg-white text-slate-500'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* 機構資料表 */}
+                <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {searchTaiwanBanks(bankDirSearch, bankDirCategory).map(b => {
+                    const isSelected = demoBank.bankCode === b.code && demoBank.bankName === b.name;
+                    return (
+                      <div
+                        key={b.branchCode || `${b.code}-${b.name}`}
+                        onClick={() => setDemoBank({ bankCode: b.code, bankName: b.name })}
+                        className={`px-3 py-2 text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                          isSelected ? 'bg-indigo-50 font-bold' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 text-[11px] w-11 text-center shrink-0">
+                            {b.code}
+                          </span>
+                          <span className="text-slate-900 font-semibold truncate">{b.name}</span>
+                          {b.shortName && b.shortName !== b.name && (
+                            <span className="text-[11px] text-slate-400 shrink-0">
+                              ({b.shortName})
+                            </span>
+                          )}
+                          {b.branchCode && (
+                            <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                              通匯 {b.branchCode}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          {b.centerName && (
+                            <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                              {b.centerName}
+                            </span>
+                          )}
+                          <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            {b.category}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

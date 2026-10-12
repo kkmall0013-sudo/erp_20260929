@@ -481,6 +481,16 @@ export function getTaiwanCities(): string[] {
 }
 
 /**
+ * 正規化台灣縣市名稱（將「台」統一轉為中華郵政標準「臺」以對齊下拉選單）
+ */
+export function normalizeTaiwanCity(cityName?: string): string {
+  if (!cityName) return '';
+  const norm = cityName.trim().replace(/^台/, '臺');
+  const found = TAIWAN_CITIES.find(c => c === norm || c === cityName.trim());
+  return found || cityName.trim();
+}
+
+/**
  * 根據縣市與鄉鎮市區取得對應的 3 碼郵遞區號
  */
 export function getPostalCode(city: string, district: string): string | undefined {
@@ -490,7 +500,33 @@ export function getPostalCode(city: string, district: string): string | undefine
 }
 
 /**
+ * 根據郵遞區號（取前 3 碼）反查對應的所有縣市與鄉鎮市區清單
+ */
+export function getLocationsByPostalCode(postalCode?: string): DistrictPostal[] {
+  if (!postalCode) return [];
+  const digits = postalCode.trim().replace(/\D/g, '');
+  if (digits.length < 3) return [];
+  const zip3 = digits.slice(0, 3);
+  return TAIWAN_POSTAL_CODES.filter(p => p.postalCode === zip3);
+}
+
+/**
+ * 根據郵遞區號（取前 3 碼）反查對應的第一筆縣市與鄉鎮市區
+ */
+export function getLocationByPostalCode(postalCode?: string): DistrictPostal | undefined {
+  const list = getLocationsByPostalCode(postalCode);
+  return list[0];
+}
+
+/**
  * 智慧反向查找郵遞區號與縣市別名 (與 parseTaiwanAddress 同義)
  */
-export const lookupPostalCode = parseTaiwanAddress;
+export function lookupPostalCode(addressText?: string): {
+  postalCode?: string;
+  city?: string;
+  district?: string;
+  remaining?: string;
+} {
+  return parseTaiwanAddress(addressText);
+}
 

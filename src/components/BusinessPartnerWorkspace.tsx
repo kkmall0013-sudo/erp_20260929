@@ -2069,7 +2069,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                         多地址管理 (中華郵政標準郵遞區號選單小程式)
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        選單先選縣市、再選鄉鎮市區，郵遞區號自動計算帶出，支援詳細門牌拆分與智慧貼上解析。
+                        排列順序：郵遞區號 ➔ 縣市 ➔ 鄉鎮 ➔ 住址。選擇縣市及鄉鎮自動改變郵遞區號，或輸入郵遞區號自動改變縣市鄉鎮，剩餘住址由人工輸入。
                       </p>
                     </div>
                     <button
@@ -2084,6 +2084,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                           postalCode: '100',
                           city: '臺北市',
                           district: '中正區',
+                          streetAddress: '',
                           fullAddress: '',
                           isDeleted: false
                         });
@@ -2137,6 +2138,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                             postalCode: addr.postalCode,
                             city: addr.city,
                             district: addr.district,
+                            streetAddress: addr.streetAddress,
                             fullAddress: addr.fullAddress
                           }}
                           onChange={val => {
@@ -2146,6 +2148,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                               postalCode: val.postalCode,
                               city: val.city,
                               district: val.district,
+                              streetAddress: val.streetAddress,
                               fullAddress: val.fullAddress || ''
                             };
                             setEditingPartner({
