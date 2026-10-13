@@ -198,6 +198,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     canManageUsers: boolean;
     canManageSystemConfigs: boolean;
     canManageAdmins: boolean;
+    canManageAllCompanies: boolean;
     groupIds: string[];
     allowedCompanies: string[];
     defaultCompanyId: string;
@@ -211,6 +212,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     canManageUsers: false,
     canManageSystemConfigs: false,
     canManageAdmins: false,
+    canManageAllCompanies: false,
     groupIds: ['GRP-ENG'],
     allowedCompanies: ['COMP-01'],
     defaultCompanyId: 'COMP-01',
@@ -279,6 +281,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       canManageUsers: false,
       canManageSystemConfigs: false,
       canManageAdmins: false,
+      canManageAllCompanies: false,
       groupIds: ['GRP-ENG'],
       allowedCompanies: ['COMP-01', 'COMP-02'],
       defaultCompanyId: 'COMP-01',
@@ -302,6 +305,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       canManageUsers: Boolean(user.canManageUsers),
       canManageSystemConfigs: Boolean(user.canManageSystemConfigs),
       canManageAdmins: Boolean(user.canManageAdmins),
+      canManageAllCompanies: Boolean(user.canManageAllCompanies),
       groupIds: user.groupIds && user.groupIds.length > 0 ? user.groupIds : (user.groupId ? [user.groupId] : []),
       allowedCompanies: user.allowedCompanies && user.allowedCompanies.length > 0 ? user.allowedCompanies : ['COMP-01'],
       defaultCompanyId: user.defaultCompanyId || 'COMP-01',
@@ -335,6 +339,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           canManageUsers: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageUsers) : false,
           canManageSystemConfigs: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageSystemConfigs) : false,
           canManageAdmins: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageAdmins) : false,
+          canManageAllCompanies: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageAllCompanies) : false,
           groupIds: formData.role === 'USER' ? (formData.groupIds.length > 0 ? formData.groupIds : ['GRP-ENG']) : [],
           allowedCompanies: formData.allowedCompanies,
           defaultCompanyId: formData.defaultCompanyId,
@@ -425,6 +430,14 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           newValue: formData.canManageAdmins ? '已特許授權' : '未授權 (僅管 User)'
         });
       }
+
+      if (Boolean(formData.canManageAllCompanies) !== Boolean(editingUser.canManageAllCompanies)) {
+        diffs.push({
+          fieldName: '全集團跨法人管理特許 (canManageAllCompanies)',
+          oldValue: editingUser.canManageAllCompanies ? '已特許授權 (老闆/常務管理全集團)' : '未授權 (依所屬法人)',
+          newValue: formData.canManageAllCompanies ? '已特許授權 (老闆/常務管理全集團)' : '未授權 (依所屬法人)'
+        });
+      }
     }
 
     if (formData.role === 'USER') {
@@ -477,6 +490,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       canManageUsers: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageUsers : undefined,
       canManageSystemConfigs: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageSystemConfigs : undefined,
       canManageAdmins: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageAdmins : undefined,
+      canManageAllCompanies: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageAllCompanies : undefined,
       groupIds: finalGroupIds,
       allowedCompanies: formData.allowedCompanies,
       defaultCompanyId: formData.defaultCompanyId,
@@ -1610,6 +1624,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                                 同階管理: {user.canManageAdmins ? '已特許' : '未授權'}
                               </span>
                             )}
+                            {user.canManageAllCompanies && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded border bg-indigo-50 text-indigo-700 border-indigo-200" title="全集團跨法人管理特許：老闆/常務管理Admin，具備全集團所有公司法人管理權限">
+                                <Check className="w-2.5 h-2.5 text-indigo-700" />
+                                <span>全集團法人: 已特許</span>
+                              </span>
+                            )}
                           </div>
                         ) : (
                           <span className="text-slate-300">-</span>
@@ -2459,7 +2479,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                     )}
                   </div>
 
-                  {/* 特許 2: 同階 Admin 管理特許 */}
+                    {/* 特許 3: 同階 Admin 管理特許 */}
                   <div className="flex items-center justify-between border-t border-amber-200/40 pt-2">
                     <div>
                       <div className="font-semibold text-slate-800">3. 同階 Admin 帳號管理特許 (canManageAdmins)</div>
@@ -2478,6 +2498,29 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                     ) : (
                       <span className="text-[10px] font-bold text-slate-400">
                         {formData.canManageAdmins ? '已特許' : '未授權'}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 特許 4: 全集團跨法人管理特許 */}
+                  <div className="flex items-center justify-between border-t border-amber-200/40 pt-2">
+                    <div>
+                      <div className="font-semibold text-slate-800">4. 全集團跨法人管理特許 (canManageAllCompanies)</div>
+                      <div className="text-[10px] text-slate-500">【老闆/總經理常務管理特許】可管理全集團所有公司法人、組織與營運法規中樞（不受限於單一子公司）</div>
+                    </div>
+                    {isSuperadmin ? (
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.canManageAllCompanies}
+                          onChange={(e) => setFormData({ ...formData, canManageAllCompanies: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    ) : (
+                      <span className="text-[10px] font-bold text-slate-400">
+                        {formData.canManageAllCompanies ? '已特許' : '未授權'}
                       </span>
                     )}
                   </div>
@@ -2540,26 +2583,36 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
               {/* 授權營運法人 */}
               <div>
-                <label className="block text-slate-700 font-bold mb-1.5">
-                  授權操作法人
+                <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
+                  <span>授權操作營運法人</span>
+                  {!isSuperadmin && !currentUser?.canManageAllCompanies && (
+                    <span className="text-[11px] font-normal text-slate-500">
+                      (僅限指派您自身獲授權之營運法人)
+                    </span>
+                  )}
                 </label>
                 <div className="space-y-1.5 bg-slate-50 border border-slate-200 p-2.5 rounded-lg">
                   {companies.map(comp => {
                     const checked = formData.allowedCompanies.includes(comp.id);
+                    const operatorCanAssign = isSuperadmin || currentUser?.canManageAllCompanies || (currentUser?.allowedCompanies || []).includes(comp.id);
                     return (
                       <label
                         key={comp.id}
-                        className={`p-2 rounded border flex items-center justify-between cursor-pointer transition-colors ${
-                          checked
-                            ? 'bg-white border-indigo-400 text-indigo-900 shadow-2xs font-semibold'
-                            : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
+                        className={`p-2 rounded border flex items-center justify-between transition-colors ${
+                          !operatorCanAssign
+                            ? 'bg-slate-100/80 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                            : checked
+                            ? 'bg-white border-indigo-400 text-indigo-900 shadow-2xs font-semibold cursor-pointer'
+                            : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white cursor-pointer'
                         }`}
                       >
                         <div className="flex items-center gap-2">
                           <input
                             type="checkbox"
                             checked={checked}
+                            disabled={!operatorCanAssign}
                             onChange={(e) => {
+                              if (!operatorCanAssign) return;
                               if (e.target.checked) {
                                 setFormData({ ...formData, allowedCompanies: [...formData.allowedCompanies, comp.id] });
                               } else {
@@ -2573,13 +2626,20 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                                 setFormData({ ...formData, allowedCompanies: formData.allowedCompanies.filter(id => id !== comp.id) });
                               }
                             }}
-                            className="rounded text-indigo-600 focus:ring-indigo-500"
+                            className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                           />
                           <span>[{comp.companyCode}] {comp.shortName || comp.name}</span>
                         </div>
-                        <span className="text-[10px] text-slate-400">
-                          {comp.entityType === 'GROUP' ? '母體集團' : comp.entityType === 'PERSONAL' ? '老闆私帳' : '公司法人'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {!operatorCanAssign && (
+                            <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                              非您授權管轄
+                            </span>
+                          )}
+                          <span className="text-[10px] text-slate-400">
+                            {comp.entityType === 'GROUP' ? '母體集團' : comp.entityType === 'PERSONAL' ? '老闆私帳' : '公司法人'}
+                          </span>
+                        </div>
                       </label>
                     );
                   })}

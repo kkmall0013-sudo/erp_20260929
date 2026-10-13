@@ -50,6 +50,7 @@ export interface User {
   canManageUsers?: boolean; // 【Superadmin 特許帳號管理專人】可進帳號管理模組與重設他人密碼
   canManageSystemConfigs?: boolean; // 【Superadmin 特許授權】開放此 Admin 修改全域核心參數
   canManageAdmins?: boolean; // 【Superadmin 特許同階管理】開放此 Admin 新增、編輯、重設密碼與刪除同階 Admin
+  canManageAllCompanies?: boolean; // 【全集團跨法人管理特許】代替Superadmin統籌管理全集團所有公司法人（不受限於特定子公司，如老闆/營運長）
   groupId?: string; // 當 role === 'USER' 時主要群組 ID
   groupIds?: string[]; // 支援同仁同時隸屬多個業務群組矩陣 (PBAC 多重群組)
   status: 'ACTIVE' | 'DISABLED';
@@ -102,6 +103,19 @@ export interface GroupModulePermission {
   canWrite: boolean;
   canApprove: boolean;
   canExport: boolean;
+}
+
+export interface AppConfig {
+  id: string;
+  configKey: string;
+  configValue: string;
+  description?: string;
+  valueType: 'STRING' | 'NUMBER' | 'BOOLEAN' | 'JSON';
+  isDeleted: boolean;
+  version: number;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SystemConfig {

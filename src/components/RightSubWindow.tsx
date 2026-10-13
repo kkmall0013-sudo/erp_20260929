@@ -35,6 +35,8 @@ import { BusinessPartnerWorkspace } from './BusinessPartnerWorkspace';
 import { MiniAppsWorkspace } from './MiniAppsWorkspace';
 import { UniversalVaultWorkspace } from './attachments/UniversalVaultWorkspace';
 import { QuotationWorkspace } from './quotations/QuotationWorkspace';
+import { AppSettingsWorkspace } from './AppSettingsWorkspace';
+import { BasicSettingsHubWorkspace } from './BasicSettingsHubWorkspace';
 import { useAuth } from '../context/AuthContext';
 import {
   getAllSystemConfigs,
@@ -61,6 +63,7 @@ interface RightSubWindowProps {
 }
 
 const NAV_TO_MODULE_KEY: Record<LeftNavId, ModuleKey> = {
+  APP_SETTINGS: 'SYSTEM_CONFIGS',
   COMPANY: 'COMPANIES',
   USERS: 'AUDIT_LOGS',
   DASHBOARD: 'PROJECTS',
@@ -120,7 +123,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   const canReadModule =
     activeNavId === 'USERS'
       ? hasUserManagementAccess
-      : ['MINI_APPS', 'ROADMAP'].includes(activeNavId)
+      : ['APP_SETTINGS', 'MINI_APPS', 'ROADMAP'].includes(activeNavId)
       ? isSuperadmin
       : ['COMPANY', 'SETTINGS'].includes(activeNavId)
       ? isSuperadmin || isAdmin
@@ -150,8 +153,11 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   // 標題文字依選取項切換
   const getPageTitle = () => {
     switch (activeNavId) {
+      case 'APP_SETTINGS':
+        return '軟體程式設定 (App Engine Configs - Superadmin)';
       case 'COMPANY':
-        return '集團與公司基本資料設定 (母子法人架構)';
+      case 'SETTINGS':
+        return '基本資料營運法規中樞 (Operational Regulations Hub)';
       case 'USERS':
         return '使用者帳號與三層式身分管理 (密碼維護與特許授權)';
       case 'DASHBOARD':
@@ -174,8 +180,6 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         return '營運戰情大腦與資金池 (BI)';
       case 'ROADMAP':
         return '系統架構討論與重構藍圖總綱';
-      case 'SETTINGS':
-        return '全域共用設定與底層參數';
       case 'VAULT':
         return '通用無紙化附件金庫與圖說工作桌 (Universal Vault & Workspace)';
       case 'MINI_APPS':
@@ -346,13 +350,11 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
 
       {/* 3. 核心內容工作區 */}
       <div className="flex-1 px-6 pb-8 space-y-5">
-        {/* 0. 公司設定視圖 */}
-        {activeNavId === 'COMPANY' && (
-          <CompanySettingsWorkspace
-            companies={companies}
-            selectedCompanyId={selectedCompanyId}
-            onSelectCompany={onSelectCompany}
-            onDataChanged={onReloadData}
+        {/* 0. 軟體程式設定 (Superadmin 專屬) */}
+        {activeNavId === 'APP_SETTINGS' && (
+          <AppSettingsWorkspace
+            triggerToast={triggerModuleToast}
+            onConfigChanged={onReloadData}
           />
         )}
 
@@ -555,100 +557,21 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           </div>
         )}
 
-        {/* E. 全域共用設定與底層參數 (SETTINGS) ── 實機驗證 can('SYSTEM_CONFIGS', 'write') */}
-        {activeNavId === 'SETTINGS' && (
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/70">
-              <div>
-                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-indigo-600" />
-                  <span>全域共用設定與營造內控底層參數 (system_configs)</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  此頁面受 PBAC 權限矩陣【全域系統參數 (SYSTEM_CONFIGS)】及帳號管理之「全域系統參數配置權 (canManageSystemConfigs)」管控。
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
-                  canWriteModule || currentUser?.canManageSystemConfigs
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-rose-50 text-rose-700 border-rose-200'
-                }`}>
-                  {canWriteModule || currentUser?.canManageSystemConfigs
-                    ? '✓ 具備參數修改權限 (Write Enabled)'
-                    : '🔒 唯讀模式 (無修改權限)'}
-                </span>
-              </div>
-            </div>
-
-            <div className="p-6 divide-y divide-slate-200">
-              {systemConfigs.map(cfg => (
-                <div key={cfg.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900">
-                        {cfg.description || cfg.configKey}
-                      </span>
-                      <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-                        {cfg.configKey}
-                      </span>
-                      <span className="text-[11px] font-medium text-slate-500">
-                        型別：{cfg.valueType} (版本 v{cfg.version})
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-slate-400 flex items-center gap-3">
-                      <span>生效起日：{cfg.validFrom}</span>
-                      {cfg.updatedBy && <span>最後修改人：{cfg.updatedBy}</span>}
-                      {cfg.updatedAt && <span>更新日期：{cfg.updatedAt}</span>}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={editingConfigs[cfg.id] ?? cfg.configValue}
-                      onChange={(e) => setEditingConfigs(prev => ({ ...prev, [cfg.id]: e.target.value }))}
-                      className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-800 bg-white w-44 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                    <button
-                      onClick={() => {
-                        const allowedToWrite = Boolean(isSuperadmin || canWriteModule || currentUser?.canManageSystemConfigs);
-                        if (!allowedToWrite) {
-                          triggerModuleToast(`⛔ 權限攔截：您目前的身分（${currentUser?.fullName}）無【全域系統參數】寫入權限，且未開啟「全域系統參數配置權」！`);
-                          return;
-                        }
-                        try {
-                          updateSystemConfig(
-                            cfg.id,
-                            editingConfigs[cfg.id] ?? cfg.configValue,
-                            currentUser?.fullName || '系統操作員',
-                            allowedToWrite
-                          );
-                          setSystemConfigs(getAllSystemConfigs());
-                          triggerModuleToast(`✅ 已成功更新系統參數【${cfg.configKey}】並寫入中文稽核日誌！`);
-                        } catch (err: any) {
-                          triggerModuleToast(`⛔ 更新失敗：${err.message || String(err)}`);
-                        }
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                        canWriteModule || currentUser?.canManageSystemConfigs
-                          ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                          : 'bg-rose-600 hover:bg-rose-700 text-white'
-                      }`}
-                    >
-                      {canWriteModule || currentUser?.canManageSystemConfigs ? <Save className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                      <span>儲存參數</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* E. 基本資料營運法規中樞 (SETTINGS / COMPANY) ── 整合公司主體資訊、法定稅率、合約慣例、跳號與備份 */}
+        {(activeNavId === 'SETTINGS' || activeNavId === 'COMPANY') && (
+          <BasicSettingsHubWorkspace
+            companies={companies}
+            selectedCompanyId={selectedCompanyId}
+            onSelectCompany={onSelectCompany}
+            onDataChanged={onReloadData}
+            triggerToast={triggerModuleToast}
+          />
         )}
 
-        {/* F. 其他核心業務模組 (PARTNERS, QUOTATIONS, PROCUREMENT, VALUATIONS, FINANCE, COMMAND_CENTER)
+        {/* F. 其他核心業務模組 (PROCUREMENT, VALUATIONS, FINANCE, COMMAND_CENTER)
                提供真實 SQLite 資料檢視 + 互動式【讀 / 寫 / 審 / 出】權限實測沙盒 */}
         {![
+          'APP_SETTINGS',
           'COMPANY',
           'USERS',
           'DASHBOARD',

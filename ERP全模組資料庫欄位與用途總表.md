@@ -29,23 +29,44 @@
 | **SystemConfig (`system_configs`)** | `createdBy` vs `updatedBy` | **`updatedBy`** + **`description`** | 系統參數為預設種子初始化後由授權管理員動態調校，直接重用 `updatedBy` 記錄最近修改參數之管理員姓名，並增補 `description` 儲存參數中文用途說明，不另設冗餘之 `createdBy`。 |
 | **Project (`projects`)** | `name` vs `contractName` / `internalName`；`contractAmount` vs `managementContractAmount` | **`name`**、**`contractAmount`**、**`budgetAmount`** | 實體 SQLite 主表統一使用 `name`（專案工程全銜）與 `contractAmount`（合約總額）、`budgetAmount`（核定預算總額），不重複切分多欄造成統計分歧。 |
 | **BusinessPartner (`business_partners`)** | `phone` vs `telephone`；`type` vs `isCustomer`/`isVendor` | **`phone`**、**`type`** | 聯絡電話統一使用 `phone`；夥伴屬性統一使用單一列舉欄位 `type`（`CUSTOMER`、`VENDOR`、`SUBCONTRACTOR`、`BOTH`），取代多個布林欄位。 |
+| **軟體程式設定 vs 公司法規設定** | `app_configs` vs `system_configs`；`COMPANY` 選單 vs `SETTINGS` 選單 | **`app_configs` (Superadmin 程式設定)** + **`system_configs` / `companies` (Admin 基本資料中樞)** | **【權限邊界與選單大整併】**<br>1. **Superadmin 專屬**：新增 `app_configs` 儲存軟體本身資訊（品牌主名稱、副標題、版本號、HTML分頁標題、首頁歡迎標語、頁腳版權、全模組開放授權開關 `APP_ENABLED_MODULES`、全域公告廣播、維護模式），純屬軟體程式本體，與特定客戶公司業務無關。<br>2. **Admin 基本資料中樞**：將原獨立之 `COMPANY`（公司設定）正式合併進入 `SETTINGS`（基本資料），以分頁 Tabs（[營運法人實體]、[法定稅制與健保]、[工程合約與預算內控]、[單據跳號規則]）集中管理。法規修訂時 Admin 自主維護，免找工程師改 code。 |
 
 ---
 
-### SystemConfig｜全域參數 (`system_configs`)
+### AppConfig｜軟體程式設定 (`app_configs`)
+
+> **架構定位**：**【Superadmin 唯一專屬權限】**。專門設定「這個程式軟體本身」的系統層級資訊，與任何客戶公司的具體營運事務完全解耦。Admin 與一般同仁登入後連此選單與設定資料皆不可見。
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 軟體設定識別碼（如 `APP-CFG-01`）。 |
+| `configKey` | 程式設定唯一鍵名：<br>• `APP_BRAND_NAME`：軟體品牌主名稱（如「田頭」，即時同步至頂欄與系統各處）。<br>• `APP_SUB_TITLE`：軟體副標題／產品代號（如「A1 商務應用雲」、「營造工程雲」）。<br>• `APP_VERSION`：系統版本號標記（如「v2.5.0-PRO」）。<br>• `APP_HTML_TITLE`：瀏覽器分頁標題（如「客製化營造工程 ERP 系統」）。<br>• `APP_WELCOME_BANNER`：儀表板首頁歡迎標語與公告文字。<br>• `APP_FOOTER_COPYRIGHT`：系統頁腳版權宣告字串。<br>• `APP_GLOBAL_ANNOUNCEMENT`：頂欄全域緊急公告／維護廣播跑馬燈字串。<br>• `APP_ANNOUNCEMENT_ENABLED`：全域緊急公告啟用開關（`BOOLEAN`）。<br>• `APP_ENABLED_MODULES`：全系統開放業務模組授權清單（`JSON` 陣列，控制哪些模組對全系統開放）。<br>• `APP_MAINTENANCE_MODE`：全系統維護模式／唯讀鎖定開關（`BOOLEAN`）。<br>• `APP_LOGO_MODE`：標誌顯示模式（`TEXT` 純文字 / `DEFAULT` 預設圖標 / `CUSTOM` 自訂圖示）。<br>• `APP_LOGO_URL`：自訂標誌圖片或圖示 URL（選填）。 |
+| `configValue` | 設定值，以純文字保存並依 `valueType` 解析。 |
+| `description` | 軟體設定項目中文用途說明。 |
+| `valueType` | 數值型別：`STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
+| `isDeleted` | 軟刪除標記（預設 `0`）。 |
+| `version` | 樂觀鎖版本號（預設 `1`，更新自動 `+1`）。 |
+| `updatedBy` | 最近修改設定之 Superadmin 姓名（如「黃副總經理」）。 |
+| `createdAt`、`updatedAt` | 建立及最近更新日期時間。 |
+
+---
+
+### SystemConfig｜營運法規與內控參數 (`system_configs`)
+
+> **架構定位**：**【Admin 營運法規中樞】**。專門設定與公司業務經營、政府各項法規、工程合約慣例相關之參數。由 Admin 於「基本資料 (SETTINGS)」中自主維護，法令變更時隨改隨生效，絕不需求助 Superadmin 更改程式碼。
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 參數資料列識別碼（如 `CFG-01`）。 |
-| `configKey` | 參數唯一鍵名，如 `TAX_RATE`、`FIN_TAX_TOLERANCE`、`DEFAULT_RETENTION_RATE`、`PROJECT_LOCK_MODE`、`NHI_RATE`。 |
+| `configKey` | 參數唯一鍵名，依業務分為四大分類：<br>**【一、法定稅制與健保規章】**：<br>• `TAX_RATE`：法定營業稅率（預設 5%，政府修法時 Admin 直接調整）。<br>• `FIN_TAX_TOLERANCE`：發票稅額尾差容許值（新台幣元，預設 5 元）。<br>• `NHI_RATE`：二代健保補充保費法定扣繳費率（預設 2.11%）。<br>• `STAMP_DUTY_RATE`：法定印花稅率（預設 0.1% 或 0.4%）。<br>**【二、工程合約與內控營運慣例】**：<br>• `DEFAULT_RETENTION_RATE`：工程估驗預設保留款扣留比例（預設 5% 或 10%）。<br>• `PROJECT_LOCK_MODE`：案場超支預算防呆模式（`STRICT` 嚴格阻擋 / `WARN` 警示放行）。<br>• `DEFAULT_PAYMENT_TERMS_DAYS`：預設付款與票期天數（預設 30 天）。<br>• `DEFAULT_WARRANTY_MONTHS`：預設工程合約保固期（月數，預設 12 個月）。 |
 | `configValue` | 參數值，以字串保存並依 `valueType` 轉換。 |
-| `description` | **【審核增補】** 參數中文名稱與用途說明（供系統參數控制台與純中文審計日誌直接顯示，免除硬編碼對照）。 |
+| `description` | 參數中文名稱與用途說明（供基本資料控制台與純中文審計日誌直接顯示）。 |
 | `valueType` | 值型別：`STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
 | `validFrom` | 參數生效起始日期。 |
 | `validTo` | 參數生效結束日期（選填，支援歷史時點查詢）。 |
 | `isDeleted` | 軟刪除標記（預設 `0`）。 |
 | `version` | 樂觀鎖版本號（預設 `1`，每次更新自動 `+1`）。 |
-| `updatedBy` | **【重用既有欄位】** 最近更新此參數之授權管理員姓名（取代冗餘之 `createdBy`）。 |
+| `updatedBy` | 最近更新此參數之 Admin 姓名快照。 |
 | `createdAt`、`updatedAt` | 建立及最近更新日期時間。 |
 
 ### AuditLog｜全域安全審計日誌 (`audit_logs`)

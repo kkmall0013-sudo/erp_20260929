@@ -24,7 +24,7 @@ import {
   Check
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { changeSelfPassword } from '../db/sqlite';
+import { changeSelfPassword, getAppConfigMap, subscribeToDatabase } from '../db/sqlite';
 
 interface TopSubWindowProps {
   companies: Company[];
@@ -55,13 +55,31 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
   const [isDbMenuOpen, setIsDbMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 動態讀取 Superadmin 專屬軟體程式設定 (app_configs)
+  const [appConfigMap, setAppConfigMap] = useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    const refreshConfigs = () => {
+      try {
+        const map = getAppConfigMap();
+        setAppConfigMap(map);
+        if (map.APP_HTML_TITLE) {
+          document.title = map.APP_HTML_TITLE;
+        }
+      } catch (_) {}
+    };
+    refreshConfigs();
+    const unsub = subscribeToDatabase(refreshConfigs);
+    return () => unsub();
+  }, []);
+
   // 依登入者權限精確過濾可見營運法人：
-  // 1. Superadmin 可見所有法人
-  // 2. Admin / 一般同仁 僅能看見授權之 allowedCompanies
+  // 1. Superadmin 與具備全集團跨法人管理特許 (canManageAllCompanies) 之老闆/常務管理Admin 可見所有法人
+  // 2. 一般 Admin / 一般同仁 僅能看見授權之 allowedCompanies
   // 3. 無權限之法人連看都看不到 (完全自清單中排除)
   const authorizedCompanies = React.useMemo(() => {
     if (!currentUser) return [];
-    if (isSuperadmin) return companies;
+    if (isSuperadmin || currentUser.canManageAllCompanies) return companies;
     const allowed = currentUser.allowedCompanies && currentUser.allowedCompanies.length > 0
       ? currentUser.allowedCompanies
       : ['COMP-01'];
@@ -143,8 +161,18 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
     e.target.value = '';
   };
 
+  const brandName = appConfigMap.APP_BRAND_NAME || '田頭';
+  const subTitle = appConfigMap.APP_SUB_TITLE || 'A1 商務應用雲';
+  const version = appConfigMap.APP_VERSION || 'v2.5.0-PRO';
+  const announcement = appConfigMap.APP_GLOBAL_ANNOUNCEMENT || '';
+  const isAnnouncementEnabled = appConfigMap.APP_ANNOUNCEMENT_ENABLED === 'true';
+  const primaryColor = appConfigMap.APP_PRIMARY_COLOR || '#2d3a4b';
+
   return (
-    <header className="h-12 bg-[#2d3a4b] text-white flex items-center justify-between px-3 shrink-0 select-none z-30 shadow-xs border-b border-slate-700/60">
+    <header
+      style={{ backgroundColor: primaryColor }}
+      className="h-12 text-white flex items-center justify-between px-3 shrink-0 select-none z-30 shadow-xs border-b border-slate-700/60 transition-colors"
+    >
       {/* 隱藏的檔案上傳輸入框 */}
       <input
         ref={fileInputRef}
@@ -154,25 +182,33 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
         className="hidden"
       />
 
-      {/* 左區：漢堡按鈕 + 鼎新 A1 品牌識別 */}
+      {/* 左區：漢堡按鈕 + 動態軟體品牌識別 (Superadmin app_configs 動態綁定) */}
       <div className="flex items-center gap-3">
         <button
           onClick={onToggleLeftNav}
           title="收合 / 展開左側子視窗"
-          className="p-1.5 rounded hover:bg-slate-700/70 text-slate-300 hover:text-white transition-colors"
+          className="p-1.5 rounded hover:bg-slate-700/70 text-slate-300 hover:text-white transition-colors cursor-pointer"
         >
           <Menu className="w-5 h-5" />
         </button>
 
         <div className="flex items-center gap-2">
-          <span className="font-bold text-sm tracking-wide text-white">田頭</span>
+          <span className="font-bold text-sm tracking-wide text-white">{brandName}</span>
           <span className="text-slate-400 font-light text-sm">|</span>
-          <span className="font-semibold text-sm text-slate-100">A1 商務應用雲</span>
+          <span className="font-semibold text-sm text-slate-100">{subTitle}</span>
           <span className="text-[10px] text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 rounded font-mono hidden sm:inline">
-            營造工程 ERP 引擎
+            {version}
           </span>
         </div>
       </div>
+
+      {/* 全域公告廣播跑馬燈 (若 Superadmin 開啟) */}
+      {isAnnouncementEnabled && announcement && (
+        <div className="hidden xl:flex items-center gap-2 bg-amber-500/20 border border-amber-500/40 text-amber-200 px-3 py-1 rounded-full text-xs animate-pulse max-w-sm truncate">
+          <span className="font-bold shrink-0">📢</span>
+          <span className="truncate">{announcement}</span>
+        </div>
+      )}
 
       {/* 中區：常駐法人資訊 (僅顯示該帳號有權限之營運法人，其餘無權限法人完全隱藏) */}
       {authorizedCompanies.length > 0 && (

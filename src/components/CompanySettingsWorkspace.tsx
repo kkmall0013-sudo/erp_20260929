@@ -126,10 +126,11 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
   onSelectCompany,
   onDataChanged,
 }) => {
-  const { currentUser, isSuperadmin, can } = useAuth();
+  const { currentUser, isSuperadmin, can, reloadAuth } = useAuth();
   const canWriteCompany = can('COMPANIES', 'write');
   const isCompanyAllowed = (compId: string) => {
     if (isSuperadmin) return true;
+    if (currentUser?.canManageAllCompanies) return true;
     const allowed = currentUser?.allowedCompanies && currentUser.allowedCompanies.length > 0
       ? currentUser.allowedCompanies
       : ['COMP-01'];
@@ -310,11 +311,12 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     };
 
     try {
-      saveCompany(newEntity as any, currentUser?.fullName || '系統管理員');
+      saveCompany(newEntity as any, currentUser?.fullName || '系統管理員', currentUser?.id);
+      reloadAuth();
       onDataChanged();
       setActiveCompanyId(newId);
       onSelectCompany(newId);
-      showToast(`✅ 已建立全新【${isGroup ? '集團母體' : isCorp ? '公司法人' : '個人實體 (老闆私帳)'}】！`);
+      showToast(`✅ 已建立全新【${isGroup ? '集團母體' : isCorp ? '公司法人' : '個人實體 (老闆私帳)'}】！您已自動獲賦予該實體之管理維護權限。`);
     } catch (e) {
       showToast(`❌ 建立失敗: ${(e as Error).message}`);
     }
@@ -384,7 +386,8 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
         baseCurrency: formData.baseCurrency || 'TWD',
       };
 
-      saveCompany(payload, currentUser?.fullName || '系統管理員');
+      saveCompany(payload, currentUser?.fullName || '系統管理員', currentUser?.id);
+      reloadAuth();
       onDataChanged();
       showToast('💾 公司基本資料已成功儲存至 SQLite 資料庫！');
     } catch (e) {
@@ -411,6 +414,7 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     if (!formData.id) return;
     try {
       deleteCompany(formData.id, currentUser?.fullName || '系統管理員');
+      reloadAuth();
       onDataChanged();
       setIsDeleteModalOpen(false);
       const remaining = companies.filter(c => c.id !== formData.id);

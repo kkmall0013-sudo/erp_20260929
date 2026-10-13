@@ -15,10 +15,12 @@ import {
   UserCog,
   Lock,
   FolderLock,
-  Sparkles
+  Sparkles,
+  SlidersHorizontal
 } from 'lucide-react';
 
 export type LeftNavId =
+  | 'APP_SETTINGS'
   | 'COMPANY'
   | 'USERS'
   | 'DASHBOARD'
@@ -51,14 +53,15 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
   const { currentUser, isSuperadmin, isAdmin, can } = useAuth();
   const hasUserManagementAccess = (isSuperadmin || Boolean(currentUser?.canManageUsers)) && currentUser?.status === 'ACTIVE';
 
-  // 對應截圖中經典的鼎新 A1 垂直圖示功能鍵
+  // 對應經典鼎新 A1 垂直圖示功能鍵 (雙軌設定分層：Superadmin 程式設定 vs Admin 基本資料中樞)
   const navItems: {
     id: LeftNavId;
     label: string;
     icon: any;
     badgeCount?: number;
   }[] = [
-    { id: 'COMPANY', label: '公司設定', icon: Building2 },
+    { id: 'APP_SETTINGS', label: '程式設定', icon: SlidersHorizontal },
+    { id: 'SETTINGS', label: '基本資料', icon: Sliders },
     { id: 'USERS', label: '帳號管理', icon: UserCog },
     { id: 'DASHBOARD', label: '儀表板', icon: LayoutDashboard },
     { id: 'PROJECTS', label: '專案案場', icon: FolderGit2, badgeCount: 3 },
@@ -72,22 +75,22 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     { id: 'FINANCE', label: '財務票據', icon: Receipt },
     { id: 'COMMAND_CENTER', label: '營運戰情', icon: LineChart },
     { id: 'ROADMAP', label: '藍圖討論', icon: ClipboardList },
-    { id: 'SETTINGS', label: '基本資料', icon: Sliders },
   ];
 
   // 檢查導航項目是否在當前登入帳號下可見 (嚴格分層：Superadmin / Admin / User PBAC)
   const isNavVisibleForUser = (id: LeftNavId): boolean => {
     if (!currentUser || currentUser.status === 'DISABLED') return false;
 
-    // 1. 【Superadmin 專屬範疇】：小程式庫 (MINI_APPS)、藍圖討論 (ROADMAP)
-    // 只有 Superadmin 登入時才看得見，其他角色 (Admin 或 一般同仁) 完全自左側選單隱藏
-    if (id === 'MINI_APPS' || id === 'ROADMAP') {
+    // 1. 【Superadmin 專屬範疇】：
+    // 程式設定 (APP_SETTINGS)、小程式庫 (MINI_APPS)、藍圖討論 (ROADMAP)
+    // 只有 Superadmin 登入時才看得見，其他角色 (Admin 或 一般同仁) 完全連看都看不到也無法選擇
+    if (id === 'APP_SETTINGS' || id === 'MINI_APPS' || id === 'ROADMAP') {
       return isSuperadmin;
     }
 
-    // 2. 【Admin 範疇】：基本資料 (SETTINGS)、公司設定 (COMPANY)
+    // 2. 【Admin 範疇】：基本資料營運法規中樞 (SETTINGS，已整併原公司設定)
     // 屬於系統管理員與最高管理員範疇，一般同仁 (USER) 完全不顯示
-    if (id === 'COMPANY' || id === 'SETTINGS') {
+    if (id === 'SETTINGS' || id === 'COMPANY') {
       return isSuperadmin || isAdmin;
     }
 

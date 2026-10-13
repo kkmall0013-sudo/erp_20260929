@@ -26,7 +26,9 @@ import {
   AccountPayable,
   AccountReceivable,
   BankCheck,
+  AppConfig,
   SystemConfig,
+  DocumentSequence,
   AuditLog,
   CashFlowMetrics,
   User,
@@ -143,6 +145,7 @@ function initializeTables(db: Database) {
       canManageUsers INTEGER DEFAULT 0,
       canManageSystemConfigs INTEGER DEFAULT 0,
       canManageAdmins INTEGER DEFAULT 0,
+      canManageAllCompanies INTEGER DEFAULT 0,
       groupId TEXT,
       groupIds TEXT DEFAULT '[]',
       status TEXT DEFAULT 'ACTIVE',
@@ -296,6 +299,20 @@ function initializeTables(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_file_links_target ON file_links (targetTable, targetId, isDeleted);
     CREATE INDEX IF NOT EXISTS idx_file_links_anchor ON file_links (projectId, partnerId, userId);
     CREATE INDEX IF NOT EXISTS idx_ext_folders_target ON external_folder_links (targetTable, targetId, isDeleted);
+
+    -- 0-1. 軟體程式設定 (AppConfig - Superadmin 專屬)
+    CREATE TABLE IF NOT EXISTS app_configs (
+      id TEXT PRIMARY KEY,
+      configKey TEXT UNIQUE NOT NULL,
+      configValue TEXT NOT NULL,
+      description TEXT,
+      valueType TEXT DEFAULT 'STRING',
+      isDeleted INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
+      updatedBy TEXT,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
 
     CREATE TABLE IF NOT EXISTS system_configs (
       id TEXT PRIMARY KEY,
@@ -749,7 +766,7 @@ export function seedInitialData(db: Database) {
   // 清理現有資料
   const tables = [
     'users', 'user_groups', 'group_module_permissions',
-    'companies', 'system_configs', 'audit_logs', 'system_files', 'external_folder_links', 'file_links', 'projects', 'project_sites',
+    'app_configs', 'companies', 'system_configs', 'audit_logs', 'system_files', 'external_folder_links', 'file_links', 'projects', 'project_sites',
     'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
     'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
@@ -759,6 +776,24 @@ export function seedInitialData(db: Database) {
 
   // 0. 三層式帳號權限與 PBAC 模組矩陣
   seedUserPermissionData(db);
+
+  // 0-1. 軟體程式設定 (AppConfig - Superadmin 專屬)
+  db.run(`
+    INSERT INTO app_configs (id, configKey, configValue, description, valueType, isDeleted, version, updatedBy, createdAt, updatedAt)
+    VALUES
+      ('APP-CFG-01', 'APP_BRAND_NAME', '田頭', '軟體品牌主名稱 (頂部主識別)', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-02', 'APP_SUB_TITLE', 'A1 商務應用雲', '軟體副標題與產品代號', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-03', 'APP_VERSION', 'v2.5.0-PRO', '系統版本號標記', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-04', 'APP_HTML_TITLE', '田頭 | A1 商務應用雲 - 營造工程 ERP 整合系統', '瀏覽器頁籤分頁標題', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-05', 'APP_WELCOME_BANNER', '歡迎登入營造工程 ERP 整合系統，請透過左側選單操作業務功能。', '儀表板首頁歡迎標語', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-06', 'APP_FOOTER_COPYRIGHT', '© 2026 營造工程雲端 ERP 整合系統 · 保留所有權利', '全系統頁腳版權聲明', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-07', 'APP_GLOBAL_ANNOUNCEMENT', '【系統公告】系統固定於每週日 02:00 ~ 04:00 進行資料庫異地冷備份，期間請勿執行巨量批次寫入。', '全域頂欄緊急廣播/公告內容', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-08', 'APP_ANNOUNCEMENT_ENABLED', 'false', '全域頂欄廣播跑馬燈啟用開關', 'BOOLEAN', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-09', 'APP_ENABLED_MODULES', '["PROJECTS","PARTNERS","QUOTATIONS","PURCHASE_ORDERS","SUBCONTRACTS","VALUATIONS","FINANCE_AP","FINANCE_AR","BANK_CHECKS","VAULT","MINI_APPS"]', '全系統開放業務模組授權清單 (Feature Flags)', 'JSON', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-10', 'APP_MAINTENANCE_MODE', 'false', '全系統維護唯讀模式開關', 'BOOLEAN', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-11', 'APP_LOGO_MODE', 'DEFAULT', '標誌顯示模式 (DEFAULT / TEXT / CUSTOM)', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+      ('APP-CFG-12', 'APP_PRIMARY_COLOR', '#2d3a4b', '頂欄主視覺識別色碼', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01');
+  `);
 
   // 1. 公司法人、集團與個人實體
   db.run(`
@@ -778,7 +813,9 @@ export function seedInitialData(db: Database) {
       ('CFG-02', 'FIN_TAX_TOLERANCE', '5.0', '發票稅額尾差容許值 (新台幣元)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
       ('CFG-03', 'DEFAULT_RETENTION_RATE', '10.0', '工程估驗預設保留款扣留比例 (%)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
       ('CFG-04', 'PROJECT_LOCK_MODE', 'STRICT', '案場超支預算防呆鎖定模式 (STRICT 嚴格阻擋 / WARN 警示放行)', 'STRING', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
-      ('CFG-05', 'NHI_RATE', '0.0211', '二代健保補充保費法定扣繳費率', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01');
+      ('CFG-05', 'NHI_RATE', '0.0211', '二代健保補充保費法定扣繳費率', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
+      ('CFG-06', 'PAYMENT_TERM_DAYS', '30', '預設請款票期 / 付款天數 (天)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
+      ('CFG-07', 'WARRANTY_MONTHS', '12', '預設工程保固期 (月數)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01');
   `);
 
   // 3. 商業夥伴 (業主、混凝土下包、鋼構廠、弱電機電)
@@ -979,7 +1016,7 @@ export function exportSqlDump(): string {
   if (!dbInstance) return '-- 資料庫尚未載入';
   const tables = [
     'users', 'user_groups', 'group_module_permissions',
-    'companies', 'system_configs', 'audit_logs', 'document_sequences',
+    'app_configs', 'companies', 'system_configs', 'audit_logs', 'document_sequences',
     'annual_archive_snapshots', 'system_files', 'external_folder_links', 'file_links',
     'projects', 'project_sites',
     'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
@@ -1314,7 +1351,7 @@ export function exportModularBackup(
     'SUBCONTRACTS': ['subcontracts'],
     'VALUATIONS': ['valuations', 'valuation_items'],
     'FINANCE': ['accounts_payable', 'accounts_receivable', 'bank_checks'],
-    'SYSTEM_CONFIGS': ['system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences'],
+    'SYSTEM_CONFIGS': ['app_configs', 'system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences'],
     'ARCHIVES': ['annual_archive_snapshots'],
     'FILES': ['system_files']
   };
@@ -1416,6 +1453,7 @@ export function restoreModularBackup(
   }
 
   const topologicalOrder = [
+    'app_configs',
     'system_configs',
     'user_groups',
     'group_module_permissions',
@@ -1457,6 +1495,7 @@ export function restoreModularBackup(
     'accounts_payable': 'apNumber',
     'accounts_receivable': 'arNumber',
     'bank_checks': 'checkNumber',
+    'app_configs': 'configKey',
     'system_configs': 'configKey',
     'document_sequences': 'prefix'
   };
@@ -2025,8 +2064,50 @@ export function getAllCompanies(): Company[] {
   });
 }
 
+// 賦予指定同仁操作特定法人之權限
+export function grantCompanyAccessToUser(userId: string, companyId: string): void {
+  if (!dbInstance) return;
+  try {
+    const res = dbInstance.exec(`SELECT allowedCompanies FROM users WHERE id = '${userId}';`);
+    if (res.length && res[0].values.length) {
+      const curVal = res[0].values[0][0];
+      let comps: string[] = curVal ? JSON.parse(String(curVal)) : ['COMP-01'];
+      if (!comps.includes(companyId)) {
+        comps.push(companyId);
+        dbInstance.run(`UPDATE users SET allowedCompanies = '${JSON.stringify(comps)}', updatedAt = '${new Date().toISOString().substring(0, 10)}' WHERE id = '${userId}';`);
+      }
+    }
+  } catch (err) {
+    console.error('grantCompanyAccessToUser failed:', err);
+  }
+}
+
+// 自動將新立法人加入所有具備全集團管理特許 (canManageAllCompanies=1) 或 Superadmin 之帳號
+export function grantCompanyAccessToGlobalAdmins(companyId: string): void {
+  if (!dbInstance) return;
+  try {
+    const res = dbInstance.exec(`SELECT id, allowedCompanies FROM users WHERE role = 'SUPERADMIN' OR canManageAllCompanies = 1;`);
+    if (res.length && res[0].values.length) {
+      for (const row of res[0].values) {
+        const uId = String(row[0]);
+        let comps: string[] = row[1] ? JSON.parse(String(row[1])) : ['COMP-01'];
+        if (!comps.includes(companyId)) {
+          comps.push(companyId);
+          dbInstance.run(`UPDATE users SET allowedCompanies = '${JSON.stringify(comps)}' WHERE id = '${uId}';`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('grantCompanyAccessToGlobalAdmins failed:', err);
+  }
+}
+
 // 儲存或更新公司法人/集團/個人實體 (僅記錄有修改之欄位，並以中文記錄)
-export function saveCompany(company: Partial<Company> & { id: string; name: string; companyCode: string }, operatorName: string = '系統管理員'): void {
+export function saveCompany(
+  company: Partial<Company> & { id: string; name: string; companyCode: string },
+  operatorName: string = '系統管理員',
+  creatorUserId?: string
+): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
   const now = new Date().toISOString().substring(0, 10);
   const phonesJson = company.phones ? JSON.stringify(company.phones).replace(/'/g, "''") : '[]';
@@ -2149,6 +2230,13 @@ export function saveCompany(company: Partial<Company> & { id: string; name: stri
         0, 1, '${now}', '${now}'
       );
     `);
+
+    // 建立新法人時：建立者 (Admin) 自動獲得該法人權限，且全集團特許管理者亦自動獲得
+    if (creatorUserId) {
+      grantCompanyAccessToUser(creatorUserId, company.id);
+    }
+    grantCompanyAccessToGlobalAdmins(company.id);
+
     logAudit(dbInstance, operatorName, '新增資料', '集團與公司設定', company.shortName || company.name, undefined, {
       '公司全銜': company.name,
       '公司簡稱': company.shortName || '無',
@@ -2179,6 +2267,27 @@ export function deleteCompany(companyId: string, operatorName: string = '系統�
   const compDisplayName = targetComp ? (targetComp.shortName || targetComp.name) : companyId;
 
   dbInstance.run(`UPDATE companies SET isDeleted = 1, updatedAt = '${new Date().toISOString().substring(0, 10)}' WHERE id = '${companyId}';`);
+
+  // 安全清理同仁預設登入法人與授權清單中已刪除之法人
+  try {
+    const userRows = dbInstance.exec(`SELECT id, defaultCompanyId, allowedCompanies FROM users;`);
+    if (userRows.length && userRows[0].values.length) {
+      for (const row of userRows[0].values) {
+        const uId = String(row[0]);
+        const defComp = String(row[1] || 'COMP-01');
+        let comps: string[] = row[2] ? JSON.parse(String(row[2])) : ['COMP-01'];
+        if (comps.includes(companyId)) {
+          comps = comps.filter(id => id !== companyId);
+          if (comps.length === 0) comps = ['COMP-01'];
+          const newDef = (defComp === companyId) ? comps[0] : defComp;
+          dbInstance.run(`UPDATE users SET defaultCompanyId = '${newDef}', allowedCompanies = '${JSON.stringify(comps)}' WHERE id = '${uId}';`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Clean deleted company from users failed:', err);
+  }
+
   logAudit(dbInstance, operatorName, '刪除資料', '集團與公司設定', compDisplayName, { '實體狀態': '啟用中' }, { '實體狀態': '已標記刪除' }, operatorName);
   saveDatabaseSnapshot();
   notifyListeners();
@@ -3470,6 +3579,8 @@ export function updateSystemConfig(
     DEFAULT_RETENTION_RATE: '工程估驗預設保留款率 (%)',
     PROJECT_LOCK_MODE: '案場超支預算防呆鎖定模式',
     NHI_RATE: '二代健保補充保費扣繳率',
+    PAYMENT_TERM_DAYS: '預設請款票期 / 付款天數',
+    WARRANTY_MONTHS: '預設工程保固期 (月)',
   };
 
   const existing = getAllSystemConfigs().find(c => c.id === configId);
@@ -3498,6 +3609,153 @@ export function updateSystemConfig(
     cnLabel,
     { [cnLabel]: existing.configValue },
     { [cnLabel]: trimmed },
+    operatorName
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// ============================================================================
+// 🖥️ 軟體程式設定 (AppConfig - Superadmin 專屬)
+// ============================================================================
+export function getAllAppConfigs(): AppConfig[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`
+    SELECT id, configKey, configValue, description, valueType, isDeleted, version, updatedBy, createdAt, updatedAt
+    FROM app_configs WHERE isDeleted = 0 ORDER BY id ASC;
+  `);
+  if (!res.length) return [];
+  return res[0].values.map(v => ({
+    id: String(v[0]),
+    configKey: String(v[1]),
+    configValue: String(v[2]),
+    description: v[3] ? String(v[3]) : undefined,
+    valueType: v[4] as AppConfig['valueType'],
+    isDeleted: Boolean(v[5]),
+    version: Number(v[6] || 1),
+    updatedBy: v[7] ? String(v[7]) : undefined,
+    createdAt: v[8] ? String(v[8]) : undefined,
+    updatedAt: v[9] ? String(v[9]) : undefined,
+  }));
+}
+
+export function getAppConfigMap(): Record<string, string> {
+  const configs = getAllAppConfigs();
+  const map: Record<string, string> = {};
+  for (const c of configs) {
+    map[c.configKey] = c.configValue;
+  }
+  return map;
+}
+
+export function updateAppConfig(
+  configKey: string,
+  newValue: string,
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const existing = getAllAppConfigs().find(c => c.configKey === configKey);
+  const now = new Date().toISOString().substring(0, 10);
+  const trimmed = newValue.trim();
+
+  if (existing) {
+    if (trimmed === existing.configValue) return;
+    const nextVer = (existing.version || 1) + 1;
+    dbInstance.run(`
+      UPDATE app_configs 
+      SET configValue = '${trimmed.replace(/'/g, "''")}',
+          version = ${nextVer},
+          updatedBy = '${operatorName.replace(/'/g, "''")}',
+          updatedAt = '${now}'
+      WHERE configKey = '${configKey}';
+    `);
+    const cnLabel = existing.description || configKey;
+    logAudit(
+      dbInstance,
+      operatorName,
+      '修改軟體設定',
+      '程式本體設定',
+      cnLabel,
+      { [cnLabel]: existing.configValue },
+      { [cnLabel]: trimmed },
+      operatorName
+    );
+  } else {
+    const newId = `APP-CFG-${Date.now()}`;
+    dbInstance.run(`
+      INSERT INTO app_configs (id, configKey, configValue, description, valueType, isDeleted, version, updatedBy, createdAt, updatedAt)
+      VALUES ('${newId}', '${configKey}', '${trimmed.replace(/'/g, "''")}', '${configKey}', 'STRING', 0, 1, '${operatorName.replace(/'/g, "''")}', '${now}', '${now}');
+    `);
+    logAudit(
+      dbInstance,
+      operatorName,
+      '新增軟體設定',
+      '程式本體設定',
+      configKey,
+      {},
+      { [configKey]: trimmed },
+      operatorName
+    );
+  }
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+export function batchUpdateAppConfigs(
+  updates: Record<string, string>,
+  operatorName: string
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  let changed = false;
+  for (const [key, val] of Object.entries(updates)) {
+    const existing = getAllAppConfigs().find(c => c.configKey === key);
+    if (!existing || existing.configValue !== val.trim()) {
+      updateAppConfig(key, val, operatorName);
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveDatabaseSnapshot();
+    notifyListeners();
+  }
+}
+
+// ============================================================================
+// 🔢 單據跳號規則與計數器管理 (Document Sequences)
+// ============================================================================
+export function getAllDocumentSequences(): DocumentSequence[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`SELECT prefix, currentVal, updatedAt FROM document_sequences ORDER BY prefix ASC;`);
+  if (!res.length) return [];
+  return res[0].values.map(v => ({
+    prefix: String(v[0]),
+    currentVal: Number(v[1] || 0),
+    updatedAt: String(v[2] || ''),
+  }));
+}
+
+export function updateDocumentSequence(
+  prefix: string,
+  newVal: number,
+  operatorName = '系統管理者'
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  dbInstance.run(`
+    INSERT INTO document_sequences (prefix, currentVal, updatedAt)
+    VALUES ('${prefix}', ${newVal}, '${now}')
+    ON CONFLICT(prefix) DO UPDATE SET
+      currentVal = ${newVal},
+      updatedAt = '${now}';
+  `);
+  logAudit(
+    dbInstance,
+    operatorName,
+    '修改單據跳號',
+    '單據流水號規則',
+    `前綴 [${prefix}]`,
+    { 前綴: prefix },
+    { 前綴: prefix, 最新流水號: newVal },
     operatorName
   );
   saveDatabaseSnapshot();
@@ -3735,6 +3993,7 @@ export function ensureDatabaseIntegrity(db: Database) {
   try { db.run(`ALTER TABLE users ADD COLUMN canManageUsers INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageSystemConfigs INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageAdmins INTEGER DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE users ADD COLUMN canManageAllCompanies INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN passwordHash TEXT DEFAULT '888888';`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN isPasswordReset INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN version INTEGER DEFAULT 1;`); } catch (e) {}
@@ -3746,13 +4005,62 @@ export function ensureDatabaseIntegrity(db: Database) {
   try { db.run(`ALTER TABLE system_configs ADD COLUMN createdAt TEXT DEFAULT '2026-01-01';`); } catch (e) {}
   try { db.run(`ALTER TABLE system_configs ADD COLUMN updatedAt TEXT DEFAULT '2026-01-01';`); } catch (e) {}
 
-  // 自動補齊既有 system_configs 之中文用途說明
+  // 升級檢測：確保 app_configs 表存在並填入初始值
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS app_configs (
+        id TEXT PRIMARY KEY,
+        configKey TEXT UNIQUE NOT NULL,
+        configValue TEXT NOT NULL,
+        description TEXT,
+        valueType TEXT DEFAULT 'STRING',
+        isDeleted INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        updatedBy TEXT,
+        createdAt TEXT,
+        updatedAt TEXT
+      );
+    `);
+    const countRes = db.exec(`SELECT COUNT(*) FROM app_configs WHERE isDeleted = 0;`);
+    const count = Number(countRes[0]?.values[0]?.[0] || 0);
+    if (count === 0) {
+      db.run(`
+        INSERT INTO app_configs (id, configKey, configValue, description, valueType, isDeleted, version, updatedBy, createdAt, updatedAt)
+        VALUES
+          ('APP-CFG-01', 'APP_BRAND_NAME', '田頭', '軟體品牌主名稱 (頂部主識別)', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-02', 'APP_SUB_TITLE', 'A1 商務應用雲', '軟體副標題與產品代號', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-03', 'APP_VERSION', 'v2.5.0-PRO', '系統版本號標記', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-04', 'APP_HTML_TITLE', '田頭 | A1 商務應用雲 - 營造工程 ERP 整合系統', '瀏覽器頁籤分頁標題', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-05', 'APP_WELCOME_BANNER', '歡迎登入營造工程 ERP 整合系統，請透過左側選單操作業務功能。', '儀表板首頁歡迎標語', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-06', 'APP_FOOTER_COPYRIGHT', '© 2026 營造工程雲端 ERP 整合系統 · 保留所有權利', '全系統頁腳版權聲明', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-07', 'APP_GLOBAL_ANNOUNCEMENT', '【系統公告】系統固定於每週日 02:00 ~ 04:00 進行資料庫異地冷備份，期間請勿執行巨量批次寫入。', '全域頂欄緊急廣播/公告內容', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-08', 'APP_ANNOUNCEMENT_ENABLED', 'false', '全域頂欄廣播跑馬燈啟用開關', 'BOOLEAN', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-09', 'APP_ENABLED_MODULES', '["PROJECTS","PARTNERS","QUOTATIONS","PURCHASE_ORDERS","SUBCONTRACTS","VALUATIONS","FINANCE_AP","FINANCE_AR","BANK_CHECKS","VAULT","MINI_APPS"]', '全系統開放業務模組授權清單 (Feature Flags)', 'JSON', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-10', 'APP_MAINTENANCE_MODE', 'false', '全系統維護唯讀模式開關', 'BOOLEAN', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-11', 'APP_LOGO_MODE', 'DEFAULT', '標誌顯示模式 (DEFAULT / TEXT / CUSTOM)', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01'),
+          ('APP-CFG-12', 'APP_PRIMARY_COLOR', '#2d3a4b', '頂欄主視覺識別色碼', 'STRING', 0, 1, 'SUPERADMIN', '2026-01-01', '2026-01-01');
+      `);
+    }
+  } catch (e) {}
+
+  // 自動補齊既有 system_configs 之中文用途說明與新法規參數
   try {
     db.run(`UPDATE system_configs SET description = '法定營業稅率 (預設 5%)' WHERE configKey = 'TAX_RATE' AND (description IS NULL OR description = '');`);
     db.run(`UPDATE system_configs SET description = '發票稅額尾差容許值 (新台幣元)' WHERE configKey = 'FIN_TAX_TOLERANCE' AND (description IS NULL OR description = '');`);
     db.run(`UPDATE system_configs SET description = '工程估驗預設保留款扣留比例 (%)' WHERE configKey = 'DEFAULT_RETENTION_RATE' AND (description IS NULL OR description = '');`);
     db.run(`UPDATE system_configs SET description = '案場超支預算防呆鎖定模式 (STRICT 嚴格阻擋 / WARN 警示放行)' WHERE configKey = 'PROJECT_LOCK_MODE' AND (description IS NULL OR description = '');`);
     db.run(`UPDATE system_configs SET description = '二代健保補充保費法定扣繳費率' WHERE configKey = 'NHI_RATE' AND (description IS NULL OR description = '');`);
+
+    const termExists = db.exec(`SELECT id FROM system_configs WHERE configKey = 'PAYMENT_TERM_DAYS';`);
+    if (!termExists.length || !termExists[0].values.length) {
+      db.run(`INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
+        VALUES ('CFG-06', 'PAYMENT_TERM_DAYS', '30', '預設請款票期 / 付款天數 (天)', 'NUMBER', '2026-01-01', 0, 1, '系統初始', '2026-01-01', '2026-01-01');`);
+    }
+    const warExists = db.exec(`SELECT id FROM system_configs WHERE configKey = 'WARRANTY_MONTHS';`);
+    if (!warExists.length || !warExists[0].values.length) {
+      db.run(`INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
+        VALUES ('CFG-07', 'WARRANTY_MONTHS', '12', '預設工程保固期 (月數)', 'NUMBER', '2026-01-01', 0, 1, '系統初始', '2026-01-01', '2026-01-01');`);
+    }
   } catch (e) {}
 
   // 確保唯一最高 SUPERADMIN 具有帳號專人、全域參數與同階管理最高權限
@@ -3996,6 +4304,36 @@ export function ensureDatabaseIntegrity(db: Database) {
     console.error('Superadmin integrity check failed', e);
   }
 
+  // 升級檢測：為最高管理者賦予全集團法人管理特許，為資訊主任確保帳號管理特許與當前法人授權
+  try {
+    db.run(`UPDATE users SET canManageAllCompanies = 1 WHERE role = 'SUPERADMIN' OR id = 'USR-001';`);
+    db.run(`UPDATE users SET canManageUsers = 1, canManageAdmins = 1 WHERE id = 'USR-002';`);
+    
+    // 確保現存所有未刪除法人，同步授權給 USR-001 與 USR-002 (陳資訊主任)，避免管理員在基本資料剛新增之法人無法管理或刪除
+    const compRows = db.exec(`SELECT id FROM companies WHERE isDeleted = 0;`);
+    if (compRows.length && compRows[0].values.length) {
+      const activeCompIds = compRows[0].values.map(v => String(v[0]));
+      for (const targetUid of ['USR-001', 'USR-002']) {
+        const uRes = db.exec(`SELECT allowedCompanies FROM users WHERE id = '${targetUid}';`);
+        if (uRes.length && uRes[0].values.length) {
+          let comps: string[] = uRes[0].values[0][0] ? JSON.parse(String(uRes[0].values[0][0])) : ['COMP-01'];
+          let changed = false;
+          for (const cId of activeCompIds) {
+            if (!comps.includes(cId)) {
+              comps.push(cId);
+              changed = true;
+            }
+          }
+          if (changed) {
+            db.run(`UPDATE users SET allowedCompanies = '${JSON.stringify(comps)}' WHERE id = '${targetUid}';`);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Integrity sync for admin company access failed', e);
+  }
+
   // 自動清理舊版含英文代號之日誌，並將既有種子審計日誌升級為高可讀性純中文差異格式
   try {
     db.run(`
@@ -4115,7 +4453,7 @@ export function getAllUsers(): User[] {
   if (!dbInstance) return [];
   autoArchiveExpiredUsers();
   const res = dbInstance.exec(`
-    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, lastLoginAt, createdAt, updatedAt, deleteStage, stageDeletedAt, purgeDueAt, deletedBy, stageNotes 
+    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, lastLoginAt, createdAt, updatedAt, deleteStage, stageDeletedAt, purgeDueAt, deletedBy, stageNotes, canManageAllCompanies 
     FROM users 
     ORDER BY CASE role WHEN 'SUPERADMIN' THEN 1 WHEN 'ADMIN' THEN 2 ELSE 3 END, id ASC;
   `);
@@ -4141,6 +4479,7 @@ export function getAllUsers(): User[] {
       canManageUsers: Boolean(v[5]),
       canManageSystemConfigs: Boolean(v[6]),
       canManageAdmins: Boolean(v[7]),
+      canManageAllCompanies: Boolean(v[24]),
       groupId: groupId || groupIds[0],
       groupIds,
       status: (v[10] || 'ACTIVE') as User['status'],
@@ -4262,6 +4601,7 @@ export function createUser(
     canManageUsers?: boolean;
     canManageSystemConfigs?: boolean;
     canManageAdmins?: boolean;
+    canManageAllCompanies?: boolean;
     groupId?: string;
     groupIds?: string[];
     title?: string;
@@ -4308,6 +4648,7 @@ export function createUser(
   const canManageUserMgr = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageUsers)) ? 1 : 0;
   const canManageConfigs = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageSystemConfigs)) ? 1 : 0;
   const canManagePeers = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageAdmins)) ? 1 : 0;
+  const canManageAllComps = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageAllCompanies)) ? 1 : 0;
 
   const id = `USR-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
   const now = new Date().toISOString().substring(0, 10);
@@ -4320,8 +4661,8 @@ export function createUser(
   const pass = (newUser.password || '888888').replace(/'/g, "''");
 
   dbInstance.run(`
-    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
-    VALUES ('${id}', '${newUser.username.replace(/'/g, "''")}', '${newUser.fullName.replace(/'/g, "''")}', '${(newUser.email || '').replace(/'/g, "''")}', '${newUser.role}', ${canManageUserMgr}, ${canManageConfigs}, ${canManagePeers}, ${primaryGroupId}, ${groupIdsJson}, 'ACTIVE', ${title}, ${compsJson}, '${defComp}', '${pass}', 0, '${now}', '${now}');
+    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, canManageAllCompanies, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
+    VALUES ('${id}', '${newUser.username.replace(/'/g, "''")}', '${newUser.fullName.replace(/'/g, "''")}', '${(newUser.email || '').replace(/'/g, "''")}', '${newUser.role}', ${canManageUserMgr}, ${canManageConfigs}, ${canManagePeers}, ${canManageAllComps}, ${primaryGroupId}, ${groupIdsJson}, 'ACTIVE', ${title}, ${compsJson}, '${defComp}', '${pass}', 0, '${now}', '${now}');
   `);
 
   const createSummary: Record<string, string> = {
@@ -4336,6 +4677,7 @@ export function createUser(
     if (canManageUserMgr) createSummary['帳號管理專人特許'] = '開啟';
     if (canManageConfigs) createSummary['全域核心參數特許'] = '開啟';
     if (canManagePeers) createSummary['同階管理員維護特許'] = '開啟';
+    if (canManageAllComps) createSummary['全集團跨法人管理特許'] = '開啟';
   }
 
   logAudit(dbInstance, operatorName, '新增資料', '同仁帳號', newUser.fullName, undefined, createSummary, operatorName);
@@ -4352,6 +4694,7 @@ export function createUser(
     canManageUsers: Boolean(canManageUserMgr),
     canManageSystemConfigs: Boolean(canManageConfigs),
     canManageAdmins: Boolean(canManagePeers),
+    canManageAllCompanies: Boolean(canManageAllComps),
     groupId: selectedGroupIds[0],
     groupIds: selectedGroupIds,
     status: 'ACTIVE',
@@ -4375,6 +4718,7 @@ export function updateUser(
     canManageUsers?: boolean;
     canManageSystemConfigs?: boolean;
     canManageAdmins?: boolean;
+    canManageAllCompanies?: boolean;
     groupId?: string | null;
     groupIds?: string[];
     allowedCompanies?: string[];
@@ -4402,7 +4746,7 @@ export function updateUser(
 
   // 取得原目標帳號完整資料以便精準比對修改差異
   const currentRes = dbInstance.exec(`
-    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId 
+    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, canManageAllCompanies 
     FROM users WHERE id = '${updateData.id}';
   `);
   if (!currentRes.length || !currentRes[0].values.length) {
@@ -4416,6 +4760,7 @@ export function updateUser(
   const oldCanManageUsers = Boolean(oldRow[5]);
   const oldCanManageConfigs = Boolean(oldRow[6]);
   const oldCanManageAdmins = Boolean(oldRow[7]);
+  const oldCanManageAllCompanies = Boolean(oldRow[14]);
   let oldGroupIds: string[] = [];
   try {
     if (oldRow[9]) oldGroupIds = JSON.parse(String(oldRow[9]));
@@ -4548,9 +4893,16 @@ export function updateUser(
         afterDiff['同階管理員維護特許'] = updateData.canManageAdmins ? '開啟' : '關閉';
       }
     }
+    if (updateData.canManageAllCompanies !== undefined) {
+      updates.push(`canManageAllCompanies = ${updateData.canManageAllCompanies ? 1 : 0}`);
+      if (Boolean(updateData.canManageAllCompanies) !== oldCanManageAllCompanies) {
+        beforeDiff['全集團跨法人管理特許'] = oldCanManageAllCompanies ? '開啟' : '關閉';
+        afterDiff['全集團跨法人管理特許'] = updateData.canManageAllCompanies ? '開啟' : '關閉';
+      }
+    }
   } else {
     // 非 Superadmin 操作者：若試圖開啟特許則強制攔截，若未試圖開啟則自動忽略防禦性阻擋
-    if (updateData.canManageUsers || updateData.canManageSystemConfigs || updateData.canManageAdmins) {
+    if (updateData.canManageUsers || updateData.canManageSystemConfigs || updateData.canManageAdmins || updateData.canManageAllCompanies) {
       throw new Error('憲法權限防護：唯獨最高 Superadmin 才有權限授予管理員進階特許！');
     }
   }
