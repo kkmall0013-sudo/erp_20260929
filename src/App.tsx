@@ -26,8 +26,8 @@ import {
 export const App: React.FC = () => {
   const [isDbReady, setIsDbReady] = useState(false);
   
-  // 當前選取之左側導航功能 (優先聚焦：公司設定 COMPANY)
-  const [activeNavId, setActiveNavId] = useState<LeftNavId>('COMPANY');
+  // 當前選取之左側導航功能 (預設為全帳號通用之個人工作儀表板 DASHBOARD)
+  const [activeNavId, setActiveNavId] = useState<LeftNavId>('DASHBOARD');
   const [isLeftNavOpen, setIsLeftNavOpen] = useState(true);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('COMP-01');
 

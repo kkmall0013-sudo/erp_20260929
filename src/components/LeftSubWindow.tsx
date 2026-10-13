@@ -48,44 +48,10 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
   onSelect,
   isOpen = true,
 }) => {
-  const { currentUser, isSuperadmin, can } = useAuth();
+  const { currentUser, isSuperadmin, isAdmin, can } = useAuth();
   const hasUserManagementAccess = (isSuperadmin || Boolean(currentUser?.canManageUsers)) && currentUser?.status === 'ACTIVE';
 
-  // 檢查導航項目是否具備模組讀取權限
-  const checkNavReadAccess = (id: LeftNavId): boolean => {
-    if (!currentUser || currentUser.status === 'DISABLED') return false;
-    switch (id) {
-      case 'COMPANY':
-        return can('COMPANIES', 'read');
-      case 'USERS':
-        return hasUserManagementAccess;
-      case 'PROJECTS':
-        return can('PROJECTS', 'read');
-      case 'PARTNERS':
-        return can('PARTNERS', 'read');
-      case 'VAULT':
-        return true;
-      case 'QUOTATIONS':
-        return can('QUOTATIONS', 'read');
-      case 'PROCUREMENT':
-        return can('PURCHASE_ORDERS', 'read') || can('SUBCONTRACTS', 'read');
-      case 'VALUATIONS':
-        return can('VALUATIONS', 'read');
-      case 'FINANCE':
-        return can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('BANK_CHECKS', 'read');
-      case 'COMMAND_CENTER':
-        return can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('PROJECTS', 'read');
-      case 'SETTINGS':
-        return can('SYSTEM_CONFIGS', 'read');
-      case 'DASHBOARD':
-      case 'FLOWCHART':
-      case 'ROADMAP':
-      default:
-        return true;
-    }
-  };
-
-  // 對應截圖中經典的鼎新 A1 垂直圖示功能鍵 (優先聚焦：公司設定、帳號管理)
+  // 對應截圖中經典的鼎新 A1 垂直圖示功能鍵
   const navItems: {
     id: LeftNavId;
     label: string;
@@ -109,13 +75,70 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     { id: 'SETTINGS', label: '基本資料', icon: Sliders },
   ];
 
-  // 帳號管理專人防護：未獲 Superadmin 指定帳號管理權限者，完全自選單隱藏不可見
-  const visibleNavItems = navItems.filter(item => {
-    if (item.id === 'USERS' && !hasUserManagementAccess) {
-      return false;
+  // 檢查導航項目是否在當前登入帳號下可見 (嚴格分層：Superadmin / Admin / User PBAC)
+  const isNavVisibleForUser = (id: LeftNavId): boolean => {
+    if (!currentUser || currentUser.status === 'DISABLED') return false;
+
+    // 1. 【Superadmin 專屬範疇】：小程式庫 (MINI_APPS)、藍圖討論 (ROADMAP)
+    // 只有 Superadmin 登入時才看得見，其他角色 (Admin 或 一般同仁) 完全自左側選單隱藏
+    if (id === 'MINI_APPS' || id === 'ROADMAP') {
+      return isSuperadmin;
     }
-    return true;
-  });
+
+    // 2. 【Admin 範疇】：基本資料 (SETTINGS)、公司設定 (COMPANY)
+    // 屬於系統管理員與最高管理員範疇，一般同仁 (USER) 完全不顯示
+    if (id === 'COMPANY' || id === 'SETTINGS') {
+      return isSuperadmin || isAdmin;
+    }
+
+    // 3. 【帳號管理 (USERS)】：只有 Superadmin 或獲得特許授權之同仁可見
+    if (id === 'USERS') {
+      return hasUserManagementAccess;
+    }
+
+    // 4. 【流程地圖 (FLOWCHART)】：全域業務流程架構，僅限最高管理員與系統管理員檢視
+    if (id === 'FLOWCHART') {
+      return isSuperadmin || isAdmin;
+    }
+
+    // 5. 【核心業務表單 (PBAC 權限矩陣)】：
+    // 左側表單只出現該帳號所屬業務群組有被授權使用的選項 (無讀取權限者連看都看不到也無法選擇)
+    switch (id) {
+      case 'PROJECTS':
+        return isSuperadmin || isAdmin || can('PROJECTS', 'read');
+      case 'PARTNERS':
+        return isSuperadmin || isAdmin || can('PARTNERS', 'read');
+      case 'QUOTATIONS':
+        return isSuperadmin || isAdmin || can('QUOTATIONS', 'read');
+      case 'PROCUREMENT':
+        return isSuperadmin || isAdmin || can('PURCHASE_ORDERS', 'read') || can('SUBCONTRACTS', 'read');
+      case 'VALUATIONS':
+        return isSuperadmin || isAdmin || can('VALUATIONS', 'read');
+      case 'FINANCE':
+        return isSuperadmin || isAdmin || can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('BANK_CHECKS', 'read');
+      case 'COMMAND_CENTER':
+        return isSuperadmin || isAdmin || (can('FINANCE_AP', 'read') && can('PROJECTS', 'read'));
+      case 'VAULT':
+        return isSuperadmin || isAdmin || can('PROJECTS', 'read') || can('QUOTATIONS', 'read') || can('PURCHASE_ORDERS', 'read') || can('VALUATIONS', 'read') || can('PARTNERS', 'read');
+      case 'DASHBOARD':
+        return true; // 個人工作儀表板全體可用
+      default:
+        return false;
+    }
+  };
+
+  // 過濾出目前登入帳號「真正能看見並使用」的左側選單項目
+  const visibleNavItems = navItems.filter(item => isNavVisibleForUser(item.id));
+
+  // 當切換身分或重新整理時，若當前選取的 activeId 不在該帳號之可見清單內，自動安全跳轉至第一個合法項目 (如 DASHBOARD)
+  React.useEffect(() => {
+    if (visibleNavItems.length > 0 && !visibleNavItems.some(item => item.id === activeId)) {
+      const fallbackItem = visibleNavItems.find(it => it.id === 'DASHBOARD') || visibleNavItems[0];
+      if (fallbackItem) {
+        onSelect(fallbackItem.id);
+      }
+    }
+  }, [visibleNavItems, activeId, onSelect]);
 
   if (!isOpen) return null;
 
@@ -125,18 +148,15 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
         {visibleNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeId === item.id;
-          const hasRead = checkNavReadAccess(item.id);
 
           return (
             <button
               key={item.id}
               onClick={() => onSelect(item.id)}
-              title={hasRead ? item.label : `${item.label} (目前帳號無讀取權限)`}
+              title={item.label}
               className={`w-full py-2.5 px-1 flex flex-col items-center justify-center transition-all group relative cursor-pointer ${
                 isActive
                   ? 'bg-slate-100 text-indigo-700 font-bold border-l-3 border-indigo-600'
-                  : !hasRead
-                  ? 'text-slate-400 opacity-75 hover:bg-rose-50/50 hover:text-rose-600'
                   : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-50'
               }`}
             >
@@ -145,16 +165,10 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
                   className={`w-5 h-5 mb-1 transition-colors ${
                     isActive
                       ? 'text-indigo-600 stroke-[2.2]'
-                      : !hasRead
-                      ? 'text-slate-400 group-hover:text-rose-500'
                       : 'text-slate-500 group-hover:text-indigo-600'
                   }`}
                 />
-                {!hasRead ? (
-                  <span className="w-3.5 h-3.5 rounded-full bg-rose-100 text-rose-600 border border-rose-300 flex items-center justify-center absolute -top-1 -right-1.5 shadow-2xs">
-                    <Lock className="w-2 h-2" />
-                  </span>
-                ) : item.badgeCount !== undefined && item.badgeCount > 0 ? (
+                {item.badgeCount !== undefined && item.badgeCount > 0 ? (
                   <span className="w-2 h-2 rounded-full bg-rose-500 absolute -top-0.5 -right-0.5 ring-2 ring-white" />
                 ) : null}
               </div>
@@ -162,8 +176,6 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
                 className={`text-[10px] tracking-tight leading-tight text-center ${
                   isActive
                     ? 'text-indigo-700 font-bold'
-                    : !hasRead
-                    ? 'text-slate-400 group-hover:text-rose-600'
                     : 'text-slate-600 group-hover:text-slate-900'
                 }`}
               >

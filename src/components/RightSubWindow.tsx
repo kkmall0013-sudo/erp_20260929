@@ -89,7 +89,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   onSelectCompany,
   onReloadData,
 }) => {
-  const { currentUser, currentGroup, approvalLimit, isSuperadmin, can, checkApproval } = useAuth();
+  const { currentUser, currentGroup, approvalLimit, isSuperadmin, isAdmin, can, checkApproval } = useAuth();
   const hasUserManagementAccess = isSuperadmin || Boolean(currentUser?.canManageUsers);
 
   const [showFlowchartInline, setShowFlowchartInline] = useState(false);
@@ -120,13 +120,29 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   const canReadModule =
     activeNavId === 'USERS'
       ? hasUserManagementAccess
-      : ['DASHBOARD', 'FLOWCHART', 'ROADMAP'].includes(activeNavId)
+      : ['MINI_APPS', 'ROADMAP'].includes(activeNavId)
+      ? isSuperadmin
+      : ['COMPANY', 'SETTINGS'].includes(activeNavId)
+      ? isSuperadmin || isAdmin
+      : ['DASHBOARD', 'VAULT'].includes(activeNavId)
       ? true
+      : activeNavId === 'FLOWCHART'
+      ? isSuperadmin || isAdmin
       : activeNavId === 'PROCUREMENT'
       ? can('PURCHASE_ORDERS', 'read') || can('SUBCONTRACTS', 'read')
       : activeNavId === 'FINANCE'
       ? can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('BANK_CHECKS', 'read')
+      : activeNavId === 'COMMAND_CENTER'
+      ? isSuperadmin || isAdmin || (can('FINANCE_AP', 'read') && can('PROJECTS', 'read'))
       : can(currentModuleKey, 'read');
+
+  // 若當前所選項目為無權限模組，自動切換至個人儀表板，避免使用者看到空白或攔截頁
+  useEffect(() => {
+    if (!canReadModule && currentUser?.status === 'ACTIVE') {
+      onNavigateNav('DASHBOARD');
+    }
+  }, [canReadModule, currentUser, onNavigateNav]);
+
   const canWriteModule = can(currentModuleKey, 'write');
   const canApproveModule = can(currentModuleKey, 'approve');
   const canExportModule = can(currentModuleKey, 'export');
