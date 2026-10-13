@@ -42,7 +42,8 @@ import {
   FileLink,
   RestoreStrategy,
   ModularBackupPackage,
-  RestoreResult
+  RestoreResult,
+  RegulatorySchedule
 } from '../types/erp';
 
 declare global {
@@ -237,6 +238,19 @@ function initializeTables(db: Database) {
       sealedAt TEXT NOT NULL,
       sealedBy TEXT NOT NULL,
       description TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS regulatory_schedules (
+      id TEXT PRIMARY KEY,
+      configKey TEXT NOT NULL,
+      configLabel TEXT NOT NULL,
+      scheduledValue TEXT NOT NULL,
+      effectiveDate TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'SCHEDULED',
+      createdBy TEXT,
+      createdAt TEXT,
+      appliedAt TEXT,
+      notes TEXT
     );
 
     CREATE TABLE IF NOT EXISTS system_files (
@@ -766,7 +780,7 @@ export function seedInitialData(db: Database) {
   // 清理現有資料
   const tables = [
     'users', 'user_groups', 'group_module_permissions',
-    'app_configs', 'companies', 'system_configs', 'audit_logs', 'system_files', 'external_folder_links', 'file_links', 'projects', 'project_sites',
+    'app_configs', 'companies', 'system_configs', 'regulatory_schedules', 'audit_logs', 'system_files', 'external_folder_links', 'file_links', 'projects', 'project_sites',
     'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
     'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
@@ -815,7 +829,15 @@ export function seedInitialData(db: Database) {
       ('CFG-04', 'PROJECT_LOCK_MODE', 'STRICT', '案場超支預算防呆鎖定模式 (STRICT 嚴格阻擋 / WARN 警示放行)', 'STRING', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
       ('CFG-05', 'NHI_RATE', '0.0211', '二代健保補充保費法定扣繳費率', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
       ('CFG-06', 'PAYMENT_TERM_DAYS', '30', '預設請款票期 / 付款天數 (天)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
-      ('CFG-07', 'WARRANTY_MONTHS', '12', '預設工程保固期 (月數)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01');
+      ('CFG-07', 'WARRANTY_MONTHS', '12', '預設工程保固期 (月數)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01'),
+      ('CFG-08', 'MINIMUM_WAGE', '28590', '法定最低月薪基本工資 (新台幣元)', 'NUMBER', '2026-01-01', 0, 1, '黃副總經理', '2026-01-01', '2026-01-01');
+  `);
+
+  // 法規預約生效排程預設項目 (2027/01/01 最低基本工資自動調整預排)
+  db.run(`
+    INSERT INTO regulatory_schedules (id, configKey, configLabel, scheduledValue, effectiveDate, status, createdBy, createdAt, notes)
+    VALUES
+      ('SCHED-01', 'MINIMUM_WAGE', '法定最低月薪基本工資', '29500', '2027-01-01 00:00:00', 'SCHEDULED', '系統預排', '2026-01-01 00:00:00', '2027/01/01 法定最低基本工資調整預排 (由 28,590 調升至 29,500 元)');
   `);
 
   // 3. 商業夥伴 (業主、混凝土下包、鋼構廠、弱電機電)
@@ -1105,6 +1127,50 @@ export function executeCustomQuery(sqlQuery: string): { columns: string[]; value
   }));
 }
 
+// 取得資料庫中指定前綴之現存最大流水號碼 (防重號探測核心)
+export function getMaxExistingSequenceForPrefix(prefix: string, db?: Database): number {
+  const targetDb = db || dbInstance;
+  if (!targetDb) return 0;
+
+  const sequenceSources: { table: string; column: string }[] = [
+    { table: 'purchase_orders', column: 'poNumber' },
+    { table: 'valuations', column: 'valuationNumber' },
+    { table: 'quotations', column: 'quotationNumber' },
+    { table: 'accounts_payable', column: 'apNumber' },
+    { table: 'accounts_receivable', column: 'arNumber' },
+    { table: 'bank_checks', column: 'checkNumber' },
+    { table: 'projects', column: 'projectCode' },
+    { table: 'subcontracts', column: 'contractCode' }
+  ];
+
+  let maxNum = 0;
+  for (const src of sequenceSources) {
+    try {
+      const res = targetDb.exec(`
+        SELECT ${src.column} 
+        FROM ${src.table} 
+        WHERE ${src.column} LIKE '${prefix}-%';
+      `);
+      if (res.length && res[0].values.length) {
+        for (const row of res[0].values) {
+          const val = String(row[0] || '').trim();
+          const lastDash = val.lastIndexOf('-');
+          if (lastDash > 0) {
+            const numPart = parseInt(val.substring(lastDash + 1), 10);
+            if (!isNaN(numPart) && numPart > maxNum) {
+              maxNum = numPart;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Table or column might not exist yet
+    }
+  }
+
+  return maxNum;
+}
+
 // ============================================================================
 // 🏛️ 單據跳號自癒校準 (Sequence Reseed Engine)
 // ============================================================================
@@ -1152,20 +1218,64 @@ export function reseedDocumentSequences(db?: Database): void {
   }
 }
 
-// 取得下一個單據號碼
+// 檢查特定完整單據號碼 (例如 AP-202603-009) 是否已被任一業務單據表使用
+export function checkIfDocumentNumberExists(docNumber: string, db?: Database): boolean {
+  const targetDb = db || dbInstance;
+  if (!targetDb) return false;
+
+  const sequenceSources: { table: string; column: string }[] = [
+    { table: 'purchase_orders', column: 'poNumber' },
+    { table: 'valuations', column: 'valuationNumber' },
+    { table: 'quotations', column: 'quotationNumber' },
+    { table: 'accounts_payable', column: 'apNumber' },
+    { table: 'accounts_receivable', column: 'arNumber' },
+    { table: 'bank_checks', column: 'checkNumber' },
+    { table: 'projects', column: 'projectCode' },
+    { table: 'subcontracts', column: 'contractCode' }
+  ];
+
+  for (const src of sequenceSources) {
+    try {
+      const res = targetDb.exec(`SELECT count(*) FROM ${src.table} WHERE ${src.column} = '${docNumber}';`);
+      if (res.length && res[0].values.length && Number(res[0].values[0][0]) > 0) {
+        return true;
+      }
+    } catch (_) {}
+  }
+  return false;
+}
+
+// 取得下一個單據號碼（具備防重號自動跳空躍升防碰撞機制）
 export function getNextSequenceNumber(prefix: string, padLength = 3): string {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
   const now = new Date().toISOString();
+
+  // 1. 取得資料庫中該前綴之實際最大流水號
+  const maxExisting = getMaxExistingSequenceForPrefix(prefix, dbInstance);
+
+  // 2. 讀取目前計數器
+  const seqRes = dbInstance.exec(`SELECT currentVal FROM document_sequences WHERE prefix = '${prefix}';`);
+  const currentDbVal = seqRes.length && seqRes[0].values.length ? Number(seqRes[0].values[0][0] || 0) : 0;
+
+  // 3. 下一個候選號碼至少為 Math.max(currentDbVal, maxExisting) + 1
+  let nextVal = Math.max(currentDbVal, maxExisting) + 1;
+  let candidate = `${prefix}-${String(nextVal).padStart(padLength, '0')}`;
+
+  // 4. 防碰撞自動跳空躍升迴圈：若此號碼在歷史單據中已存在（例如先前曾手動跳號產生過），自動躍升跳過，絕不撞號！
+  let safetyLoopLimit = 1000;
+  while (checkIfDocumentNumberExists(candidate, dbInstance) && safetyLoopLimit-- > 0) {
+    nextVal++;
+    candidate = `${prefix}-${String(nextVal).padStart(padLength, '0')}`;
+  }
+
   dbInstance.run(`
     INSERT INTO document_sequences (prefix, currentVal, updatedAt)
-    VALUES ('${prefix}', 1, '${now}')
+    VALUES ('${prefix}', ${nextVal}, '${now}')
     ON CONFLICT(prefix) DO UPDATE SET
-      currentVal = currentVal + 1,
+      currentVal = ${nextVal},
       updatedAt = '${now}';
   `);
-  const res = dbInstance.exec(`SELECT currentVal FROM document_sequences WHERE prefix = '${prefix}';`);
-  const currentVal = Number(res[0]?.values[0]?.[0] || 1);
-  return `${prefix}-${String(currentVal).padStart(padLength, '0')}`;
+  return candidate;
 }
 
 // ============================================================================
@@ -1348,10 +1458,11 @@ export function exportModularBackup(
     'PARTNERS': ['business_partners', 'items'],
     'QUOTATIONS': ['quotations', 'quotation_revisions', 'quotation_items', 'quotation_billing_milestones'],
     'PURCHASE_ORDERS': ['purchase_orders', 'purchase_order_items'],
+    'PURCHASE': ['purchase_orders', 'purchase_order_items'],
     'SUBCONTRACTS': ['subcontracts'],
     'VALUATIONS': ['valuations', 'valuation_items'],
     'FINANCE': ['accounts_payable', 'accounts_receivable', 'bank_checks'],
-    'SYSTEM_CONFIGS': ['app_configs', 'system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences'],
+    'SYSTEM_CONFIGS': ['app_configs', 'system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences', 'regulatory_schedules'],
     'ARCHIVES': ['annual_archive_snapshots'],
     'FILES': ['system_files']
   };
@@ -1656,7 +1767,7 @@ export function getDatabaseModuleStats(): {
     { key: 'SUBCONTRACTS', name: '工程承攬合約主檔', tables: ['subcontracts'] },
     { key: 'VALUATIONS', name: '下包工程估驗計價', tables: ['valuations', 'valuation_items'] },
     { key: 'FINANCE', name: '財務會計與應收付票據', tables: ['accounts_payable', 'accounts_receivable', 'bank_checks'] },
-    { key: 'SYSTEM_CONFIGS', name: '全域參數、權限與跳號', tables: ['system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences'] },
+    { key: 'SYSTEM_CONFIGS', name: '全域參數、權限與跳號', tables: ['system_configs', 'user_groups', 'group_module_permissions', 'users', 'document_sequences', 'regulatory_schedules'] },
     { key: 'ARCHIVES', name: '年度唯讀封存快照紀錄', tables: ['annual_archive_snapshots'] },
     { key: 'FILES', name: '無紙化附件金庫索引', tables: ['system_files'] }
   ];
@@ -3540,6 +3651,8 @@ export function getAllBankChecks(): BankCheck[] {
 // 讀取全域參數
 export function getAllSystemConfigs(): SystemConfig[] {
   if (!dbInstance) return [];
+  // 自動偵測並觸發已到期的法規排程生效
+  applyDueRegulatorySchedules();
   const res = dbInstance.exec(`
     SELECT id, configKey, configValue, valueType, validFrom, validTo, isDeleted, version, description, updatedBy, createdAt, updatedAt
     FROM system_configs WHERE isDeleted = 0;
@@ -3727,35 +3840,283 @@ export function getAllDocumentSequences(): DocumentSequence[] {
   if (!dbInstance) return [];
   const res = dbInstance.exec(`SELECT prefix, currentVal, updatedAt FROM document_sequences ORDER BY prefix ASC;`);
   if (!res.length) return [];
-  return res[0].values.map(v => ({
-    prefix: String(v[0]),
-    currentVal: Number(v[1] || 0),
-    updatedAt: String(v[2] || ''),
-  }));
+  return res[0].values.map(v => {
+    const prefix = String(v[0]);
+    const currentVal = Number(v[1] || 0);
+    const maxExisting = getMaxExistingSequenceForPrefix(prefix, dbInstance!);
+    const nextVal = Math.max(currentVal, maxExisting) + 1;
+    return {
+      prefix,
+      currentVal,
+      maxExistingVal: maxExisting,
+      nextVal,
+      updatedAt: String(v[2] || ''),
+    };
+  });
 }
 
-export function updateDocumentSequence(
+// 校正「下一個發放流水號」（管理者直接指定下一筆開出的號碼，例如指定 9，下一筆即發放 009）
+export function updateNextSequenceNumber(
   prefix: string,
-  newVal: number,
+  targetNextVal: number,
   operatorName = '系統管理者'
 ): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
+
+  // 🛡️ 防重號與防回溯鐵律檢核：下一個發放號碼必須大於現存已使用的最大單號
+  const maxUsed = getMaxExistingSequenceForPrefix(prefix, dbInstance);
+  if (targetNextVal <= maxUsed) {
+    throw new Error(
+      `【單據防重號鐵律】校正失敗！前綴 [${prefix}] 現存單據已使用至最大序號 [${String(maxUsed).padStart(3, '0')}]。\n` +
+      `下一個發放流水號不得小於或等於已使用的現存最大單號，必須 >= ${maxUsed + 1} 號！\n` +
+      `（您輸入了 ${targetNextVal}，但歷史單據中已存在該號碼，嚴格禁止回溯重用）`
+    );
+  }
+
+  // 內部 currentVal 設為 targetNextVal - 1，這樣 getNextSequenceNumber 發放時即為 targetNextVal
+  const internalVal = targetNextVal - 1;
   const now = new Date().toISOString();
   dbInstance.run(`
     INSERT INTO document_sequences (prefix, currentVal, updatedAt)
-    VALUES ('${prefix}', ${newVal}, '${now}')
+    VALUES ('${prefix}', ${internalVal}, '${now}')
     ON CONFLICT(prefix) DO UPDATE SET
-      currentVal = ${newVal},
+      currentVal = ${internalVal},
       updatedAt = '${now}';
   `);
   logAudit(
     dbInstance,
     operatorName,
-    '修改單據跳號',
+    '校正下一個流水號',
     '單據流水號規則',
     `前綴 [${prefix}]`,
-    { 前綴: prefix },
-    { 前綴: prefix, 最新流水號: newVal },
+    { 前綴: prefix, 原現存最大單號: maxUsed },
+    { 前綴: prefix, 下一個開立流水號: targetNextVal },
+    operatorName
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// 相容舊函式呼叫
+export function updateDocumentSequence(
+  prefix: string,
+  newVal: number,
+  operatorName = '系統管理者'
+): void {
+  updateNextSequenceNumber(prefix, newVal, operatorName);
+}
+
+// 單項自動校正：將單一前綴校準至「現存最大單號 + 1」
+export function autoCalibrateSequence(
+  prefix: string,
+  operatorName = '系統管理者'
+): number {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const maxUsed = getMaxExistingSequenceForPrefix(prefix, dbInstance);
+  const now = new Date().toISOString();
+
+  dbInstance.run(`
+    INSERT INTO document_sequences (prefix, currentVal, updatedAt)
+    VALUES ('${prefix}', ${maxUsed}, '${now}')
+    ON CONFLICT(prefix) DO UPDATE SET
+      currentVal = ${maxUsed},
+      updatedAt = '${now}';
+  `);
+
+  logAudit(
+    dbInstance,
+    operatorName,
+    '自動校正單據流水號',
+    '單據流水號規則',
+    `前綴 [${prefix}]`,
+    { 前綴: prefix, 現存最大單號: maxUsed },
+    { 前綴: prefix, 自動校準下一個流水號: maxUsed + 1 },
+    operatorName
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return maxUsed + 1;
+}
+
+// 全域一鍵自動校正：掃描全模組業務單據表，重置所有前綴為「現存最大單號」
+export function autoCalibrateAllSequences(operatorName = '系統管理者'): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  reseedDocumentSequences(dbInstance);
+  logAudit(
+    dbInstance,
+    operatorName,
+    '一鍵自動校正全系統跳號',
+    '單據流水號規則',
+    '全模組單據流水號',
+    {},
+    { 說明: '掃描全庫所有業務單據表，重設所有前綴計數器為現存最大號' },
+    operatorName
+  );
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// ============================================================================
+// ⏰ 法規與稅率預約生效排程中樞 (Regulatory Schedules)
+// ============================================================================
+export function applyDueRegulatorySchedules(db?: Database): number {
+  const targetDb = db || dbInstance;
+  if (!targetDb) return 0;
+
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const nowDateOnly = now.substring(0, 10);
+
+  try {
+    const res = targetDb.exec(`
+      SELECT id, configKey, configLabel, scheduledValue, effectiveDate, notes
+      FROM regulatory_schedules
+      WHERE status = 'SCHEDULED' AND (effectiveDate <= '${now}' OR effectiveDate <= '${nowDateOnly}');
+    `);
+
+    if (!res.length || !res[0].values.length) return 0;
+
+    let appliedCount = 0;
+    for (const row of res[0].values) {
+      const id = String(row[0]);
+      const configKey = String(row[1]);
+      const configLabel = String(row[2]);
+      const scheduledValue = String(row[3]);
+      const notes = row[5] ? String(row[5]) : '';
+
+      targetDb.run(`
+        UPDATE system_configs
+        SET configValue = '${scheduledValue.replace(/'/g, "''")}',
+            version = version + 1,
+            updatedBy = '自動法規排程引擎',
+            updatedAt = '${now}'
+        WHERE configKey = '${configKey}';
+      `);
+
+      targetDb.run(`
+        UPDATE regulatory_schedules
+        SET status = 'APPLIED',
+            appliedAt = '${now}'
+        WHERE id = '${id}';
+      `);
+
+      try {
+        logAudit(
+          targetDb,
+          '系統排程守護程序',
+          '法規排程自動生效',
+          '營運法規中樞',
+          configLabel,
+          { 參數代碼: configKey },
+          { 參數代碼: configKey, 自動套用新值: scheduledValue, 備註: notes },
+          '系統自動執行'
+        );
+      } catch (_) {}
+
+      appliedCount++;
+    }
+
+    if (appliedCount > 0 && targetDb === dbInstance) {
+      saveDatabaseSnapshot();
+      notifyListeners();
+    }
+    return appliedCount;
+  } catch (_) {
+    return 0;
+  }
+}
+
+export function getRegulatorySchedules(): RegulatorySchedule[] {
+  if (!dbInstance) return [];
+  applyDueRegulatorySchedules();
+
+  try {
+    const res = dbInstance.exec(`
+      SELECT id, configKey, configLabel, scheduledValue, effectiveDate, status, createdBy, createdAt, appliedAt, notes
+      FROM regulatory_schedules
+      ORDER BY effectiveDate ASC, createdAt DESC;
+    `);
+    if (!res.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      configKey: String(v[1]),
+      configLabel: String(v[2]),
+      scheduledValue: String(v[3]),
+      effectiveDate: String(v[4]),
+      status: v[5] as RegulatorySchedule['status'],
+      createdBy: v[6] ? String(v[6]) : undefined,
+      createdAt: v[7] ? String(v[7]) : undefined,
+      appliedAt: v[8] ? String(v[8]) : undefined,
+      notes: v[9] ? String(v[9]) : undefined,
+    }));
+  } catch (_) {
+    return [];
+  }
+}
+
+export function createRegulatorySchedule(data: {
+  configKey: string;
+  configLabel: string;
+  scheduledValue: string;
+  effectiveDate: string;
+  notes?: string;
+  operatorName?: string;
+}): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const id = `SCHED-${Date.now()}`;
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const operator = data.operatorName || '系統管理員';
+
+  dbInstance.run(`
+    INSERT INTO regulatory_schedules (id, configKey, configLabel, scheduledValue, effectiveDate, status, createdBy, createdAt, notes)
+    VALUES (
+      '${id}',
+      '${data.configKey}',
+      '${data.configLabel.replace(/'/g, "''")}',
+      '${data.scheduledValue.replace(/'/g, "''")}',
+      '${data.effectiveDate}',
+      'SCHEDULED',
+      '${operator.replace(/'/g, "''")}',
+      '${now}',
+      ${data.notes ? `'${data.notes.replace(/'/g, "''")}'` : 'NULL'}
+    );
+  `);
+
+  logAudit(
+    dbInstance,
+    operator,
+    '新增法規生效排程',
+    '法規排程中樞',
+    data.configLabel,
+    {},
+    {
+      參數代碼: data.configKey,
+      預定新值: data.scheduledValue,
+      預定生效時間: data.effectiveDate,
+      備註: data.notes
+    },
+    operator
+  );
+
+  applyDueRegulatorySchedules();
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+export function cancelRegulatorySchedule(id: string, operatorName = '系統管理員'): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  dbInstance.run(`
+    UPDATE regulatory_schedules
+    SET status = 'CANCELLED'
+    WHERE id = '${id}' AND status = 'SCHEDULED';
+  `);
+  logAudit(
+    dbInstance,
+    operatorName,
+    '取消法規生效排程',
+    '法規排程中樞',
+    `排程 ID [${id}]`,
+    { 排程ID: id },
+    { 狀態: 'CANCELLED' },
     operatorName
   );
   saveDatabaseSnapshot();
@@ -4056,10 +4417,33 @@ export function ensureDatabaseIntegrity(db: Database) {
       db.run(`INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
         VALUES ('CFG-06', 'PAYMENT_TERM_DAYS', '30', '預設請款票期 / 付款天數 (天)', 'NUMBER', '2026-01-01', 0, 1, '系統初始', '2026-01-01', '2026-01-01');`);
     }
-    const warExists = db.exec(`SELECT id FROM system_configs WHERE configKey = 'WARRANTY_MONTHS';`);
-    if (!warExists.length || !warExists[0].values.length) {
+    const minWageExists = db.exec(`SELECT id FROM system_configs WHERE configKey = 'MINIMUM_WAGE';`);
+    if (!minWageExists.length || !minWageExists[0].values.length) {
       db.run(`INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
-        VALUES ('CFG-07', 'WARRANTY_MONTHS', '12', '預設工程保固期 (月數)', 'NUMBER', '2026-01-01', 0, 1, '系統初始', '2026-01-01', '2026-01-01');`);
+        VALUES ('CFG-08', 'MINIMUM_WAGE', '28590', '法定最低月薪基本工資 (新台幣元)', 'NUMBER', '2026-01-01', 0, 1, '系統初始', '2026-01-01', '2026-01-01');`);
+    }
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS regulatory_schedules (
+        id TEXT PRIMARY KEY,
+        configKey TEXT NOT NULL,
+        configLabel TEXT NOT NULL,
+        scheduledValue TEXT NOT NULL,
+        effectiveDate TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'SCHEDULED',
+        createdBy TEXT,
+        createdAt TEXT,
+        appliedAt TEXT,
+        notes TEXT
+      );
+    `);
+
+    const schedCount = db.exec(`SELECT count(*) FROM regulatory_schedules;`);
+    if (!schedCount.length || !schedCount[0].values.length || Number(schedCount[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO regulatory_schedules (id, configKey, configLabel, scheduledValue, effectiveDate, status, createdBy, createdAt, notes)
+        VALUES ('SCHED-01', 'MINIMUM_WAGE', '法定最低月薪基本工資', '29500', '2027-01-01 00:00:00', 'SCHEDULED', '系統預排', '2026-01-01 00:00:00', '2027/01/01 法定最低基本工資調整預排 (由 28,590 調升至 29,500 元)');
+      `);
     }
   } catch (e) {}
 

@@ -6,13 +6,19 @@
 
 ## 全域參數與數據防禦
 
-### DocumentSequence｜單據跳號
+### DocumentSequence｜單據跳號與流水號引擎 (`document_sequences`)
 
 | 欄位 | 用途 |
 |---|---|
-| `prefix` | 單據編號前綴及流水號分組鍵，例如 `PO-202405`。 |
-| `currentVal` | 該前綴已使用的流水號，透過列鎖及原子更新避免重號。 |
-| `updatedAt` | 流水號最近更新時間。 |
+| `prefix` | 單據編號前綴及流水號分組鍵，例如 `PO-202405`、`AP-202603`、`VAL-202604`。 |
+| `currentVal` | 該前綴已使用的最新流水號，透過資料庫交易與原子更新防重號。 |
+| `updatedAt` | 流水號最近跳號或校正時間戳記。 |
+
+> **🛡️ 單據跳號內控與防衝碼四大鐵律 (Document Sequence Anti-Duplicate & Discipline)**：
+> 1. **禁止往前回溯鐵律 (Anti-Rollback Rule)**：單據編號具備法律與會計不可逆性，**嚴格禁止手動或校正將計數器回退至小於等於資料庫中該前綴已存在單據的最大號**！Admin 於介面點擊「校正」時，系統強制自動掃描業務表現存最大單號；若輸入值試圖回退，系統即時彈窗攔截，徹底杜絕舊號覆寫或撞號。
+> 2. **允許往後跳號放行 (Gap Jumping Permitted)**：因業務需要、跨月歸檔或廢號跳號，系統**允許往後跳號（如自 002 跳號至 005）**，保證靈活性但絕不允許重複。
+> 3. **產號自動防碰撞自癒 (Auto-Collision Avoidance)**：`getNextSequenceNumber(prefix)` 產號引擎在生成 `${prefix}-${seq}` 時，主動向底層資料庫探測該單號是否存在；若存在（如曾手動補單），引擎自動自增跳過該序號，保證核發之號碼 100% 未曾使用。
+> 4. **實體主表底層 UNIQUE 鐵壁**：全系統單據表（`purchase_orders.poNumber`, `accounts_payable.apNumber`, `accounts_receivable.arNumber`, `valuations.valuationNumber`, `quotations.quotationNumber`, `bank_checks.checkNumber`, `projects.projectCode`, `subcontracts.contractCode`）均在資料庫標配 `UNIQUE NOT NULL` 約束，形成雙重物理保障。
 
 ### 🛡️ 全系統欄位重複性審核與既有欄位重用對照總表 (Field Deduplication & Reuse Audit)
 
@@ -58,7 +64,7 @@
 | 欄位 | 用途 |
 |---|---|
 | `id` | 參數資料列識別碼（如 `CFG-01`）。 |
-| `configKey` | 參數唯一鍵名，依業務分為四大分類：<br>**【一、法定稅制與健保規章】**：<br>• `TAX_RATE`：法定營業稅率（預設 5%，政府修法時 Admin 直接調整）。<br>• `FIN_TAX_TOLERANCE`：發票稅額尾差容許值（新台幣元，預設 5 元）。<br>• `NHI_RATE`：二代健保補充保費法定扣繳費率（預設 2.11%）。<br>• `STAMP_DUTY_RATE`：法定印花稅率（預設 0.1% 或 0.4%）。<br>**【二、工程合約與內控營運慣例】**：<br>• `DEFAULT_RETENTION_RATE`：工程估驗預設保留款扣留比例（預設 5% 或 10%）。<br>• `PROJECT_LOCK_MODE`：案場超支預算防呆模式（`STRICT` 嚴格阻擋 / `WARN` 警示放行）。<br>• `DEFAULT_PAYMENT_TERMS_DAYS`：預設付款與票期天數（預設 30 天）。<br>• `DEFAULT_WARRANTY_MONTHS`：預設工程合約保固期（月數，預設 12 個月）。 |
+| `configKey` | 參數唯一鍵名，依業務分為四大分類：<br>**【一、法定稅制與健保勞動規章】**：<br>• `TAX_RATE`：法定營業稅率（預設 5%，政府修法時 Admin 直接調整）。<br>• `FIN_TAX_TOLERANCE`：發票稅額尾差容許值（新台幣元，預設 5 元）。<br>• `NHI_RATE`：二代健保補充保費法定扣繳費率（預設 2.11%）。<br>• `MINIMUM_WAGE`：法定最低基本工資（預設 28,590 元 / 時薪 190 元，供人事薪資、勞健保底線與未來法規調整預備）。<br>• `STAMP_DUTY_RATE`：法定印花稅率（預設 0.1% 或 0.4%）。<br>**【二、工程合約與內控營運慣例】**：<br>• `DEFAULT_RETENTION_RATE`：工程估驗預設保留款扣留比例（預設 5% 或 10%）。<br>• `PROJECT_LOCK_MODE`：案場超支預算防呆模式（`STRICT` 嚴格阻擋 / `WARN` 警示放行）。<br>• `DEFAULT_PAYMENT_TERMS_DAYS` / `PAYMENT_TERM_DAYS`：預設付款與請款票期天數（支援輸入天數，或開關切換為 `0` / `DISABLED` 關閉票期，代表「無票期 · 即期付款 / 現金電匯」，合約估驗到期日直接等於核定日）。<br>• `DEFAULT_WARRANTY_MONTHS`：預設工程合約保固期（月數，預設 12 個月）。 |
 | `configValue` | 參數值，以字串保存並依 `valueType` 轉換。 |
 | `description` | 參數中文名稱與用途說明（供基本資料控制台與純中文審計日誌直接顯示）。 |
 | `valueType` | 值型別：`STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
@@ -68,6 +74,25 @@
 | `version` | 樂觀鎖版本號（預設 `1`，每次更新自動 `+1`）。 |
 | `updatedBy` | 最近更新此參數之 Admin 姓名快照。 |
 | `createdAt`、`updatedAt` | 建立及最近更新日期時間。 |
+
+---
+
+### RegulatorySchedule｜營運法規未來預約生效排程 (`regulatory_schedules`)
+
+> **架構定位**：**【法規公布預先輸入 · 時間到達自動無痛平滑切換】**。專門解決政府法規（如基本工資由 28,590 調整至新版、二代健保費率調整）皆事先公告、於未來指定時點（如 2027/01/01 00:00）才正式施行的痛點。Admin 接獲消息可提前登錄排程，系統時間到達自動生效，完全無需管理人員於當天凌晨手動熬夜修改！
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 排程識別碼（如 `SCH-REG-20270101-01`）。 |
+| `configKey` | 目標參數唯一鍵名（如 `MINIMUM_WAGE`、`NHI_RATE`、`TAX_RATE`、`DEFAULT_RETENTION_RATE`）。 |
+| `scheduledValue` | 預約生效之新設定值（如 `29500`、`2.5%`）。 |
+| `currentValueSnapshot` | 排程建立當下的既有舊設定值快照。 |
+| `effectiveDate` | 預定實施生效時間戳記（精確至分秒，格式 `YYYY-MM-DD HH:mm:ss`，如 `2027-01-01 00:00:00`）。 |
+| `status` | 排程執行狀態：<br>• `SCHEDULED`：已預約，等待實施時間到達。<br>• `APPLIED`：已到達生效時間，系統已自動無痛切換過帳。<br>• `CANCELLED`：因政令取消或人工作廢。 |
+| `description` | 法規排程緣由說明（如「依勞動部公告 2027/01/01 起實施新最低基本工資調漲」）。 |
+| `appliedAt` | 系統自動套用生效之實際執行時間戳記（未生效為 `NULL`）。 |
+| `createdBy` | 排程建立者 Admin 姓名快照。 |
+| `createdAt`、`updatedAt` | 排程建立與最近更新時間。 |
 
 ### AuditLog｜全域安全審計日誌 (`audit_logs`)
 
@@ -117,6 +142,13 @@
 | `sealedAt` | 封存鎖死建立完成時間戳記（毫秒級 ISO-8601）。 |
 | `sealedBy` | 執行封存授權操作之最高管理員 ID。 |
 | `description` | 封存備註說明（如「2025 年度完工驗收與已結算單據封存」）。 |
+
+> **🏛️ 基本資料中樞「資料庫安全與歸檔備份」實體化渲染規範 (Database Hub UI Full Embedding)**：
+> - 基本資料營運法規中樞之「資料庫安全與歸檔備份」分頁，**嚴格禁止僅放空按鈕或空跳轉卡片**！
+> - 該分頁必須直接內嵌實體渲染以下三大區塊：
+>   1. **全系統 12 大模組即時健康度與資料量看板**：動態列出專案、商業夥伴、報價、採購單、估驗計價、財務會計、系統參數各表即時資料筆數與儲存水位。
+>   2. **歷年唯讀封存快照實體清冊 (Annual Archives Registry)**：完整列出 2010～2026 年（及後續各年）之封存快照紀錄（年度、檔名、封存時間、記錄總筆數、SHA-256 指紋、狀態「已鎖定封存」、一鍵檢視與獨立下載）。
+>   3. **模組化時段選擇性備份面板 (Time-Filtered Modular Backup)**：支援勾選模組，並提供「全部歷史 / 指定單一年份 / 自訂日期區間」時段過濾，匯出獨立 `.json` 備份包，並支援冪等狀態機還原。
 
 ### 全系統通用實體規範：三柱版本與毫秒時間戳記 (Idempotent Standard)
 

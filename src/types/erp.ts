@@ -149,7 +149,22 @@ export interface AuditLog {
 export interface DocumentSequence {
   prefix: string;
   currentVal: number;
+  maxExistingVal?: number;
+  nextVal: number;
   updatedAt: string;
+}
+
+export interface RegulatorySchedule {
+  id: string;
+  configKey: string;
+  configLabel: string;
+  scheduledValue: string;
+  effectiveDate: string;
+  status: 'SCHEDULED' | 'APPLIED' | 'CANCELLED';
+  createdBy?: string;
+  createdAt?: string;
+  appliedAt?: string;
+  notes?: string;
 }
 
 export interface Project {
