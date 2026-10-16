@@ -32,7 +32,11 @@ import {
   ChevronUp,
   Settings2,
   CalendarDays,
-  FileCheck2
+  FileCheck2,
+  Terminal,
+  FileText,
+  Wrench,
+  CheckCheck
 } from 'lucide-react';
 import {
   Company,
@@ -50,6 +54,7 @@ import {
   getAllDocumentModuleStatuses,
   getAllDocumentSequenceRules,
   updateDocumentSequenceRule,
+  validateDocumentPrefixConflict,
   reserveNextMonthSequence,
   autoCalibrateAllDocumentSequences,
   updateDocumentSequence,
@@ -63,7 +68,8 @@ import {
   cancelRegulatorySchedule,
   getDatabaseModuleStats,
   getAnnualArchiveSnapshots,
-  createAnnualArchiveSnapshot
+  createAnnualArchiveSnapshot,
+  reseedDocumentSequences
 } from '../db/sqlite';
 import { useAuth } from '../context/AuthContext';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
@@ -119,6 +125,10 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
   const [sequenceViewMode, setSequenceViewMode] = useState<'MONITOR' | 'RULES'>('MONITOR');
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
   const [editingRule, setEditingRule] = useState<DocumentSequenceRule | null>(null);
+
+  // 🎭 雙角色視圖分流狀態 (Admin 業務主管視角 vs Superadmin 程式設計師深度視角)
+  const [simulateAdminView, setSimulateAdminView] = useState(false);
+  const [superadminSubTab, setSuperadminSubTab] = useState<'RULES' | 'DIAGNOSTICS' | 'LEGACY_AUDIT' | 'BACKUP_CONSISTENCY'>('RULES');
 
   // 資料庫模組統計與年度封存清冊
   const [moduleStats, setModuleStats] = useState<Array<{ moduleKey: string; moduleName: string; tables: string[]; totalRecords: number }>>([]);
@@ -363,6 +373,22 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
       onDataChanged();
     } catch (err: any) {
       triggerToast(`⛔ 自動校準失敗：${err.message || String(err)}`);
+    }
+  };
+
+  // 💾 備份還原後全域指針重新對齊 (Post-Restore Re-seed)
+  const handleReseedAfterRestore = () => {
+    if (!isSuperadmin) {
+      triggerToast('⛔ 權限攔截：僅最高管理員 (Superadmin) 可執行底層指針重置！');
+      return;
+    }
+    try {
+      reseedDocumentSequences();
+      loadData();
+      triggerToast('✅ 已完成全庫單據指針重置！已根據資料庫現存所有業務單據實體記錄，重新對齊計數器至最新流水號，確保還原後新增單據 100% 不撞號。');
+      onDataChanged();
+    } catch (err: any) {
+      triggerToast(`⛔ 指針重置失敗：${err.message || String(err)}`);
     }
   };
 
@@ -951,507 +977,889 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
           </div>
         )}
 
-        {/* 分頁 4：單據編碼與自動產號中樞 (零手動 · 智能防撞自癒) */}
-        {activeTab === 'SEQUENCES' && (
-          <div className="p-6 space-y-6">
-            {/* 核心架構原則宣告橫幅 */}
-            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-6 border border-indigo-900/50 shadow-md">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 bg-indigo-500/20 border border-indigo-400/30 rounded-xl text-indigo-300">
-                      <Sparkles className="w-5 h-5 text-indigo-300" />
-                    </div>
-                    <div>
-                      <h3 className="text-base font-bold text-white tracking-wide flex items-center gap-2">
-                        <span>單據編碼與自動產號中樞</span>
-                        <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono">
-                          全自動循序配號 · 零人為手動干預
-                        </span>
-                      </h3>
-                      <p className="text-xs text-slate-300 mt-0.5">
-                        日常開單由系統依業務規則與當前時間自主配號，徹底杜絕手動跳號紊亂、人為竄改與重號碰撞
-                      </p>
-                    </div>
-                  </div>
+        {/* 分頁 4：單據編碼與自動產號中樞 (Admin 業務主管視角 vs Superadmin 程式設計師視角) */}
+        {activeTab === 'SEQUENCES' && (() => {
+          const isSuperadminMode = isSuperadmin && !simulateAdminView;
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs text-slate-300">
-                    <div className="flex items-start gap-2 bg-white/5 rounded-lg p-2.5 border border-white/10">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+          return (
+            <div className="p-6 space-y-6">
+              {/* ------------------------------------------------------------------ */}
+              {/* 💼 A. 業務主管視角 (Admin View)                                    */}
+              {/* ------------------------------------------------------------------ */}
+              {!isSuperadminMode && (
+                <div className="space-y-6">
+                  {/* Superadmin 預覽提示條 */}
+                  {isSuperadmin && simulateAdminView && (
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-indigo-900 shadow-2xs">
+                      <div className="flex items-center gap-2">
+                        <Info className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span>您目前正以<strong>【業務主管簡約視角 (Admin View)】</strong>預覽。此模式為公司主管設計，僅呈現公司編碼政策，已隱藏所有底層除錯指標與計數器。</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSimulateAdminView(false)}
+                        className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer shadow-xs shrink-0"
+                      >
+                        返回程式設計師深度模式 ➔
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 業務主管抬頭橫幅 (純粹、清晰、制度化) */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-600">
+                        <FileText className="w-5 h-5 text-indigo-600" />
+                      </div>
                       <div>
-                        <strong className="text-white block font-bold">1. 高可讀性業務編碼</strong>
-                        <span>如 <code className="text-amber-300 font-mono">AP-202610-001</code>，一眼辨識業務模組、開單年月與序列號。</span>
+                        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                          <span>公司單據編碼規範設定 (Document Numbering Policy)</span>
+                          <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 font-semibold">
+                            💼 業務主管視角 (Admin)
+                          </span>
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          為全公司各營運模組制定單據代碼前綴、日期格式、流水號碼長與分隔符。同仁開單時系統一律在背景自動依此規範循序配號，免人為手動干預。
+                        </p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-2 bg-white/5 rounded-lg p-2.5 border border-white/10">
-                      <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+
+                    <div className="text-xs text-slate-500 font-mono flex items-center gap-2 self-start md:self-auto bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 shrink-0">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span>當前開單期別：<strong>{new Date().getFullYear()} 年 {String(new Date().getMonth() + 1).padStart(2, '0')} 月</strong></span>
+                    </div>
+                  </div>
+
+                  {/* 業務主管單一清晰規範清冊 */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
-                        <strong className="text-white block font-bold">2. 歷史過往月份嚴格鎖定</strong>
-                        <span>過往月份（如 202603、202604）單據已入帳結算，系統自動封存鎖定，嚴禁回溯開單。</span>
+                        <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-indigo-600" />
+                          <span>各業務模組編碼規範總表 (Document Taxonomy Rules)</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          調整規則將立即套用於後續新開立之單據，過往歷史已開單據依法定會計原則自動永久保留原樣。
+                        </p>
                       </div>
+                      <span className="text-xs text-slate-600 font-mono font-bold bg-white px-2.5 py-1 rounded-lg border border-slate-200 self-start sm:self-auto">
+                        共 {sequenceRules.length} 個業務模組
+                      </span>
                     </div>
-                    <div className="flex items-start gap-2 bg-white/5 rounded-lg p-2.5 border border-white/10">
-                      <CalendarDays className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                      <div>
-                        <strong className="text-white block font-bold">3. 次月預開單獨立整備</strong>
-                        <span>針對下月提早預備開單需求，系統獨立預備次月起號指針，絕不干擾當月作業。</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
 
-                <div className="flex flex-col sm:flex-row lg:flex-col items-stretch lg:items-end gap-2.5 shrink-0">
-                  {/* 一鍵全域自動安全校準按鈕 */}
-                  <button
-                    type="button"
-                    onClick={handleAutoCalibrateAllHub}
-                    disabled={!canWriteModule}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer hover:shadow-lg active:scale-98"
-                  >
-                    <Zap className="w-4 h-4 text-slate-950 fill-slate-950" />
-                    <span>⚡ 全域單號智能巡檢與防撞自癒</span>
-                  </button>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-200">
+                            <th className="p-3.5">業務單據模組</th>
+                            <th className="p-3.5">前綴代碼 Prefix</th>
+                            <th className="p-3.5">日期格式段</th>
+                            <th className="p-3.5">分隔符號</th>
+                            <th className="p-3.5">流水號長度</th>
+                            <th className="p-3.5">自動重設週期</th>
+                            <th className="p-3.5">下筆開單效果預覽</th>
+                            <th className="p-3.5 text-right">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {sequenceRules.map(rule => {
+                            const status = moduleStatuses.find(s => s.moduleKey === rule.moduleKey);
+                            const delim = rule.delimiter;
+                            const dateSample = rule.dateFormat === 'YYYYMM' ? '202610' : rule.dateFormat === 'YYYY' ? '2026' : rule.dateFormat === 'YYYYMMDD' ? '20261014' : '';
+                            const serialSample = String(status ? status.currentPeriodNextVal : 1).padStart(rule.serialLength, '0');
+                            const previewDoc = status ? status.currentPeriodNextDoc : (dateSample ? `${rule.prefix}${delim}${dateSample}${delim}${serialSample}` : `${rule.prefix}${delim}${serialSample}`);
 
-                  <div className="text-[11px] text-slate-400 text-right">
-                    自動掃描全庫真實單據表記錄，防碰撞指針自動對齊
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 控制列：子頁籤切換 (即時看板 vs 規則自訂) */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSequenceViewMode('MONITOR')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                    sequenceViewMode === 'MONITOR'
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>當期業務模組產號即時看板 (Live Periods)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSequenceViewMode('RULES')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                    sequenceViewMode === 'RULES'
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  <Settings2 className="w-3.5 h-3.5" />
-                  <span>模組編碼規則維護 (Rule Settings)</span>
-                </button>
-              </div>
-
-              <div className="text-xs text-slate-500 flex items-center gap-2">
-                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>系統當前開單期別：<strong>{new Date().getFullYear()} 年 {String(new Date().getMonth() + 1).padStart(2, '0')} 月</strong></span>
-              </div>
-            </div>
-
-            {/* 視圖 A：當期業務模組產號即時監控看板 (清單列表模式) */}
-            {sequenceViewMode === 'MONITOR' && (
-              <div className="space-y-4">
-                <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-                  <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-indigo-600" />
-                        <span>業務模組產號即時清單 (Live Module Sequences List)</span>
-                      </h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        即時呈現各模組當期最大已開單號、系統下筆自動配發單號、次月整備與歷史歸檔狀態
-                      </p>
-                    </div>
-                    <span className="text-[11px] font-mono text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200 self-start sm:self-auto">
-                      共 {moduleStatuses.length} 個業務模組
-                    </span>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-slate-100/80 text-slate-700 font-bold border-b border-slate-200">
-                          <th className="p-3.5">業務模組</th>
-                          <th className="p-3.5">當期有效期別</th>
-                          <th className="p-3.5">本期已開立最大號</th>
-                          <th className="p-3.5">下筆系統自動配號</th>
-                          <th className="p-3.5">次月預開整備 (Next Month)</th>
-                          <th className="p-3.5">歷史已結案月份歸檔</th>
-                          <th className="p-3.5">編碼規範</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {moduleStatuses.map(mod => {
-                          const isHistoryExpanded = expandedHistory[mod.moduleKey] || false;
-                          const hasHistory = mod.historicalPeriods && mod.historicalPeriods.length > 0;
-
-                          return (
-                            <React.Fragment key={mod.moduleKey}>
-                              <tr className="hover:bg-slate-50/80 transition-colors">
-                                {/* 1. 業務模組 */}
+                            return (
+                              <tr key={rule.moduleKey} className="hover:bg-slate-50/90 transition-colors">
                                 <td className="p-3.5 align-middle">
-                                  <div className="flex items-center gap-2.5">
-                                    <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-900 text-amber-300 border border-slate-800 shrink-0">
-                                      {mod.prefix}
-                                    </span>
-                                    <div>
-                                      <div className="font-bold text-slate-900 leading-tight">
-                                        {mod.moduleName}
-                                      </div>
-                                      <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
-                                        {mod.rule.description || '標準營造工程業務單據'}
-                                      </div>
-                                    </div>
+                                  <div className="font-bold text-slate-900">{rule.moduleName}</div>
+                                  <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                                    {rule.description || '營造業務單據標準規範'}
                                   </div>
                                 </td>
-
-                                {/* 2. 當期有效期間 */}
                                 <td className="p-3.5 align-middle">
-                                  <div className="space-y-1">
-                                    <span className="font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-xs">
-                                      {mod.currentPeriod}
-                                    </span>
-                                    <div className="flex items-center gap-1 text-[10px] text-emerald-700 font-bold">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                      <span>自動配號中</span>
-                                    </div>
-                                  </div>
-                                </td>
-
-                                {/* 3. 本期已開立最大單號 */}
-                                <td className="p-3.5 align-middle font-mono">
-                                  {mod.currentPeriodLatestDoc ? (
-                                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 font-bold">
-                                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                                      <span>{mod.currentPeriodLatestDoc}</span>
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-400 italic font-sans text-[11px]">
-                                      本期尚未開單
-                                    </span>
-                                  )}
-                                </td>
-
-                                {/* 4. 下筆系統自動配發單號 */}
-                                <td className="p-3.5 align-middle font-mono">
-                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold text-xs shadow-2xs">
-                                    <Zap className="w-3.5 h-3.5 text-indigo-600 fill-indigo-600 shrink-0" />
-                                    <span>{mod.currentPeriodNextDoc}</span>
+                                  <span className="font-mono text-xs font-bold px-2.5 py-1 rounded bg-slate-900 text-amber-300 border border-slate-800">
+                                    {rule.prefix}
                                   </span>
                                 </td>
-
-                                {/* 5. 次月預開整備 */}
-                                <td className="p-3.5 align-middle">
-                                  <div className="flex items-center gap-2">
-                                    <div className="text-[11px] font-mono">
-                                      <span className="text-slate-500 block text-[10px] font-sans">次月預定起號:</span>
-                                      <span className="font-bold text-indigo-950">{mod.nextMonthReservedNextDoc}</span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleReserveNextMonth(mod.moduleKey)}
-                                      disabled={!canWriteModule}
-                                      title="預先在資料庫登記次月起號指針，防止下月開單重號"
-                                      className="px-2 py-1 rounded bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 font-bold text-[10px] border border-indigo-200 transition-colors cursor-pointer shrink-0"
-                                    >
-                                      預備起號
-                                    </button>
-                                  </div>
+                                <td className="p-3.5 align-middle font-mono text-slate-700">
+                                  {rule.dateFormat === 'NONE' ? '無日期段 (純流水號)' : rule.dateFormat}
                                 </td>
-
-                                {/* 6. 歷史歸檔月份 */}
-                                <td className="p-3.5 align-middle">
-                                  {hasHistory ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleHistoryExpanded(mod.moduleKey)}
-                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold border border-slate-200 transition-colors cursor-pointer"
-                                    >
-                                      <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-                                      <span>歷史歸檔 ({mod.historicalPeriods.length} 期)</span>
-                                      {isHistoryExpanded ? <ChevronUp className="w-3 h-3 text-slate-500" /> : <ChevronDown className="w-3 h-3 text-slate-500" />}
-                                    </button>
-                                  ) : (
-                                    <span className="text-slate-400 text-[11px]">無歷史月份</span>
-                                  )}
+                                <td className="p-3.5 align-middle font-mono text-slate-700">
+                                  {rule.delimiter ? `[ ${rule.delimiter} ]` : '無'}
                                 </td>
-
-                                {/* 7. 編碼規則規範 */}
-                                <td className="p-3.5 align-middle">
-                                  <div className="font-mono text-[11px] text-slate-600">
-                                    <span>{mod.rule.prefix}{mod.rule.delimiter}{mod.rule.dateFormat}{mod.rule.delimiter}{mod.rule.serialLength}碼</span>
-                                    <span className="block font-sans text-[10px] text-slate-400">
-                                      {mod.rule.resetFrequency === 'MONTHLY' ? '每月重設' : mod.rule.resetFrequency === 'YEARLY' ? '每年重設' : '永久累計'}
-                                    </span>
-                                  </div>
+                                <td className="p-3.5 align-middle font-mono text-slate-700">
+                                  {rule.serialLength} 碼
+                                </td>
+                                <td className="p-3.5 align-middle text-slate-700">
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                                    {rule.resetFrequency === 'MONTHLY' ? '每月歸零重設' : rule.resetFrequency === 'YEARLY' ? '每年歸零重設' : '永久累計'}
+                                  </span>
+                                </td>
+                                <td className="p-3.5 align-middle font-mono">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold text-xs shadow-2xs">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                    <span>{previewDoc}</span>
+                                  </span>
+                                </td>
+                                <td className="p-3.5 align-middle text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingRule({ ...rule })}
+                                    disabled={!canWriteModule}
+                                    className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white font-bold text-xs transition-colors cursor-pointer border border-indigo-200 shadow-2xs"
+                                  >
+                                    修改規範
+                                  </button>
                                 </td>
                               </tr>
-
-                              {/* 展開之歷史月份清單抽屜 */}
-                              {isHistoryExpanded && hasHistory && (
-                                <tr className="bg-slate-50/80">
-                                  <td colSpan={7} className="p-3.5 pl-12 border-t border-slate-200/60">
-                                    <div className="bg-white rounded-lg p-3 border border-slate-200 space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
-                                          <Lock className="w-3.5 h-3.5 text-slate-400" />
-                                          <span>【{mod.moduleName}】過往歷史月份單據封存清冊 (唯讀鎖定保護，禁止回溯改號)：</span>
-                                        </span>
-                                        <span className="text-[10px] text-slate-400 font-mono">
-                                          已於結案時封存
-                                        </span>
-                                      </div>
-
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-                                        {mod.historicalPeriods.map(h => (
-                                          <div
-                                            key={h.period}
-                                            className="flex items-center justify-between p-2 rounded bg-slate-50 border border-slate-200 text-xs font-mono"
-                                          >
-                                            <div>
-                                              <span className="font-bold text-slate-800 block">{h.period} 期</span>
-                                              <span className="text-[11px] text-slate-600">{h.latestDoc}</span>
-                                            </div>
-                                            <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-sans flex items-center gap-0.5 shrink-0">
-                                              <Lock className="w-2.5 h-2.5" /> 鎖定
-                                            </span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* 視圖 B：模組編碼規則維護 */}
-            {sequenceViewMode === 'RULES' && (
-              <div className="space-y-4">
-                <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-                  <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                        <Settings2 className="w-4 h-4 text-indigo-600" />
-                        <span>業務模組編碼規則主檔維護 (Rule Configurations)</span>
-                      </h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        自訂各業務別代碼前綴、破折號分隔符、日期格式及流水號碼長（支援即時格式預覽）
-                      </p>
+              {/* ------------------------------------------------------------------ */}
+              {/* 👷‍♂️ B. 程式設計師 / 架構師深度除錯視角 (Superadmin View)              */}
+              {/* ------------------------------------------------------------------ */}
+              {isSuperadminMode && (
+                <div className="space-y-6">
+                  {/* Superadmin 核心控管橫幅 */}
+                  <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-6 border border-indigo-500/30 shadow-md">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 bg-indigo-500/20 border border-indigo-400/30 rounded-xl text-indigo-300">
+                            <Terminal className="w-5 h-5 text-indigo-300" />
+                          </div>
+                          <div>
+                            <h3 className="text-base font-bold text-white tracking-wide flex items-center gap-2">
+                              <span>單據編碼架構與底層產號診斷中樞</span>
+                              <span className="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono font-bold">
+                                👷‍♂️ 程式設計師 / 架構師深度除錯視角 (Superadmin Mode)
+                              </span>
+                            </h3>
+                            <p className="text-xs text-slate-300 mt-0.5">
+                              全模組編碼主檔維護、底層資料庫指針即時監控、歷史期別舊單匯入防撞審計、備份還原一致性保障
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+                        {/* 視角切換器 */}
+                        <button
+                          type="button"
+                          onClick={() => setSimulateAdminView(true)}
+                          className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors border border-white/15 cursor-pointer"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-indigo-300" />
+                          <span>切換至業務主管簡約視角 (Admin View)</span>
+                        </button>
+
+                        {/* 一鍵全域自動安全校準按鈕 */}
+                        <button
+                          type="button"
+                          onClick={handleAutoCalibrateAllHub}
+                          disabled={!canWriteModule}
+                          className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer hover:shadow-lg active:scale-98"
+                        >
+                          <Zap className="w-4 h-4 text-slate-950 fill-slate-950" />
+                          <span>⚡ 全域單號智能巡檢與防撞自癒</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                          <th className="p-3">模組代號</th>
-                          <th className="p-3">業務單據名稱</th>
-                          <th className="p-3">前綴 Prefix</th>
-                          <th className="p-3">日期格式</th>
-                          <th className="p-3">分隔符</th>
-                          <th className="p-3">流水號長度</th>
-                          <th className="p-3">歸零週期</th>
-                          <th className="p-3">格式預覽範例</th>
-                          <th className="p-3 text-right">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {sequenceRules.map(rule => {
-                          const delim = rule.delimiter;
-                          const dateSample = rule.dateFormat === 'YYYYMM' ? '202610' : rule.dateFormat === 'YYYY' ? '2026' : rule.dateFormat === 'YYYYMMDD' ? '20261014' : '';
-                          const serialSample = String(1).padStart(rule.serialLength, '0');
-                          const sample = dateSample ? `${rule.prefix}${delim}${dateSample}${delim}${serialSample}` : `${rule.prefix}${delim}${serialSample}`;
-
-                          return (
-                            <tr key={rule.moduleKey} className="hover:bg-slate-50 transition-colors">
-                              <td className="p-3 font-mono font-bold text-indigo-900">{rule.moduleKey}</td>
-                              <td className="p-3 font-bold text-slate-800">{rule.moduleName}</td>
-                              <td className="p-3 font-mono font-bold bg-slate-100 px-2 rounded w-min">{rule.prefix}</td>
-                              <td className="p-3 font-mono text-slate-600">{rule.dateFormat}</td>
-                              <td className="p-3 font-mono text-slate-600">{rule.delimiter ? `[ ${rule.delimiter} ]` : '無'}</td>
-                              <td className="p-3 font-mono text-slate-600">{rule.serialLength} 碼</td>
-                              <td className="p-3">
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                                  {rule.resetFrequency === 'MONTHLY' ? '每月歸零重設' : rule.resetFrequency === 'YEARLY' ? '每年歸零重設' : '永久累計'}
-                                </span>
-                              </td>
-                              <td className="p-3">
-                                <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 text-xs">
-                                  {sample}
-                                </span>
-                              </td>
-                              <td className="p-3 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingRule({ ...rule })}
-                                  disabled={!canWriteModule}
-                                  className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white font-bold text-xs transition-colors cursor-pointer"
-                                >
-                                  修改規則
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* 彈出式規則編輯對話框 */}
-            {editingRule && (
-              <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Settings2 className="w-5 h-5 text-indigo-400" />
-                      <h3 className="font-bold text-sm">自訂單據編碼規則 - 【{editingRule.moduleName}】</h3>
-                    </div>
+                  {/* Superadmin 4 大技術維護子分頁導覽 */}
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
                     <button
                       type="button"
-                      onClick={() => setEditingRule(null)}
-                      className="text-slate-400 hover:text-white cursor-pointer"
+                      onClick={() => setSuperadminSubTab('RULES')}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        superadminSubTab === 'RULES'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
                     >
-                      ✕
+                      <Settings2 className="w-3.5 h-3.5" />
+                      <span>📋 業務編碼規則主檔 (Rule Policy)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSuperadminSubTab('DIAGNOSTICS')}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        superadminSubTab === 'DIAGNOSTICS'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      <span>⚡ 底層指針監控與防撞自癒 (Runtime Pointer Diagnostics)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSuperadminSubTab('LEGACY_AUDIT')}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        superadminSubTab === 'LEGACY_AUDIT'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Archive className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>🗄️ 歷史期別封存與舊資料匯入防撞審計 (Legacy Audit)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSuperadminSubTab('BACKUP_CONSISTENCY')}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        superadminSubTab === 'BACKUP_CONSISTENCY'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Database className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>💾 備份還原單號一致性與災難復原保障 (Backup & Restore)</span>
                     </button>
                   </div>
 
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      handleSaveRule(editingRule);
-                    }}
-                    className="p-6 space-y-4 text-xs"
-                  >
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">業務前綴代碼 (Prefix):</label>
-                      <input
-                        type="text"
-                        value={editingRule.prefix}
-                        onChange={(e) => setEditingRule(prev => prev ? { ...prev, prefix: e.target.value.toUpperCase() } : null)}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono font-bold uppercase text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
-                      />
-                    </div>
+                  {/* 視圖 1：業務編碼規則主檔 (Rule Policy) */}
+                  {superadminSubTab === 'RULES' && (
+                    <div className="space-y-4">
+                      {/* 衝突預防與編碼變更安全機制指引 */}
+                      <div className="bg-slate-900 text-white rounded-xl p-5 border border-slate-800 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0" />
+                          <h4 className="text-xs font-bold text-white tracking-wide">
+                            模組編碼規則變更與防衝突安全機制 (Prefix Rule Changes & Collision Safeguard)
+                          </h4>
+                        </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">日期格式段:</label>
-                        <select
-                          value={editingRule.dateFormat}
-                          onChange={(e) => setEditingRule(prev => prev ? { ...prev, dateFormat: e.target.value as any } : null)}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
-                        >
-                          <option value="YYYYMM">YYYYMM (西元年月份，如 202610)</option>
-                          <option value="YYYY">YYYY (西元年份，如 2026)</option>
-                          <option value="YYYYMMDD">YYYYMMDD (年月日，如 20261014)</option>
-                          <option value="NONE">無日期段 (純前綴)</option>
-                        </select>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-300">
+                          <div className="bg-white/5 rounded-lg p-3 border border-white/10 space-y-1">
+                            <strong className="text-amber-300 font-bold block flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>情境 1：舊前綴 AP 改為全新前綴 PP</span>
+                            </strong>
+                            <p className="text-[11px] leading-relaxed text-slate-300">
+                              歷史開立的單據（如 <code className="text-amber-200 font-mono">AP-202603-001</code>）屬於法定會計憑證，資料庫主鍵<strong>永久保留不變</strong>；變更後新建立的應付帳款單據將一律套用新前綴，自動從第一號 <code className="text-emerald-300 font-mono">PP-202610-001</code> 順暢接續開單，絕不出事。
+                            </p>
+                          </div>
+
+                          <div className="bg-white/5 rounded-lg p-3 border border-white/10 space-y-1">
+                            <strong className="text-rose-300 font-bold block flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                              <span>情境 2：將 AP 改為已存在前綴 AR</span>
+                            </strong>
+                            <p className="text-[11px] leading-relaxed text-slate-300">
+                              若 AP 改為 AR，將導致應付帳款與應收帳款單號重疊衝突。系統已內建<strong>「全域唯一性鎖定」</strong>與<strong>「跨表歷史碰撞預檢」</strong>，在輸入當下即刻嚴格阻擋並報警，強制禁用儲存，從根源徹底杜絕衝突！
+                            </p>
+                          </div>
+
+                          <div className="bg-white/5 rounded-lg p-3 border border-white/10 space-y-1">
+                            <strong className="text-indigo-300 font-bold block flex items-center gap-1.5">
+                              <Lock className="w-3.5 h-3.5 text-indigo-400" />
+                              <span>歷史已結案月份不在此陳列</span>
+                            </strong>
+                            <p className="text-[11px] leading-relaxed text-slate-300">
+                              過往歷史月份單據既已結案入帳，為法定不可竄改資料。規則制定中樞專注於「當前與未來開單規格設定」，免除 10 年歷史過往資料佔滿畫面與無效干擾。
+                            </p>
+                          </div>
+                        </div>
                       </div>
 
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">分隔符號 (Delimiter):</label>
-                        <select
-                          value={editingRule.delimiter}
-                          onChange={(e) => setEditingRule(prev => prev ? { ...prev, delimiter: e.target.value as any } : null)}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
-                        >
-                          <option value="-">破折號 [ - ] (如 AP-202610-001)</option>
-                          <option value="">無分隔符 (如 AP202610001)</option>
-                          <option value="_">底線 [ _ ] (如 AP_202610_001)</option>
-                        </select>
+                      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                          <div>
+                            <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                              <Settings2 className="w-4 h-4 text-indigo-600" />
+                              <span>業務模組編碼規則主檔維護 (Rule Configurations)</span>
+                            </h4>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              自訂各業務別代碼前綴、破折號分隔符、日期格式及流水號碼長（支援即時格式預覽與全域防重衝突校驗）
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                                <th className="p-3">模組代號</th>
+                                <th className="p-3">業務單據名稱</th>
+                                <th className="p-3">前綴 Prefix</th>
+                                <th className="p-3">日期格式</th>
+                                <th className="p-3">分隔符</th>
+                                <th className="p-3">流水號長度</th>
+                                <th className="p-3">歸零週期</th>
+                                <th className="p-3">格式預覽範例</th>
+                                <th className="p-3 text-right">操作</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              {sequenceRules.map(rule => {
+                                const delim = rule.delimiter;
+                                const dateSample = rule.dateFormat === 'YYYYMM' ? '202610' : rule.dateFormat === 'YYYY' ? '2026' : rule.dateFormat === 'YYYYMMDD' ? '20261014' : '';
+                                const serialSample = String(1).padStart(rule.serialLength, '0');
+                                const sample = dateSample ? `${rule.prefix}${delim}${dateSample}${delim}${serialSample}` : `${rule.prefix}${delim}${serialSample}`;
+
+                                return (
+                                  <tr key={rule.moduleKey} className="hover:bg-slate-50 transition-colors">
+                                    <td className="p-3 font-mono font-bold text-indigo-900">{rule.moduleKey}</td>
+                                    <td className="p-3 font-bold text-slate-800">{rule.moduleName}</td>
+                                    <td className="p-3 font-mono font-bold bg-slate-100 px-2 rounded w-min">{rule.prefix}</td>
+                                    <td className="p-3 font-mono text-slate-600">{rule.dateFormat}</td>
+                                    <td className="p-3 font-mono text-slate-600">{rule.delimiter ? `[ ${rule.delimiter} ]` : '無'}</td>
+                                    <td className="p-3 font-mono text-slate-600">{rule.serialLength} 碼</td>
+                                    <td className="p-3">
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                                        {rule.resetFrequency === 'MONTHLY' ? '每月歸零重設' : rule.resetFrequency === 'YEARLY' ? '每年歸零重設' : '永久累計'}
+                                      </span>
+                                    </td>
+                                    <td className="p-3">
+                                      <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 text-xs">
+                                        {sample}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingRule({ ...rule })}
+                                        disabled={!canWriteModule}
+                                        className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white font-bold text-xs transition-colors cursor-pointer"
+                                      >
+                                        修改規則
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">流水號碼長 (Serial Digits):</label>
-                        <select
-                          value={editingRule.serialLength}
-                          onChange={(e) => setEditingRule(prev => prev ? { ...prev, serialLength: parseInt(e.target.value, 10) } : null)}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
-                        >
-                          <option value={2}>2 碼 (如 01 ~ 99)</option>
-                          <option value={3}>3 碼 (如 001 ~ 999 - 推薦)</option>
-                          <option value={4}>4 碼 (如 0001 ~ 9999)</option>
-                          <option value={6}>6 碼 (如 000001 ~ 999999)</option>
-                        </select>
+                  {/* 視圖 2：底層指針監控與防撞自癒 (Runtime Pointer Diagnostics) */}
+                  {superadminSubTab === 'DIAGNOSTICS' && (
+                    <div className="space-y-4">
+                      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                              <Zap className="w-4 h-4 text-amber-500" />
+                              <span>底層資料庫產號指針深度監控 (Raw DB Sequences & Pointers)</span>
+                            </h4>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              直接透視 SQLite <code className="font-mono font-bold text-slate-700">document_sequences</code> 表指針與業務資料庫實體表記錄之對齊狀況
+                            </p>
+                          </div>
+                          <span className="text-xs font-mono font-bold text-slate-600 bg-white px-2.5 py-1 rounded-lg border border-slate-200 self-start sm:self-auto">
+                            即時診斷中
+                          </span>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                                <th className="p-3">模組 Key</th>
+                                <th className="p-3">前綴指針 Key (Prefix)</th>
+                                <th className="p-3">實體表最大已用號</th>
+                                <th className="p-3">DB 目前計數值</th>
+                                <th className="p-3">下筆預計配發單號</th>
+                                <th className="p-3">次月整備 (Next Month)</th>
+                                <th className="p-3">指針健康診斷</th>
+                                <th className="p-3 text-right">操作</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              {moduleStatuses.map(mod => {
+                                const isAligned = mod.currentPeriodNextVal > mod.currentPeriodMaxVal;
+
+                                return (
+                                  <tr key={mod.moduleKey} className="hover:bg-slate-50 transition-colors font-mono">
+                                    <td className="p-3 font-sans font-bold text-slate-800">
+                                      {mod.moduleName} ({mod.moduleKey})
+                                    </td>
+                                    <td className="p-3 font-bold text-indigo-900">
+                                      {mod.currentPeriodPrefix}
+                                    </td>
+                                    <td className="p-3">
+                                      {mod.currentPeriodLatestDoc ? (
+                                        <span className="text-slate-800 font-bold">{mod.currentPeriodLatestDoc} ({mod.currentPeriodMaxVal}號)</span>
+                                      ) : (
+                                        <span className="text-slate-400 font-sans italic text-[11px]">無紀錄 (0)</span>
+                                      )}
+                                    </td>
+                                    <td className="p-3 font-bold text-slate-700">
+                                      {mod.currentPeriodNextVal - 1}
+                                    </td>
+                                    <td className="p-3">
+                                      <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold">
+                                        {mod.currentPeriodNextDoc}
+                                      </span>
+                                    </td>
+                                    <td className="p-3">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-slate-600">{mod.nextMonthReservedNextDoc}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleReserveNextMonth(mod.moduleKey)}
+                                          disabled={!canWriteModule}
+                                          className="px-2 py-0.5 rounded bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-700 text-[10px] font-sans font-bold border border-slate-200 cursor-pointer transition-colors"
+                                        >
+                                          預約次月
+                                        </button>
+                                      </div>
+                                    </td>
+                                    <td className="p-3 font-sans">
+                                      {isAligned ? (
+                                        <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                          <CheckCheck className="w-3.5 h-3.5" /> 指針健康對齊
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                          <AlertCircle className="w-3.5 h-3.5" /> 建議校準自癒
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="p-3 font-sans text-right">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingRule({ ...mod.rule })}
+                                        disabled={!canWriteModule}
+                                        className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 cursor-pointer"
+                                      >
+                                        調整
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 視圖 3：歷史期別封存與舊資料匯入防撞審計 (Legacy Audit) */}
+                  {superadminSubTab === 'LEGACY_AUDIT' && (
+                    <div className="space-y-4">
+                      {/* 舊資料匯入與歷史資料遷移專屬指引 */}
+                      <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 space-y-2 text-xs">
+                        <div className="flex items-center gap-2 font-bold text-sm text-indigo-950">
+                          <Archive className="w-4 h-4 text-indigo-600" />
+                          <span>舊系統資料轉移／外部歷史帳目匯入防撞審計指引</span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-indigo-800">
+                          過往歷史月份單據在法律與會計上已結算封存，嚴禁回溯改號。若公司需自外部舊系統（如舊 ERP、Excel 請款帳冊）批次匯入過往歷史單據時，<strong>請在此查核該期別已存在之最大單號</strong>，杜絕外部舊單號衝撞現有資料庫主鍵（Primary Key Collision）。
+                        </p>
                       </div>
 
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">自動歸零重設週期:</label>
-                        <select
-                          value={editingRule.resetFrequency}
-                          onChange={(e) => setEditingRule(prev => prev ? { ...prev, resetFrequency: e.target.value as any } : null)}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-300 text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
-                        >
-                          <option value="MONTHLY">每月歸零重設 (依月份從 001 開始)</option>
-                          <option value="YEARLY">每年歸零重設 (跨年從 001 開始)</option>
-                          <option value="NEVER">永久不重設 (連續累計)</option>
-                        </select>
+                      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                          <div>
+                            <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                              <Archive className="w-4 h-4 text-indigo-600" />
+                              <span>全模組過往歷史已結案月份資料清冊</span>
+                            </h4>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              唯讀鎖定狀態，提供歷史審計與舊資料批次匯入之單號範圍參考
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse font-mono">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 font-sans font-bold border-b border-slate-200">
+                                <th className="p-3">業務模組</th>
+                                <th className="p-3">歷史已結案期別</th>
+                                <th className="p-3">前綴指針 Key</th>
+                                <th className="p-3">歷史已開最大單號</th>
+                                <th className="p-3">封存記錄數</th>
+                                <th className="p-3">封存鎖定狀態</th>
+                                <th className="p-3">外部舊單匯入安全建議</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              {(() => {
+                                const allHist: Array<{
+                                  moduleName: string;
+                                  moduleKey: string;
+                                  period: string;
+                                  prefixKey: string;
+                                  latestDoc: string;
+                                  maxVal: number;
+                                  count: number;
+                                }> = [];
+
+                                moduleStatuses.forEach(m => {
+                                  if (m.historicalPeriods) {
+                                    m.historicalPeriods.forEach(h => {
+                                      allHist.push({
+                                        moduleName: m.moduleName,
+                                        moduleKey: m.moduleKey,
+                                        period: h.period,
+                                        prefixKey: h.prefixKey,
+                                        latestDoc: h.latestDoc,
+                                        maxVal: h.maxVal,
+                                        count: h.count
+                                      });
+                                    });
+                                  }
+                                });
+
+                                if (allHist.length === 0) {
+                                  return (
+                                    <tr>
+                                      <td colSpan={7} className="p-6 text-center text-slate-400 font-sans">
+                                        目前系統中無歷史結案期別紀錄。
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+
+                                return allHist.map((h, idx) => (
+                                  <tr key={`${h.moduleKey}-${h.period}-${idx}`} className="hover:bg-slate-50 transition-colors">
+                                    <td className="p-3 font-sans font-bold text-slate-800">
+                                      {h.moduleName} ({h.moduleKey})
+                                    </td>
+                                    <td className="p-3 font-bold text-slate-900">
+                                      {h.period} 期
+                                    </td>
+                                    <td className="p-3 text-slate-600">
+                                      {h.prefixKey}
+                                    </td>
+                                    <td className="p-3 font-bold text-indigo-900">
+                                      {h.latestDoc}
+                                    </td>
+                                    <td className="p-3 font-sans text-slate-700">
+                                      {h.count} 筆單據
+                                    </td>
+                                    <td className="p-3 font-sans">
+                                      <span className="inline-flex items-center gap-1 text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200 font-bold">
+                                        <Lock className="w-2.5 h-2.5" /> 歷史鎖定
+                                      </span>
+                                    </td>
+                                    <td className="p-3 font-sans text-slate-600 text-[11px]">
+                                      若批次轉入舊單，流水序號必須大於 <code className="font-mono font-bold text-indigo-700">{h.maxVal}</code> 以免撞號
+                                    </td>
+                                  </tr>
+                                ));
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">單據用途說明:</label>
-                      <input
-                        type="text"
-                        value={editingRule.description || ''}
-                        onChange={(e) => setEditingRule(prev => prev ? { ...prev, description: e.target.value } : null)}
-                        placeholder="例如: 營造建案工程採購確認單"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
-                      />
-                    </div>
+                  {/* 視圖 4：備份還原單號一致性與災難復原保障 (Backup & Restore) */}
+                  {superadminSubTab === 'BACKUP_CONSISTENCY' && (
+                    <div className="space-y-4">
+                      {/* 災難復原與備份還原專屬說明 */}
+                      <div className="p-5 rounded-xl bg-slate-900 text-white space-y-3 border border-slate-800">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Database className="w-5 h-5 text-emerald-400" />
+                            <h4 className="text-xs font-bold text-white tracking-wide">
+                              備份還原災難復原保障：單號計數器一致性重置中樞
+                            </h4>
+                          </div>
+                          <span className="text-[10px] font-mono text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded border border-emerald-500/30">
+                            Disaster Recovery Protected
+                          </span>
+                        </div>
 
-                    {/* 即時格式預覽卡片 */}
-                    <div className="p-3 rounded-xl bg-slate-900 text-white space-y-1">
-                      <span className="text-[10px] text-slate-400 font-bold block">即時格式預覽效果 (Live Preview):</span>
-                      <div className="font-mono text-sm font-bold text-amber-300 tracking-wider">
-                        {(() => {
-                          const delim = editingRule.delimiter;
-                          const dateSample = editingRule.dateFormat === 'YYYYMM' ? '202610' : editingRule.dateFormat === 'YYYY' ? '2026' : editingRule.dateFormat === 'YYYYMMDD' ? '20261014' : '';
-                          const serialSample = String(1).padStart(editingRule.serialLength, '0');
-                          return dateSample ? `${editingRule.prefix}${delim}${dateSample}${delim}${serialSample}` : `${editingRule.prefix}${delim}${serialSample}`;
-                        })()}
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          當系統執行資料庫備份還原（例如還原上週 SQL Dump、或還原至歷史年度封存快照）時，由於實體資料表可能被回復至舊時間點，此時 <code className="font-mono text-amber-300">document_sequences</code> 計數器指針若未重新對齊，可能導致還原後開立新單據時發生主鍵重號衝突。Superadmin 可使用以下工具一鍵重新對齊指針。
+                        </p>
+
+                        <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={handleReseedAfterRestore}
+                            disabled={!canWriteModule}
+                            className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer hover:shadow-lg active:scale-98"
+                          >
+                            <RefreshCw className="w-4 h-4 text-slate-950" />
+                            <span>🔄 還原後全域序號指針重新校準 (Post-Restore Re-seed)</span>
+                          </button>
+                          <span className="text-[11px] text-slate-400">
+                            自動深度掃描全庫真實單據表記錄，將所有前綴指針強制對齊至真實最大號，杜絕撞號
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 實體單據資料表指針一致性對齊檢驗清單 */}
+                      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                          <div>
+                            <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                              <span>實體單據資料表防撞指標檢驗對齊清單</span>
+                            </h4>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              比對底層實體表記錄最大單號與產號指針之對齊防撞狀態
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                                <th className="p-3">業務模組</th>
+                                <th className="p-3">對應實體資料表</th>
+                                <th className="p-3">單據主鍵欄位</th>
+                                <th className="p-3">當前實體表最大號</th>
+                                <th className="p-3">防撞自癒指針</th>
+                                <th className="p-3">備份還原一致性</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200 font-mono">
+                              {[
+                                { name: '應付帳款單據', key: 'AP', table: 'accounts_payable', col: 'apNumber' },
+                                { name: '採購發包單據', key: 'PO', table: 'purchase_orders', col: 'poNumber' },
+                                { name: '工程報價單據', key: 'QUO', table: 'quotations', col: 'quoteNumber' },
+                                { name: '計價估驗單據', key: 'VL', table: 'valuations', col: 'valuationNumber' },
+                                { name: '收付款票據', key: 'CK', table: 'receipts', col: 'receiptNumber' },
+                                { name: '應收請款記錄', key: 'AR', table: 'client_billing_records', col: 'billNumber' },
+                                { name: '分包合約字號', key: 'SC', table: 'subcontracts', col: 'subcontractCode' },
+                              ].map(item => {
+                                const status = moduleStatuses.find(s => s.moduleKey === item.key);
+
+                                return (
+                                  <tr key={item.key} className="hover:bg-slate-50 transition-colors">
+                                    <td className="p-3 font-sans font-bold text-slate-800">
+                                      {item.name} ({item.key})
+                                    </td>
+                                    <td className="p-3 text-indigo-900 font-bold">
+                                      {item.table}
+                                    </td>
+                                    <td className="p-3 text-slate-600">
+                                      {item.col}
+                                    </td>
+                                    <td className="p-3 text-slate-800">
+                                      {status?.currentPeriodLatestDoc || '尚未開單 (0)'}
+                                    </td>
+                                    <td className="p-3 text-indigo-700 font-bold">
+                                      {status?.currentPeriodNextDoc || '預備起號中'}
+                                    </td>
+                                    <td className="p-3 font-sans">
+                                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                        <CheckCheck className="w-3.5 h-3.5" /> 具備自動防撞指針守護
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
-
-                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
-                      <button
-                        type="button"
-                        onClick={() => setEditingRule(null)}
-                        className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold cursor-pointer"
-                      >
-                        取消
-                      </button>
-                      <button
-                        type="submit"
-                        className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold cursor-pointer shadow-xs"
-                      >
-                        儲存規則
-                      </button>
-                    </div>
-                  </form>
+                  )}
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+
+              {/* ------------------------------------------------------------------ */}
+              {/* 彈出式規則編輯對話框 (Admin 與 Superadmin 共同使用，具備防衝突檢測)   */}
+              {/* ------------------------------------------------------------------ */}
+              {editingRule && (() => {
+                const originalRule = sequenceRules.find(r => r.moduleKey === editingRule.moduleKey);
+                const isPrefixChanged = originalRule && originalRule.prefix !== editingRule.prefix;
+                const conflictCheck = validateDocumentPrefixConflict(editingRule.moduleKey, editingRule.prefix);
+
+                return (
+                  <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden">
+                      <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Settings2 className="w-5 h-5 text-indigo-400" />
+                          <h3 className="font-bold text-sm">自訂單據編碼規則 - 【{editingRule.moduleName}】</h3>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEditingRule(null)}
+                          className="text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!conflictCheck.valid) {
+                            triggerToast(`⛔ ${conflictCheck.reason}`);
+                            return;
+                          }
+                          handleSaveRule(editingRule);
+                        }}
+                        className="p-6 space-y-4 text-xs"
+                      >
+                        {/* 前綴代碼與即時衝突警示 */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block font-bold text-slate-700">業務前綴代碼 (Prefix):</label>
+                            <span className="text-[11px] text-slate-400">僅限大寫英數字，1~8 碼</span>
+                          </div>
+                          <input
+                            type="text"
+                            value={editingRule.prefix}
+                            onChange={(e) => setEditingRule(prev => prev ? { ...prev, prefix: e.target.value.toUpperCase() } : null)}
+                            className={`w-full px-3 py-2 rounded-lg border font-mono font-bold uppercase text-slate-800 outline-none transition-all ${
+                              !conflictCheck.valid
+                                ? 'border-rose-400 ring-2 ring-rose-200 bg-rose-50/30'
+                                : 'border-slate-300 focus:ring-2 focus:ring-indigo-500'
+                            }`}
+                          />
+
+                          {/* 衝突攔截警示橫幅 */}
+                          {!conflictCheck.valid && (
+                            <div className="mt-2 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] flex items-start gap-2 animate-shake">
+                              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                              <div className="leading-relaxed">
+                                <strong>衝突阻擋：</strong>{conflictCheck.reason}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 前綴變更平滑過渡提示 */}
+                          {isPrefixChanged && conflictCheck.valid && (
+                            <div className="mt-2 p-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 text-[11px] flex items-start gap-2">
+                              <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                              <div className="leading-relaxed">
+                                <strong>前綴變更生效須知：</strong>歷史已開立的單據（<code className="font-mono font-bold">{originalRule.prefix}-...</code>）將依法保留法定會計憑證；自變更起新建立的單據將自動套用新前綴【<strong>{editingRule.prefix}</strong>】並自第 1 號開始發放。
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">日期格式段:</label>
+                            <select
+                              value={editingRule.dateFormat}
+                              onChange={(e) => setEditingRule(prev => prev ? { ...prev, dateFormat: e.target.value as any } : null)}
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
+                            >
+                              <option value="YYYYMM">YYYYMM (西元年月份，如 202610)</option>
+                              <option value="YYYY">YYYY (西元年份，如 2026)</option>
+                              <option value="YYYYMMDD">YYYYMMDD (年月日，如 20261014)</option>
+                              <option value="NONE">無日期段 (純前綴)</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">分隔符號 (Delimiter):</label>
+                            <select
+                              value={editingRule.delimiter}
+                              onChange={(e) => setEditingRule(prev => prev ? { ...prev, delimiter: e.target.value as any } : null)}
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
+                            >
+                              <option value="-">破折號 [ - ] (如 AP-202610-001)</option>
+                              <option value="">無分隔符 (如 AP202610001)</option>
+                              <option value="_">底線 [ _ ] (如 AP_202610_001)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">流水號碼長 (Serial Digits):</label>
+                            <select
+                              value={editingRule.serialLength}
+                              onChange={(e) => setEditingRule(prev => prev ? { ...prev, serialLength: parseInt(e.target.value, 10) } : null)}
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
+                            >
+                              <option value={2}>2 碼 (如 01 ~ 99)</option>
+                              <option value={3}>3 碼 (如 001 ~ 999 - 推薦)</option>
+                              <option value={4}>4 碼 (如 0001 ~ 9999)</option>
+                              <option value={6}>6 碼 (如 000001 ~ 999999)</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">自動歸零重設週期:</label>
+                            <select
+                              value={editingRule.resetFrequency}
+                              onChange={(e) => setEditingRule(prev => prev ? { ...prev, resetFrequency: e.target.value as any } : null)}
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 text-slate-800 bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
+                            >
+                              <option value="MONTHLY">每月歸零重設 (依月份從 001 開始)</option>
+                              <option value="YEARLY">每年歸零重設 (跨年從 001 開始)</option>
+                              <option value="NEVER">永久不重設 (連續累計)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1">單據用途說明:</label>
+                          <input
+                            type="text"
+                            value={editingRule.description || ''}
+                            onChange={(e) => setEditingRule(prev => prev ? { ...prev, description: e.target.value } : null)}
+                            placeholder="例如: 營造建案工程採購確認單"
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                          />
+                        </div>
+
+                        {/* 即時格式預覽卡片 */}
+                        <div className="p-3.5 rounded-xl bg-slate-900 text-white space-y-1.5 border border-slate-800">
+                          <span className="text-[10px] text-slate-400 font-bold block flex items-center justify-between">
+                            <span>即時格式預覽效果 (Live Preview):</span>
+                            <span className="text-emerald-400 font-mono">系統下筆將以此格式產號</span>
+                          </span>
+                          <div className="font-mono text-base font-bold text-amber-300 tracking-wider">
+                            {(() => {
+                              const delim = editingRule.delimiter;
+                              const dateSample = editingRule.dateFormat === 'YYYYMM' ? '202610' : editingRule.dateFormat === 'YYYY' ? '2026' : editingRule.dateFormat === 'YYYYMMDD' ? '20261014' : '';
+                              const serialSample = String(1).padStart(editingRule.serialLength, '0');
+                              return dateSample ? `${editingRule.prefix}${delim}${dateSample}${delim}${serialSample}` : `${editingRule.prefix}${delim}${serialSample}`;
+                            })()}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                          <button
+                            type="button"
+                            onClick={() => setEditingRule(null)}
+                            className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold cursor-pointer"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={!conflictCheck.valid}
+                            className={`px-4 py-2 rounded-lg font-bold shadow-xs transition-colors cursor-pointer ${
+                              !conflictCheck.valid
+                                ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                            }`}
+                          >
+                            儲存規則
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
 
         {/* 分頁 5：資料庫安全與歸檔備份（完整實體化嵌入面板） */}
         {activeTab === 'DATABASE' && (

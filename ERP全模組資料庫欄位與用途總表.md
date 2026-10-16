@@ -20,6 +20,11 @@
 | `description` | 單據用途說明。 |
 | `updatedAt` | 規則最後維護時間戳記。 |
 
+> **🛡️ 前綴全域唯一性鎖定與變更安全防線 (Prefix Conflict Prevention & Security Safeguard)**：
+> 1. **全域唯一性校驗 (`validateDocumentPrefixConflict`)**：各業務模組前綴必須全域唯一（例如 `AP` 屬應付帳款，嚴禁 `AR` 或其他模組重疊使用）。系統在前端與後端雙層嚴格攔截，徹底杜絕單號跨表重疊與會計科目混淆。
+> 2. **前綴變更平滑過渡原則**：若業務前綴變更（例如 `AP` 變更為 `PP`），歷史開立之單據（如 `AP-202603-001`）作為法定會計傳票**永久保留原樣、絕不竄改**；變更生效後新建立之單據自動以新前綴（`PP-202610-001`）第一號接續開單，保障法律與審計憑證完整性。
+> 3. **格式強規範防呆**：強制 1~8 碼大寫英數字，禁止空格與破折號（分隔符由專用欄位 `delimiter` 定義），杜絕 SQL 注入與字元解析異常。
+
 ### DocumentSequence｜單據跳號計數器指針主表 (`document_sequences`)
 
 | 欄位 | 用途 |
@@ -28,12 +33,13 @@
 | `currentVal` | 該前綴已使用的最新流水號，透過資料庫交易與原子更新防重號。 |
 | `updatedAt` | 流水號最近跳號、產號或校正時間戳記。 |
 
-> **🛡️ 單據編碼與自動產號五大核心架構原則 (Intelligent Zero-Touch Sequencing Discipline)**：
-> 1. **全自動循序配號 · 日常作業 100% 免手動設定**：當使用者在任何模組（應付、採購、報價、估驗等）新增單據時，系統全自動依照模組規則與當前開單時間依序配發流水號（例如 `AP-202610-001`）。使用者專注業務數據輸入，**完全無需手動指定或跳號**！
-> 2. **業務高可讀性編碼結構**：採用 `[模組代號]-[YYYYMM]-[序號]` 組合（例如 `AP-202610-001` 代表應付帳款 2026 年 10 月第 001 號），一眼即知單據性質與所屬期別。
-> 3. **歷史過往月份嚴格鎖定保護 (Historical Closed Lock)**：過往月份（如 202603、202604）單據已入帳結算，系統自動歸檔鎖定保護，不允許回溯開單，杜絕歷史帳目竄改與膨脹。
-> 4. **次月預開單獨立整備機制 (Next-Month Reservation)**：針對跨月預開單需求，系統支援預先備妥次月首號起點（如 `AP-202611-001`），開立次月單據時自動啟用獨立計數器，絕不干擾當月作業。
-> 5. **智能防撞自癒與底層 UNIQUE 物理鐵壁 (Collision Defense & SSoT)**：提供「一鍵全域單號安全巡檢與智能防撞自癒」功能，系統主動掃描全庫實體單據主表，指針自動對齊；產號引擎在候選號被占用時自動躍升跳過；全系統單據表（`purchase_orders.poNumber`, `accounts_payable.apNumber`, `accounts_receivable.arNumber`, `valuations.valuationNumber`, `quotations.quoteNumber`, `bank_checks.checkNumber`, `projects.projectCode`, `subcontracts.contractCode`）均標配 `UNIQUE NOT NULL` 物理約束。
+> **🎭 雙角色架構分流與單據產號六大核心原則 (Role-Differentiated Sequencing & DR Discipline)**：
+> 1. **全自動循序配號 · 日常作業 100% 免手動設定**：日常同仁在任何模組（應付、採購、報價、估驗等）新增單據時，系統全自動依照模組規則與開單日期配發單號（例如 `AP-202610-001`）。使用者專注業務數據輸入，**完全無需、亦禁止手動指定或跳號**！
+> 2. **業務主管視角 (Admin View) 極簡化**：業務管理員僅需設定公司單據代號、碼長、日期格式與分隔符，並即時查看下筆產號預覽。**全面隱藏底層資料庫計數器、SQL 診斷與 10 年歷史封存抽屜**，徹底去除無效技術雜訊。
+> 3. **程式設計師視角 (Superadmin View) 深度治理**：提供「底層指針即時監控」、「全域單號智能巡檢自癒」、「歷史期別舊單匯入防撞審計」與「災難備份還原一致性保障」四大專屬工具，兼具底層掌控與一鍵切換 Admin 視角能力。
+> 4. **歷史過往月份嚴格鎖定 (Historical Closed Lock & Migration Audit)**：過往月份單據業已入帳結算，屬法定不可竄改憑證，系統自動鎖定。在 Superadmin 歷史審計視圖中，提供外部舊資料匯入之最大單號參考，杜絕舊系統舊帳轉移時之主鍵重號衝突。
+> 5. **次月預開單獨立整備機制 (Next-Month Reservation)**：針對跨月預備開單需求，系統獨立預備次月起號指針（如 `AP-202611-001`），開立次月單據時自動啟用獨立計數器，絕不干擾當月作業。
+> 6. **災難復原與備份還原全域指針重置 (Post-Restore Re-seed Protocol)**：當系統自 SQL Dump、SQLite Binary 或年度快照還原時，Superadmin 可執行 `reseedDocumentSequences()` 一鍵重新掃描全庫實體單據主表，將計數器強制對齊至真實最大流水號，**100% 杜絕資料庫還原後開立新單撞號之隱患**！各業務主表（`purchase_orders.poNumber`, `accounts_payable.apNumber`, `valuations.valuationNumber`, `quotations.quoteNumber`, `receipts.receiptNumber`, `client_billing_records.billNumber`, `subcontracts.subcontractCode`）均標配 `UNIQUE NOT NULL` 物理鐵壁。
 
 ### 🛡️ 全系統欄位重複性審核與既有欄位重用對照總表 (Field Deduplication & Reuse Audit)
 

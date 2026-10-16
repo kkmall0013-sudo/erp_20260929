@@ -4002,6 +4002,79 @@ export function getAllDocumentSequenceRules(): DocumentSequenceRule[] {
   }));
 }
 
+// 🛡️ 模組編碼前綴防衝突檢驗中樞 (全域唯一性與跨模組防撞校驗)
+export function validateDocumentPrefixConflict(
+  moduleKey: string,
+  newPrefix: string,
+  db?: Database
+): { valid: boolean; reason?: string } {
+  const targetDb = db || dbInstance;
+  if (!targetDb) return { valid: true };
+
+  const cleanPrefix = (newPrefix || '').trim().toUpperCase();
+  if (!cleanPrefix) {
+    return { valid: false, reason: '單據前綴代碼不得為空！' };
+  }
+
+  if (!/^[A-Z0-9]{1,8}$/.test(cleanPrefix)) {
+    return { valid: false, reason: '單據前綴僅能由 1~8 碼大寫英數字組成（如 AP、PO、QUO、VAL），不得包含空格或破折號等符號（分隔符號由單獨欄位設定）。' };
+  }
+
+  // 1. 跨業務模組唯一性校驗 (嚴格杜絕不同模組重複使用相同前綴)
+  const rules = getAllDocumentSequenceRules();
+  const conflictingRule = rules.find(r => r.moduleKey !== moduleKey && r.prefix.toUpperCase() === cleanPrefix);
+  if (conflictingRule) {
+    return {
+      valid: false,
+      reason: `衝突攔截：前綴代碼【${cleanPrefix}】已被【${conflictingRule.moduleName}】模組佔用！不同業務模組禁止使用相同前綴，以杜絕單號重號主鍵衝突與業務科目混淆。`
+    };
+  }
+
+  // 2. 跨模組資料表歷史單據交叉衝突探測
+  // 檢測其他業務單據表記錄中，是否已有該前綴之歷史資料
+  const moduleTableMap: Record<string, string> = {
+    AP: 'accounts_payable',
+    AR: 'client_billing_records',
+    PO: 'purchase_orders',
+    QUO: 'quotations',
+    VL: 'valuations',
+    CK: 'receipts',
+    PRJ: 'projects',
+    SC: 'subcontracts',
+    INV: 'vendor_bills'
+  };
+
+  const currentModuleTable = moduleTableMap[moduleKey];
+  const allSourceTables = [
+    { table: 'accounts_payable', col: 'apNumber', label: '應付帳款' },
+    { table: 'purchase_orders', col: 'poNumber', label: '採購發包' },
+    { table: 'quotations', col: 'quoteNumber', label: '工程報價' },
+    { table: 'valuations', col: 'valuationNumber', label: '計價估驗' },
+    { table: 'receipts', col: 'receiptNumber', label: '收付款單' },
+    { table: 'client_billing_records', col: 'billNumber', label: '應收請款' },
+    { table: 'subcontracts', col: 'subcontractCode', label: '分包合約' }
+  ];
+
+  for (const src of allSourceTables) {
+    if (src.table === currentModuleTable) continue;
+    try {
+      const q = `SELECT count(*) FROM ${src.table} WHERE ${src.col} LIKE '${cleanPrefix}%';`;
+      const res = targetDb.exec(q);
+      const count = res.length && res[0].values.length ? Number(res[0].values[0][0]) : 0;
+      if (count > 0) {
+        return {
+          valid: false,
+          reason: `衝突攔截：【${src.label}】歷史資料中已存在 ${count} 筆以【${cleanPrefix}】開頭的單據！將此模組改為【${cleanPrefix}】會造成嚴重跨模組單號衝突。`
+        };
+      }
+    } catch {
+      // 容錯跳過尚未建立之資料表
+    }
+  }
+
+  return { valid: true };
+}
+
 export function updateDocumentSequenceRule(
   rule: Partial<DocumentSequenceRule> & { moduleKey: string },
   operatorName = '系統管理者'
@@ -4009,13 +4082,21 @@ export function updateDocumentSequenceRule(
   if (!dbInstance) throw new Error('資料庫尚未初始化');
   ensureDocumentSequenceRules(dbInstance);
 
-  const now = new Date().toISOString();
   const existingRules = getAllDocumentSequenceRules();
   const current = existingRules.find(r => r.moduleKey === rule.moduleKey);
+  const targetPrefix = rule.prefix ? rule.prefix.trim().toUpperCase() : (current?.prefix || rule.moduleKey);
+
+  // 🛡️ 執行前綴防衝突檢驗
+  const validation = validateDocumentPrefixConflict(rule.moduleKey, targetPrefix, dbInstance);
+  if (!validation.valid) {
+    throw new Error(validation.reason);
+  }
+
+  const now = new Date().toISOString();
   const updated: DocumentSequenceRule = {
     moduleKey: rule.moduleKey,
     moduleName: rule.moduleName || current?.moduleName || rule.moduleKey,
-    prefix: rule.prefix ? rule.prefix.trim().toUpperCase() : (current?.prefix || rule.moduleKey),
+    prefix: targetPrefix,
     dateFormat: rule.dateFormat || current?.dateFormat || 'YYYYMM',
     delimiter: rule.delimiter !== undefined ? rule.delimiter : (current?.delimiter || '-'),
     serialLength: rule.serialLength || current?.serialLength || 3,
