@@ -154,6 +154,41 @@ export interface DocumentSequence {
   updatedAt: string;
 }
 
+export interface DocumentSequenceRule {
+  moduleKey: string;
+  moduleName: string;
+  prefix: string;
+  dateFormat: 'YYYYMM' | 'YYYY' | 'YYYYMMDD' | 'NONE';
+  delimiter: '-' | '' | '_';
+  serialLength: number;
+  resetFrequency: 'MONTHLY' | 'YEARLY' | 'NEVER';
+  description?: string;
+  updatedAt?: string;
+}
+
+export interface DocumentModuleSequenceStatus {
+  moduleKey: string;
+  moduleName: string;
+  prefix: string;
+  rule: DocumentSequenceRule;
+  currentPeriod: string;
+  currentPeriodPrefix: string;
+  currentPeriodMaxVal: number;
+  currentPeriodLatestDoc: string | null;
+  currentPeriodNextVal: number;
+  currentPeriodNextDoc: string;
+  nextMonthPeriod: string;
+  nextMonthReservedNextDoc: string;
+  historicalPeriods: {
+    period: string;
+    prefixKey: string;
+    maxVal: number;
+    latestDoc: string;
+    count: number;
+    isLocked: boolean;
+  }[];
+}
+
 export interface RegulatorySchedule {
   id: string;
   configKey: string;

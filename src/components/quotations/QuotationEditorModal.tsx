@@ -35,6 +35,7 @@ import {
 import { TaiwanIdTaxValidatorWidget } from '../widgets/TaiwanIdTaxValidatorWidget';
 import { QuotationPrintPreviewModal } from './QuotationPrintPreviewModal';
 import { AttachmentUploader } from '../attachments/AttachmentUploader';
+import { previewNextDocumentNumber, getNextDocumentNumber } from '../../db/sqlite';
 
 interface QuotationEditorModalProps {
   isOpen: boolean;
@@ -67,7 +68,7 @@ export const QuotationEditorModal: React.FC<QuotationEditorModalProps> = ({
 
   // 1. 報價單表頭狀態
   const [formData, setFormData] = useState<Partial<Quotation>>({
-    quoteNumber: quotation?.quoteNumber || `QUO-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-001`,
+    quoteNumber: quotation?.quoteNumber || previewNextDocumentNumber('QUO'),
     projectId: quotation?.projectId || projects[0]?.id || '',
     customerId: quotation?.customerId || customers[0]?.id || '',
     customerName: quotation?.customerName || customers[0]?.name || '',
@@ -98,6 +99,10 @@ export const QuotationEditorModal: React.FC<QuotationEditorModalProps> = ({
     if (quotation) {
       setFormData({ ...quotation });
     } else {
+      setFormData(prev => ({
+        ...prev,
+        quoteNumber: previewNextDocumentNumber('QUO'),
+      }));
       // 全新預設三筆工程工項
       setItems([
         {
@@ -314,7 +319,7 @@ export const QuotationEditorModal: React.FC<QuotationEditorModalProps> = ({
 
     const finalQuotation: Quotation = {
       id: quotation?.id || crypto.randomUUID(),
-      quoteNumber: formData.quoteNumber || 'QUO-2026-001',
+      quoteNumber: quotation?.quoteNumber || getNextDocumentNumber('QUO'),
       projectId: formData.projectId || '',
       customerId: formData.customerId || '',
       customerName: formData.customerName || '',

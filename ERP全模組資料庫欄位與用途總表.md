@@ -6,19 +6,34 @@
 
 ## 全域參數與數據防禦
 
-### DocumentSequence｜單據跳號與流水號引擎 (`document_sequences`)
+### DocumentSequenceRule｜單據編碼規則主檔 (`document_sequence_rules`)
 
 | 欄位 | 用途 |
 |---|---|
-| `prefix` | 單據編號前綴及流水號分組鍵，例如 `PO-202405`、`AP-202603`、`VAL-202604`。 |
-| `currentVal` | 該前綴已使用的最新流水號，透過資料庫交易與原子更新防重號。 |
-| `updatedAt` | 流水號最近跳號或校正時間戳記。 |
+| `moduleKey` | 業務模組鍵值主鍵，例如 `AP` (應付)、`AR` (應收)、`PO` (採購)、`QUO` (報價)、`VL` (估驗)、`CK` (票據)、`PRJ` (專案)、`SC` (分包)、`INV` (發票庫存)。 |
+| `moduleName` | 業務單據中文名稱全銜。 |
+| `prefix` | 單據編號業務前綴代碼（如 `AP`、`PO`、`QUO`、`CQ` 等）。 |
+| `dateFormat` | 日期格式段（`YYYYMM` 西元年月份、`YYYY` 西元年份、`YYYYMMDD` 年月日、`NONE` 無日期段）。 |
+| `delimiter` | 符號分隔符（預設為破折號 `-`，亦可設為無分隔符或底線 `_`）。 |
+| `serialLength` | 流水號碼長度（2 碼、3 碼 `001`、4 碼 `0001`、6 碼 `000001`）。 |
+| `resetFrequency` | 自動歸零重設週期（`MONTHLY` 每月歸零重設、`YEARLY` 每年歸零重設、`NEVER` 永久累計）。 |
+| `description` | 單據用途說明。 |
+| `updatedAt` | 規則最後維護時間戳記。 |
 
-> **🛡️ 單據跳號內控與防衝碼四大鐵律 (Document Sequence Anti-Duplicate & Discipline)**：
-> 1. **禁止往前回溯鐵律 (Anti-Rollback Rule)**：單據編號具備法律與會計不可逆性，**嚴格禁止手動或校正將計數器回退至小於等於資料庫中該前綴已存在單據的最大號**！Admin 於介面點擊「校正」時，系統強制自動掃描業務表現存最大單號；若輸入值試圖回退，系統即時彈窗攔截，徹底杜絕舊號覆寫或撞號。
-> 2. **允許往後跳號放行 (Gap Jumping Permitted)**：因業務需要、跨月歸檔或廢號跳號，系統**允許往後跳號（如自 002 跳號至 005）**，保證靈活性但絕不允許重複。
-> 3. **產號自動防碰撞自癒 (Auto-Collision Avoidance)**：`getNextSequenceNumber(prefix)` 產號引擎在生成 `${prefix}-${seq}` 時，主動向底層資料庫探測該單號是否存在；若存在（如曾手動補單），引擎自動自增跳過該序號，保證核發之號碼 100% 未曾使用。
-> 4. **實體主表底層 UNIQUE 鐵壁**：全系統單據表（`purchase_orders.poNumber`, `accounts_payable.apNumber`, `accounts_receivable.arNumber`, `valuations.valuationNumber`, `quotations.quotationNumber`, `bank_checks.checkNumber`, `projects.projectCode`, `subcontracts.contractCode`）均在資料庫標配 `UNIQUE NOT NULL` 約束，形成雙重物理保障。
+### DocumentSequence｜單據跳號計數器指針主表 (`document_sequences`)
+
+| 欄位 | 用途 |
+|---|---|
+| `prefix` | 單據編號前綴及流水號分組鍵，例如當期 `AP-202610`、`PO-202610` 或歷史 `AP-202603`。 |
+| `currentVal` | 該前綴已使用的最新流水號，透過資料庫交易與原子更新防重號。 |
+| `updatedAt` | 流水號最近跳號、產號或校正時間戳記。 |
+
+> **🛡️ 單據編碼與自動產號五大核心架構原則 (Intelligent Zero-Touch Sequencing Discipline)**：
+> 1. **全自動循序配號 · 日常作業 100% 免手動設定**：當使用者在任何模組（應付、採購、報價、估驗等）新增單據時，系統全自動依照模組規則與當前開單時間依序配發流水號（例如 `AP-202610-001`）。使用者專注業務數據輸入，**完全無需手動指定或跳號**！
+> 2. **業務高可讀性編碼結構**：採用 `[模組代號]-[YYYYMM]-[序號]` 組合（例如 `AP-202610-001` 代表應付帳款 2026 年 10 月第 001 號），一眼即知單據性質與所屬期別。
+> 3. **歷史過往月份嚴格鎖定保護 (Historical Closed Lock)**：過往月份（如 202603、202604）單據已入帳結算，系統自動歸檔鎖定保護，不允許回溯開單，杜絕歷史帳目竄改與膨脹。
+> 4. **次月預開單獨立整備機制 (Next-Month Reservation)**：針對跨月預開單需求，系統支援預先備妥次月首號起點（如 `AP-202611-001`），開立次月單據時自動啟用獨立計數器，絕不干擾當月作業。
+> 5. **智能防撞自癒與底層 UNIQUE 物理鐵壁 (Collision Defense & SSoT)**：提供「一鍵全域單號安全巡檢與智能防撞自癒」功能，系統主動掃描全庫實體單據主表，指針自動對齊；產號引擎在候選號被占用時自動躍升跳過；全系統單據表（`purchase_orders.poNumber`, `accounts_payable.apNumber`, `accounts_receivable.arNumber`, `valuations.valuationNumber`, `quotations.quoteNumber`, `bank_checks.checkNumber`, `projects.projectCode`, `subcontracts.contractCode`）均標配 `UNIQUE NOT NULL` 物理約束。
 
 ### 🛡️ 全系統欄位重複性審核與既有欄位重用對照總表 (Field Deduplication & Reuse Audit)
 
@@ -35,7 +50,7 @@
 | **SystemConfig (`system_configs`)** | `createdBy` vs `updatedBy` | **`updatedBy`** + **`description`** | 系統參數為預設種子初始化後由授權管理員動態調校，直接重用 `updatedBy` 記錄最近修改參數之管理員姓名，並增補 `description` 儲存參數中文用途說明，不另設冗餘之 `createdBy`。 |
 | **Project (`projects`)** | `name` vs `contractName` / `internalName`；`contractAmount` vs `managementContractAmount` | **`name`**、**`contractAmount`**、**`budgetAmount`** | 實體 SQLite 主表統一使用 `name`（專案工程全銜）與 `contractAmount`（合約總額）、`budgetAmount`（核定預算總額），不重複切分多欄造成統計分歧。 |
 | **BusinessPartner (`business_partners`)** | `phone` vs `telephone`；`type` vs `isCustomer`/`isVendor` | **`phone`**、**`type`** | 聯絡電話統一使用 `phone`；夥伴屬性統一使用單一列舉欄位 `type`（`CUSTOMER`、`VENDOR`、`SUBCONTRACTOR`、`BOTH`），取代多個布林欄位。 |
-| **軟體程式設定 vs 公司法規設定** | `app_configs` vs `system_configs`；`COMPANY` 選單 vs `SETTINGS` 選單 | **`app_configs` (Superadmin 程式設定)** + **`system_configs` / `companies` (Admin 基本資料中樞)** | **【權限邊界與選單大整併】**<br>1. **Superadmin 專屬**：新增 `app_configs` 儲存軟體本身資訊（品牌主名稱、副標題、版本號、HTML分頁標題、首頁歡迎標語、頁腳版權、全模組開放授權開關 `APP_ENABLED_MODULES`、全域公告廣播、維護模式），純屬軟體程式本體，與特定客戶公司業務無關。<br>2. **Admin 基本資料中樞**：將原獨立之 `COMPANY`（公司設定）正式合併進入 `SETTINGS`（基本資料），以分頁 Tabs（[營運法人實體]、[法定稅制與健保]、[工程合約與預算內控]、[單據跳號規則]）集中管理。法規修訂時 Admin 自主維護，免找工程師改 code。 |
+| **軟體程式設定 vs 公司法規設定** | `app_configs` vs `system_configs`；`COMPANY` 選單 vs `SETTINGS` 選單 | **`app_configs` (Superadmin 程式設定)** + **`system_configs` / `companies` (Admin 基本資料中樞)** | **【權限邊界與選單大整併】**<br>1. **Superadmin 專屬**：新增 `app_configs` 儲存軟體本身資訊（品牌主名稱、副標題、版本號、HTML分頁標題、首頁歡迎標語、頁腳版權、全模組開放授權開關 `APP_ENABLED_MODULES`、全域公告廣播、維護模式），純屬軟體程式本體，與特定客戶公司業務無關。<br>2. **Admin 基本資料中樞**：將原獨立之 `COMPANY`（公司設定）正式合併進入 `SETTINGS`（基本資料），以分頁 Tabs（[營運法人實體]、[法定稅制與健保]、[工程合約與預算內控]、[單據編碼與自動產號中樞]、[資料庫安全與歸檔備份]）集中管理。法規修訂時 Admin 自主維護，免找工程師改 code。 |
 
 ---
 
