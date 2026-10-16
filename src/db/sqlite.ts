@@ -54,6 +54,7 @@ declare global {
   }
 }
 
+let sqlJsEngine: SqlJsStatic | null = null;
 let dbInstance: Database | null = null;
 const listeners = new Set<() => void>();
 
@@ -99,6 +100,8 @@ export async function getDatabase(): Promise<Database> {
     const initSqlModule = (await import('sql.js')).default;
     SQL = await initSqlModule();
   }
+
+  sqlJsEngine = SQL;
 
   if (typeof localStorage !== 'undefined') {
     const savedDb = localStorage.getItem('engineering_erp_sqlite_db');
@@ -1126,6 +1129,128 @@ export function importSql(sqlText: string): { success: boolean; message: string;
   }
 }
 
+// 🏛️ 全庫 SQLite 二進位實體檔案一鍵上傳還原 (.sqlite / .db)
+export async function restoreFromSqliteBinary(
+  buffer: ArrayBuffer | Uint8Array,
+  operatorName: string = '系統管理者'
+): Promise<{ success: boolean; message: string; recordCount?: number; moduleCount?: number }> {
+  try {
+    let engine = sqlJsEngine;
+    if (!engine) {
+      await getDatabase();
+      engine = sqlJsEngine;
+    }
+    if (!engine) {
+      throw new Error('SQLite WebAssembly 引擎尚未就緒');
+    }
+
+    const uint8 = new Uint8Array(buffer);
+    if (uint8.length < 100) {
+      throw new Error('上傳之檔案體積過小，非有效之 SQLite 資料庫檔案');
+    }
+
+    // 檢查 SQLite 檔案標頭標記: "SQLite format 3\0"
+    const headerStr = String.fromCharCode(...uint8.slice(0, 15));
+    if (!headerStr.startsWith('SQLite format 3')) {
+      throw new Error('檔案標頭非標準 SQLite 3 格式，請確認是否為正確的 .sqlite / .db 檔案');
+    }
+
+    const newDb = new engine.Database(uint8);
+    const test = newDb.exec("SELECT count(*) FROM sqlite_master WHERE type='table';");
+    if (!test.length) {
+      throw new Error('此檔案結構異常，無法讀取資料表目錄');
+    }
+
+    // 關閉舊資料庫實體釋放記憶體
+    try {
+      if (dbInstance) dbInstance.close();
+    } catch (_) {}
+
+    dbInstance = newDb;
+    ensureDatabaseIntegrity(dbInstance);
+    reseedDocumentSequences(dbInstance);
+    saveDatabaseSnapshot();
+    notifyListeners();
+
+    const stats = getDatabaseModuleStats(dbInstance);
+    const totalRecords = stats.reduce((acc, cur) => acc + cur.totalRecords, 0);
+
+    try {
+      logAudit(
+        dbInstance,
+        operatorName,
+        '還原資料庫',
+        '全庫備份還原',
+        '全庫 SQLite 二進位實體檔案還原',
+        undefined,
+        { '還原模組數': stats.length, '總資料筆數': totalRecords, '操作人員': operatorName },
+        operatorName
+      );
+    } catch (_) {}
+
+    return {
+      success: true,
+      message: `資料庫還原成功！已完整掛載 ${stats.length} 個業務模組，共計 ${totalRecords.toLocaleString()} 筆資料，且各單據流水號計數器已自動校準對齊。`,
+      recordCount: totalRecords,
+      moduleCount: stats.length
+    };
+  } catch (err: unknown) {
+    const error = err as Error;
+    return {
+      success: false,
+      message: `SQLite 還原失敗: ${error.message}`
+    };
+  }
+}
+
+// 🏛️ 全庫 SQL 文字指令稿一鍵上傳還原 (.sql)
+export function restoreFromSqlScript(
+  sqlContent: string,
+  operatorName: string = '系統管理者'
+): { success: boolean; message: string; recordCount?: number; moduleCount?: number } {
+  if (!dbInstance) return { success: false, message: '資料庫尚未初始化' };
+  try {
+    if (!sqlContent || !sqlContent.trim()) {
+      throw new Error('SQL 檔案內容為空');
+    }
+
+    dbInstance.run(sqlContent);
+    ensureDatabaseIntegrity(dbInstance);
+    reseedDocumentSequences(dbInstance);
+    saveDatabaseSnapshot();
+    notifyListeners();
+
+    const stats = getDatabaseModuleStats(dbInstance);
+    const totalRecords = stats.reduce((acc, cur) => acc + cur.totalRecords, 0);
+
+    try {
+      logAudit(
+        dbInstance,
+        operatorName,
+        '還原資料庫',
+        '全庫備份還原',
+        'SQL 指令稿全庫還原',
+        undefined,
+        { '還原模組數': stats.length, '總資料筆數': totalRecords, '操作人員': operatorName },
+        operatorName
+      );
+    } catch (_) {}
+
+    return {
+      success: true,
+      message: `SQL 指令稿還原成功！已更新全模組資料庫，共計 ${totalRecords.toLocaleString()} 筆資料，各單據流水號計數器已自動校準對齊。`,
+      recordCount: totalRecords,
+      moduleCount: stats.length
+    };
+  } catch (err: unknown) {
+    const error = err as Error;
+    return {
+      success: false,
+      message: `SQL 還原失敗: ${error.message}`
+    };
+  }
+}
+
 // 執行自訂 SQL (給資料庫管理介面之即時 Console 使用)
 export function executeCustomQuery(sqlQuery: string): { columns: string[]; values: (string | number | null)[][] }[] {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
@@ -1766,13 +1891,14 @@ export function restoreModularBackup(
 }
 
 // 取得各模組即時資料統計
-export function getDatabaseModuleStats(): {
+export function getDatabaseModuleStats(db?: Database): {
   moduleKey: string;
   moduleName: string;
   tables: string[];
   totalRecords: number;
 }[] {
-  if (!dbInstance) return [];
+  const targetDb = db || dbInstance;
+  if (!targetDb) return [];
 
   const modules = [
     { key: 'COMPANIES', name: '公司法人與集團實體', tables: ['companies'] },
@@ -1792,7 +1918,7 @@ export function getDatabaseModuleStats(): {
     let count = 0;
     for (const t of m.tables) {
       try {
-        const res = dbInstance!.exec(`SELECT count(*) FROM ${t};`);
+        const res = targetDb.exec(`SELECT count(*) FROM ${t};`);
         count += Number(res[0]?.values[0]?.[0] || 0);
       } catch (_) {}
     }

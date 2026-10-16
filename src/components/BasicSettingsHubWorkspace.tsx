@@ -36,7 +36,8 @@ import {
   Terminal,
   FileText,
   Wrench,
-  CheckCheck
+  CheckCheck,
+  Upload
 } from 'lucide-react';
 import {
   Company,
@@ -69,7 +70,10 @@ import {
   getDatabaseModuleStats,
   getAnnualArchiveSnapshots,
   createAnnualArchiveSnapshot,
-  reseedDocumentSequences
+  reseedDocumentSequences,
+  restoreFromSqliteBinary,
+  restoreFromSqlScript,
+  resetToSeedData
 } from '../db/sqlite';
 import { useAuth } from '../context/AuthContext';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
@@ -136,6 +140,16 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
   const [newArchiveYear, setNewArchiveYear] = useState<number>(new Date().getFullYear());
   const [newArchiveDesc, setNewArchiveDesc] = useState<string>('');
   const [isArchiving, setIsArchiving] = useState<boolean>(false);
+
+  // 全庫上傳還原狀態 (支援 .sqlite / .db / .sql)
+  const [hubRestoreFile, setHubRestoreFile] = useState<File | null>(null);
+  const [hubRestoreFilePreview, setHubRestoreFilePreview] = useState<{
+    name: string;
+    sizeFormatted: string;
+    type: 'SQLITE' | 'SQL' | 'UNKNOWN';
+  } | null>(null);
+  const [isRestoringHubDb, setIsRestoringHubDb] = useState(false);
+  const [isDraggingHubDb, setIsDraggingHubDb] = useState(false);
 
   const loadData = () => {
     // 1. 系統參數
@@ -455,6 +469,113 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
       triggerToast(`✅ 已啟動下載 ${snapshot.archiveFileName}！`);
     } catch (e: any) {
       triggerToast(`⛔ 下載失敗: ${e.message}`);
+    }
+  };
+
+  // 全庫上傳還原處理器
+  const handleHubSelectFile = (file: File) => {
+    setHubRestoreFile(file);
+    const sizeKB = Math.round(file.size / 1024);
+    const sizeFormatted = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(2)} MB` : `${sizeKB} KB`;
+    const lowerName = file.name.toLowerCase();
+    let fileType: 'SQLITE' | 'SQL' | 'UNKNOWN' = 'UNKNOWN';
+    if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
+      fileType = 'SQLITE';
+    } else if (lowerName.endsWith('.sql')) {
+      fileType = 'SQL';
+    }
+    setHubRestoreFilePreview({
+      name: file.name,
+      sizeFormatted,
+      type: fileType
+    });
+  };
+
+  const handleHubExecuteRestore = async () => {
+    if (!hubRestoreFile) {
+      triggerToast('⚠️ 請先選擇欲還原之資料庫檔案');
+      return;
+    }
+    const isConfirmed = window.confirm(
+      `⚠️【資料庫全庫覆蓋確認】\n\n您即將以檔案【${hubRestoreFile.name}】覆蓋還原目前的 ERP 資料庫！\n現有資料將會被完全替換。還原完成後系統將自動校準全模組單據流水號計數器。\n\n確定立即執行全庫還原嗎？`
+    );
+    if (!isConfirmed) return;
+
+    setIsRestoringHubDb(true);
+    try {
+      const lowerName = hubRestoreFile.name.toLowerCase();
+      if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
+        const buffer = await hubRestoreFile.arrayBuffer();
+        const res = await restoreFromSqliteBinary(buffer, currentUser?.fullName || '系統管理者');
+        if (res.success) {
+          triggerToast(`✅ ${res.message}`);
+          setHubRestoreFile(null);
+          setHubRestoreFilePreview(null);
+          loadData();
+          onDataChanged();
+        } else {
+          triggerToast(`❌ ${res.message}`);
+        }
+      } else if (lowerName.endsWith('.sql')) {
+        const text = await hubRestoreFile.text();
+        const res = restoreFromSqlScript(text, currentUser?.fullName || '系統管理者');
+        if (res.success) {
+          triggerToast(`✅ ${res.message}`);
+          setHubRestoreFile(null);
+          setHubRestoreFilePreview(null);
+          loadData();
+          onDataChanged();
+        } else {
+          triggerToast(`❌ ${res.message}`);
+        }
+      } else {
+        triggerToast('❌ 不支援的檔案格式，請上傳 .sqlite 或 .sql 檔案');
+      }
+    } catch (err: unknown) {
+      triggerToast(`❌ 還原失敗: ${(err as Error).message}`);
+    } finally {
+      setIsRestoringHubDb(false);
+    }
+  };
+
+  const handleHubDownloadSqlite = () => {
+    try {
+      const binary = exportSqliteBinary();
+      const blob = new Blob([binary.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `enterprise_erp_database_${new Date().toISOString().slice(0, 10)}.sqlite`;
+      link.click();
+      URL.revokeObjectURL(url);
+      triggerToast('✅ 已成功下載 .sqlite 二進位資料庫實體備份檔案');
+    } catch (e: any) {
+      triggerToast('❌ 下載失敗: ' + (e?.message || String(e)));
+    }
+  };
+
+  const handleHubDownloadSql = () => {
+    try {
+      const sqlContent = exportSqlDump();
+      const blob = new Blob([sqlContent], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `enterprise_erp_dump_${new Date().toISOString().slice(0, 10)}.sql`;
+      link.click();
+      URL.revokeObjectURL(url);
+      triggerToast('✅ 已成功匯出完整 SQL DDL & INSERT 備份指令稿');
+    } catch (e: any) {
+      triggerToast('❌ 匯出失敗: ' + (e?.message || String(e)));
+    }
+  };
+
+  const handleHubResetSeed = () => {
+    if (window.confirm('⚠️ 確定要將資料庫重置為標準營造工程初始種子狀態嗎？目前未備份之測試資料將會被覆蓋！')) {
+      resetToSeedData();
+      triggerToast('✅ 資料庫已成功重設為初始標準測試種子狀態！');
+      loadData();
+      onDataChanged();
     }
   };
 
@@ -1880,65 +2001,210 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                {onOpenDatabaseCenter && (
-                  <button
-                    onClick={onOpenDatabaseCenter}
-                    className="p-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer shadow-xs"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <Database className="w-4 h-4 text-indigo-200" />
-                      <span className="text-[9px] bg-white/20 px-1 py-0.2 rounded font-mono">完整中心</span>
-                    </div>
-                    <div>
-                      <div>歷史封存與時段備份中心</div>
-                      <div className="text-[10px] text-indigo-200 font-normal mt-0.5">彈出完整時段過濾與還原視窗</div>
-                    </div>
-                  </button>
-                )}
+                <button
+                  onClick={onOpenDatabaseCenter ? onOpenDatabaseCenter : () => triggerToast('💡 可點擊畫面頂部右上角齒輪或資料庫圖示開啟進階彈窗')}
+                  className="p-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer shadow-xs"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <Database className="w-4 h-4 text-indigo-200" />
+                    <span className="text-[9px] bg-white/20 px-1 py-0.2 rounded font-mono">完整彈窗</span>
+                  </div>
+                  <div>
+                    <div>歷史封存與進階管理中心</div>
+                    <div className="text-[10px] text-indigo-200 font-normal mt-0.5">彈出完整時段過濾與結構審核</div>
+                  </div>
+                </button>
 
-                {onQuickBackupSql && (
-                  <button
-                    onClick={onQuickBackupSql}
-                    className="p-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer border border-slate-700"
-                  >
-                    <div className="mb-2">
-                      <FileCode className="w-4 h-4 text-emerald-400" />
-                    </div>
-                    <div>
-                      <div>匯出全庫 SQL 指令稿</div>
-                      <div className="text-[10px] text-slate-400 font-normal mt-0.5">標準 DDL 與純文字備份</div>
-                    </div>
-                  </button>
-                )}
+                <button
+                  onClick={onQuickBackupSql || handleHubDownloadSql}
+                  className="p-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer border border-slate-700"
+                >
+                  <div className="mb-2">
+                    <FileCode className="w-4 h-4 text-emerald-400" />
+                  </div>
+                  <div>
+                    <div>匯出全庫 SQL 指令稿</div>
+                    <div className="text-[10px] text-slate-400 font-normal mt-0.5">標準 DDL 與純文字備份</div>
+                  </div>
+                </button>
 
-                {onQuickBackupSqlite && (
-                  <button
-                    onClick={onQuickBackupSqlite}
-                    className="p-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer border border-slate-700"
-                  >
-                    <div className="mb-2">
-                      <HardDrive className="w-4 h-4 text-cyan-400" />
-                    </div>
-                    <div>
-                      <div>下載 SQLite 快照 (.sqlite)</div>
-                      <div className="text-[10px] text-slate-400 font-normal mt-0.5">二進位實體資料庫檔案</div>
-                    </div>
-                  </button>
-                )}
+                <button
+                  onClick={onQuickBackupSqlite || handleHubDownloadSqlite}
+                  className="p-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer border border-slate-700"
+                >
+                  <div className="mb-2">
+                    <HardDrive className="w-4 h-4 text-cyan-400" />
+                  </div>
+                  <div>
+                    <div>下載 SQLite 快照 (.sqlite)</div>
+                    <div className="text-[10px] text-slate-400 font-normal mt-0.5">二進位實體資料庫檔案</div>
+                  </div>
+                </button>
 
-                {onResetDatabase && (
+                <button
+                  onClick={onResetDatabase || handleHubResetSeed}
+                  className="p-3 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-200 text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer border border-rose-900/60"
+                >
+                  <div className="mb-2">
+                    <RotateCcw className="w-4 h-4 text-rose-400" />
+                  </div>
+                  <div>
+                    <div>重設出廠預設種子</div>
+                    <div className="text-[10px] text-rose-300 font-normal mt-0.5">重灌初始業務範例</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* 🏛️ 核心升級：全庫檔案一鍵拖曳／上傳還原面板 */}
+            <div className="border border-slate-200 rounded-xl bg-white p-5 space-y-4 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
+                    <Upload className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <span>全庫備份檔案一鍵上傳還原 (Direct Database File Restore)</span>
+                      <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono font-bold">
+                        極簡操作
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      只要上傳整庫檔案，系統即刻在本地以 WebAssembly 記憶體實體重新掛載並覆寫儲存，1 秒內全庫直接還原！
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={onResetDatabase}
-                    className="p-3 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-200 text-left text-xs font-bold flex flex-col justify-between transition-colors cursor-pointer border border-rose-900/60"
+                    type="button"
+                    onClick={handleHubDownloadSqlite}
+                    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    <div className="mb-2">
-                      <RotateCcw className="w-4 h-4 text-rose-400" />
+                    <Download className="w-3.5 h-3.5" />
+                    <span>備份當前庫 (.sqlite)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 拖曳或點選上傳區 */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDraggingHubDb(true);
+                }}
+                onDragLeave={() => setIsDraggingHubDb(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDraggingHubDb(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleHubSelectFile(file);
+                }}
+                className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+                  isDraggingHubDb
+                    ? 'border-indigo-500 bg-indigo-50/50 scale-[1.01]'
+                    : hubRestoreFile
+                    ? 'border-emerald-400 bg-emerald-50/20'
+                    : 'border-slate-300 hover:border-indigo-400 bg-slate-50/60'
+                }`}
+              >
+                <input
+                  type="file"
+                  id="hub-database-file-input"
+                  accept=".sqlite,.db,.sql"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleHubSelectFile(file);
+                  }}
+                  className="hidden"
+                />
+
+                {!hubRestoreFile ? (
+                  <label
+                    htmlFor="hub-database-file-input"
+                    className="cursor-pointer flex flex-col items-center justify-center space-y-2.5 py-2"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
+                      <Upload className="w-6 h-6" />
                     </div>
                     <div>
-                      <div>重設出廠預設種子</div>
-                      <div className="text-[10px] text-rose-300 font-normal mt-0.5">重灌初始業務範例</div>
+                      <div className="text-xs font-bold text-slate-800">
+                        點擊選取 或 將備份檔案拖曳至此處
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        支援 <code className="bg-slate-200 px-1 py-0.5 rounded text-indigo-700 font-mono font-bold">.sqlite</code>、
+                        <code className="bg-slate-200 px-1 py-0.5 rounded text-indigo-700 font-mono font-bold">.db</code> 實體資料庫，或 
+                        <code className="bg-slate-200 px-1 py-0.5 rounded text-emerald-700 font-mono font-bold">.sql</code> 指令檔
+                      </p>
                     </div>
-                  </button>
+                    <span className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition-colors">
+                      瀏覽電腦中的檔案
+                    </span>
+                  </label>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold shadow-xs">
+                        {hubRestoreFilePreview?.type === 'SQLITE' ? <HardDrive className="w-5 h-5" /> : <FileCode className="w-5 h-5" />}
+                      </div>
+                      <div className="text-left">
+                        <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                          <span>{hubRestoreFilePreview?.name}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                            hubRestoreFilePreview?.type === 'SQLITE'
+                              ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                              : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                          }`}>
+                            {hubRestoreFilePreview?.type === 'SQLITE' ? 'SQLite 3 實體二進位庫' : 'SQL 指令稿'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          檔案大小：<span className="font-mono font-bold text-slate-700">{hubRestoreFilePreview?.sizeFormatted}</span> · 檔案檢查完畢
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHubRestoreFile(null);
+                          setHubRestoreFilePreview(null);
+                        }}
+                        className="ml-4 text-xs text-rose-600 hover:text-rose-800 font-bold px-2.5 py-1 rounded hover:bg-rose-50 cursor-pointer transition-colors"
+                      >
+                        重新選取檔案
+                      </button>
+                    </div>
+
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 text-left flex items-start gap-2.5 max-w-2xl mx-auto">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-bold">安全提醒：執行還原將會以所選檔案完全取代目前系統中的所有資料表！</div>
+                        <div className="text-[11px] text-amber-800/90 mt-0.5">
+                          還原完成後系統將自動校準全模組單據流水號計數器，確保後續開單絕不撞號。建議先下載當前庫備份留底。
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={handleHubDownloadSqlite}
+                        className="px-3.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>還原前先下載當前庫備份防呆 (建議)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleHubExecuteRestore}
+                        disabled={isRestoringHubDb}
+                        className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Upload className="w-4 h-4 text-emerald-300" />
+                        <span>{isRestoringHubDb ? '正在全庫還原中...' : '確認執行全庫覆蓋還原'}</span>
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

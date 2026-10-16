@@ -60,6 +60,7 @@ interface RightSubWindowProps {
   selectedCompanyId: string;
   onSelectCompany: (companyId: string) => void;
   onReloadData: () => void;
+  onOpenDatabaseCenter?: () => void;
 }
 
 const NAV_TO_MODULE_KEY: Record<LeftNavId, ModuleKey> = {
@@ -91,6 +92,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   selectedCompanyId,
   onSelectCompany,
   onReloadData,
+  onOpenDatabaseCenter,
 }) => {
   const { currentUser, currentGroup, approvalLimit, isSuperadmin, isAdmin, can, checkApproval } = useAuth();
   const hasUserManagementAccess = isSuperadmin || Boolean(currentUser?.canManageUsers);
@@ -565,6 +567,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
             onSelectCompany={onSelectCompany}
             onDataChanged={onReloadData}
             triggerToast={triggerModuleToast}
+            onOpenDatabaseCenter={onOpenDatabaseCenter}
           />
         )}
 

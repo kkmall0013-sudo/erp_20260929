@@ -19,7 +19,8 @@ import {
   Clock,
   Sparkles,
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  FileCode
 } from 'lucide-react';
 import {
   exportSqlDump,
@@ -32,7 +33,9 @@ import {
   getAnnualArchiveSnapshots,
   createAnnualArchiveSnapshot,
   executeCustomQuery,
-  reseedDocumentSequences
+  reseedDocumentSequences,
+  restoreFromSqliteBinary,
+  restoreFromSqlScript
 } from '../db/sqlite';
 import {
   AnnualArchiveSnapshot,
@@ -79,6 +82,17 @@ export const DatabaseManagementModal: React.FC<DatabaseManagementModalProps> = (
 
   // SQL 匯入狀態
   const [importSqlText, setImportSqlText] = useState<string>('');
+
+  // 全庫上傳還原狀態 (支援 .sqlite / .db / .sql)
+  const [ghostFile, setGhostFile] = useState<File | null>(null);
+  const [ghostFilePreview, setGhostFilePreview] = useState<{
+    name: string;
+    sizeFormatted: string;
+    type: 'SQLITE' | 'SQL' | 'UNKNOWN';
+  } | null>(null);
+  const [isRestoringGhost, setIsRestoringGhost] = useState(false);
+  const [showManualSql, setShowManualSql] = useState(false);
+  const [isDraggingGhost, setIsDraggingGhost] = useState(false);
 
   // 萬能檢視器狀態
   const [inspectorTable, setInspectorTable] = useState<string>('projects');
@@ -157,6 +171,71 @@ export const DatabaseManagementModal: React.FC<DatabaseManagementModalProps> = (
       showToast('✅ 已成功下載 .sqlite 二進位資料庫實體備份檔案');
     } catch (e) {
       showToast('❌ 下載失敗: ' + (e as Error).message);
+    }
+  };
+
+  const handleSelectGhostFile = (file: File) => {
+    setGhostFile(file);
+    const sizeKB = Math.round(file.size / 1024);
+    const sizeFormatted = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(2)} MB` : `${sizeKB} KB`;
+    const lowerName = file.name.toLowerCase();
+    let fileType: 'SQLITE' | 'SQL' | 'UNKNOWN' = 'UNKNOWN';
+    if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
+      fileType = 'SQLITE';
+    } else if (lowerName.endsWith('.sql')) {
+      fileType = 'SQL';
+    }
+    setGhostFilePreview({
+      name: file.name,
+      sizeFormatted,
+      type: fileType
+    });
+  };
+
+  const handleExecuteGhostRestore = async () => {
+    if (!ghostFile) {
+      showToast('⚠️ 請先選擇欲還原之資料庫檔案');
+      return;
+    }
+    const isConfirmed = window.confirm(
+      `⚠️【資料庫全庫覆蓋確認】\n\n您即將以檔案【${ghostFile.name}】覆蓋還原目前的 ERP 資料庫！\n現有資料將會被完全替換。還原完成後系統將自動校準全模組單據流水號計數器。\n\n確定立即執行全庫還原嗎？`
+    );
+    if (!isConfirmed) return;
+
+    setIsRestoringGhost(true);
+    try {
+      const lowerName = ghostFile.name.toLowerCase();
+      if (lowerName.endsWith('.sqlite') || lowerName.endsWith('.db')) {
+        const buffer = await ghostFile.arrayBuffer();
+        const res = await restoreFromSqliteBinary(buffer, '系統管理者');
+        if (res.success) {
+          showToast(`✅ ${res.message}`);
+          setGhostFile(null);
+          setGhostFilePreview(null);
+          loadData();
+          onDataChanged();
+        } else {
+          showToast(`❌ ${res.message}`);
+        }
+      } else if (lowerName.endsWith('.sql')) {
+        const text = await ghostFile.text();
+        const res = restoreFromSqlScript(text, '系統管理者');
+        if (res.success) {
+          showToast(`✅ ${res.message}`);
+          setGhostFile(null);
+          setGhostFilePreview(null);
+          loadData();
+          onDataChanged();
+        } else {
+          showToast(`❌ ${res.message}`);
+        }
+      } else {
+        showToast('❌ 不支援的檔案格式，請上傳 .sqlite 或 .sql 檔案');
+      }
+    } catch (err: unknown) {
+      showToast(`❌ 還原失敗: ${(err as Error).message}`);
+    } finally {
+      setIsRestoringGhost(false);
     }
   };
 
@@ -463,38 +542,170 @@ export const DatabaseManagementModal: React.FC<DatabaseManagementModalProps> = (
                 </div>
               </div>
 
-              {/* SQL 還原與種子重設 */}
+              {/* 🏛️ 全庫檔案一鍵上傳還原 (核心焦點) */}
               <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2">
-                    <Upload className="w-4 h-4 text-slate-600" />
-                    <h4 className="text-sm font-bold text-slate-800">全庫 SQL 語法還原</h4>
+                    <Upload className="w-4 h-4 text-indigo-600" />
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800">全庫檔案一鍵上傳還原 (Direct File Restore)</h4>
+                      <p className="text-[11px] text-slate-500">支援 .sqlite / .db 實體庫二進位檔案，或 .sql 標準建表資料指令檔</p>
+                    </div>
                   </div>
                   <button
                     onClick={handleResetSeed}
                     className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1 rounded-md font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>一鍵重設營造工程測試種子庫</span>
+                    <span>一鍵重設測試種子庫</span>
                   </button>
                 </div>
 
-                <textarea
-                  value={importSqlText}
-                  onChange={(e) => setImportSqlText(e.target.value)}
-                  placeholder="在此貼上 .sql 指令稿文本，點擊下方按鈕即可整庫覆蓋還原..."
-                  rows={4}
-                  className="w-full font-mono text-xs p-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50/50"
-                />
+                {/* 檔案拖曳與選取區 */}
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDraggingGhost(true);
+                  }}
+                  onDragLeave={() => setIsDraggingGhost(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDraggingGhost(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) handleSelectGhostFile(file);
+                  }}
+                  className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+                    isDraggingGhost
+                      ? 'border-indigo-500 bg-indigo-50/50 scale-[1.01]'
+                      : ghostFile
+                      ? 'border-emerald-400 bg-emerald-50/20'
+                      : 'border-slate-300 hover:border-indigo-400 bg-slate-50/50'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    id="modal-ghost-file-input"
+                    accept=".sqlite,.db,.sql"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleSelectGhostFile(file);
+                    }}
+                    className="hidden"
+                  />
 
-                <div className="flex justify-end">
+                  {!ghostFile ? (
+                    <label
+                      htmlFor="modal-ghost-file-input"
+                      className="cursor-pointer flex flex-col items-center justify-center space-y-2"
+                    >
+                      <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <div className="text-xs font-bold text-slate-800">
+                        點擊選擇或將資料庫備份檔案拖曳至此
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        支援 <code className="bg-slate-200 px-1 py-0.5 rounded text-indigo-700 font-mono">.sqlite</code>、
+                        <code className="bg-slate-200 px-1 py-0.5 rounded text-indigo-700 font-mono">.db</code>、
+                        <code className="bg-slate-200 px-1 py-0.5 rounded text-emerald-700 font-mono">.sql</code>
+                      </p>
+                    </label>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                          {ghostFilePreview?.type === 'SQLITE' ? <HardDrive className="w-5 h-5" /> : <FileCode className="w-5 h-5" />}
+                        </div>
+                        <div className="text-left">
+                          <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                            <span>{ghostFilePreview?.name}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                              ghostFilePreview?.type === 'SQLITE'
+                                ? 'bg-indigo-100 text-indigo-700'
+                                : 'bg-emerald-100 text-emerald-700'
+                            }`}>
+                              {ghostFilePreview?.type === 'SQLITE' ? 'SQLite 3 實體二進位庫' : 'SQL 指令稿檔案'}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            檔案大小：{ghostFilePreview?.sizeFormatted} · 準備還原
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGhostFile(null);
+                            setGhostFilePreview(null);
+                          }}
+                          className="ml-4 text-xs text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded hover:bg-rose-50"
+                        >
+                          重新選擇
+                        </button>
+                      </div>
+
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 text-left flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="font-bold">安全提醒：執行還原將會以所選檔案完全取代目前系統的所有資料表！</div>
+                          <div className="text-[11px] text-amber-800/90 mt-0.5">
+                            還原完成後系統將自動校準全模組單據流水號計數器，確保後續開單絕不撞號。建議先點擊下方防呆按鈕下載備份。
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={handleExportBinary}
+                          className="px-3.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>還原前先下載當前庫備份防呆 (建議)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExecuteGhostRestore}
+                          disabled={isRestoringGhost}
+                          className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <Upload className="w-4 h-4 text-emerald-300" />
+                          <span>{isRestoringGhost ? '正在還原掛載資料庫...' : '確認執行全庫覆蓋還原'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 貼上純文字 SQL (摺疊展開) */}
+                <div className="border-t border-slate-100 pt-3">
                   <button
-                    onClick={handleExecuteImportSql}
-                    className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg flex items-center gap-2 shadow-xs cursor-pointer transition-colors"
+                    type="button"
+                    onClick={() => setShowManualSql(!showManualSql)}
+                    className="text-xs text-slate-500 hover:text-indigo-600 font-medium flex items-center gap-1 transition-colors"
                   >
-                    <Upload className="w-4 h-4 text-emerald-400" />
-                    <span>執行 SQL 還原資料庫</span>
+                    <span>{showManualSql ? '▼ 收起純文字 SQL 語法手動輸入區' : '▶ 進階工程師模式：手動貼上 SQL 語法指令還原'}</span>
                   </button>
+
+                  {showManualSql && (
+                    <div className="mt-3 space-y-3">
+                      <textarea
+                        value={importSqlText}
+                        onChange={(e) => setImportSqlText(e.target.value)}
+                        placeholder="在此貼上 .sql 指令稿文本，點擊下方按鈕即可整庫覆蓋還原..."
+                        rows={4}
+                        className="w-full font-mono text-xs p-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50/50"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          onClick={handleExecuteImportSql}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                        >
+                          <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>執行文字 SQL 還原</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

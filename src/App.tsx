@@ -198,6 +198,7 @@ export const App: React.FC = () => {
             selectedCompanyId={selectedCompanyId}
             onSelectCompany={setSelectedCompanyId}
             onReloadData={reloadData}
+            onOpenDatabaseCenter={() => setIsDbCenterOpen(true)}
           />
         </div>
 
