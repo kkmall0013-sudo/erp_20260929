@@ -35,6 +35,7 @@ import { BusinessPartnerWorkspace } from './BusinessPartnerWorkspace';
 import { MiniAppsWorkspace } from './MiniAppsWorkspace';
 import { UniversalVaultWorkspace } from './attachments/UniversalVaultWorkspace';
 import { QuotationWorkspace } from './quotations/QuotationWorkspace';
+import { InboundWorkspace } from './InboundWorkspace';
 import { AppSettingsWorkspace } from './AppSettingsWorkspace';
 import { BasicSettingsHubWorkspace } from './BasicSettingsHubWorkspace';
 import { useAuth } from '../context/AuthContext';
@@ -74,6 +75,7 @@ const NAV_TO_MODULE_KEY: Record<LeftNavId, ModuleKey> = {
   MINI_APPS: 'SYSTEM_CONFIGS',
   VAULT: 'SYSTEM_CONFIGS',
   QUOTATIONS: 'QUOTATIONS',
+  INBOUND: 'INBOUND_RECEIPTS',
   PROCUREMENT: 'PURCHASE_ORDERS',
   VALUATIONS: 'VALUATIONS',
   FINANCE: 'BANK_CHECKS',
@@ -172,6 +174,8 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         return '商業夥伴主檔管理';
       case 'QUOTATIONS':
         return '報價與銷售 (CPQ 核心引擎)';
+      case 'INBOUND':
+        return '現場進貨管理工作台 (Inbound Goods Management)';
       case 'PROCUREMENT':
         return '採購與發包合約管理 (PO)';
       case 'VALUATIONS':
@@ -585,7 +589,8 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           'PARTNERS',
           'MINI_APPS',
           'VAULT',
-          'QUOTATIONS'
+          'QUOTATIONS',
+          'INBOUND'
         ].includes(activeNavId) && (
           <div className="space-y-4">
             {/* 頂部權限實測控制台 */}
@@ -859,6 +864,14 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         {activeNavId === 'QUOTATIONS' && (
           <QuotationWorkspace
             onNotify={triggerModuleToast}
+          />
+        )}
+
+        {/* K. 現場進貨管理工作台 (Inbound Goods Management - A 模式直入案場成本 · 與會計大水池無縫對接) */}
+        {activeNavId === 'INBOUND' && (
+          <InboundWorkspace
+            onDataChanged={onReloadData}
+            triggerToast={triggerModuleToast}
           />
         )}
       </div>

@@ -17,6 +17,7 @@ export type ActiveTab =
   | 'FLOWCHART'
   | 'PARTNERS'
   | 'QUOTATIONS'
+  | 'INBOUND'
   | 'PROCUREMENT'
   | 'VALUATIONS'
   | 'FINANCE'

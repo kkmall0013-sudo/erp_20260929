@@ -759,29 +759,79 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 | `isDeleted` | 軟刪除標記。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### GoodsReceipt｜收貨單
+### InboundReceipt｜進貨簽收單 (`inbound_receipts` / 原 `goods_receipts`)
+
+> **架構定位**：**【現場進貨簽收主表 · A 模式直入案場成本 · 與會計大水池無縫對接】**。
+> 專責記錄材料送達現場之點收事實，直接歸戶案場成本（A 模式）。落實職責分離（Separation of Concerns）：**進貨嚴格不碰發票號碼、不做折讓扣款、不排定付款日**；單據過帳後自動以 `PENDING_BILLING` 狀態沉澱於廠商帳款大水池，待會計月底拉單勾稽。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 收貨單識別碼。 |
-| `receiptNumber` | 收貨單號。 |
-| `purchaseOrderId` | 對應採購單；嚴謹模式下必填。 |
-| `isDropShip` | 是否直接送至工地。 |
-| `receivedDate` | 實際收貨日期。 |
-| `status` | 收貨單狀態。 |
+| `id` | 進貨簽收單識別碼 (UUID)。 |
+| `receiptNumber` | 進貨單號（編碼規範: `INB-YYYYMM-0001`，具備 `UNIQUE NOT NULL` 物理鐵壁）。 |
+| `companyId` | 所屬營運法人 ID。 |
+| `projectId` | **歸屬工區案場 ID (A 模式)**：材料送達現場即直接歸戶該專案成本，免去中心庫存倉庫與領料調撥手續。 |
+| `vendorId` | 合作廠商／供應商商業夥伴 ID (Vendor BP ID)。 |
+| `deliveryNoteNumber` | **廠商送貨單號／簽收單號**：現場紙本簽收單之單據號碼，供月底對帳核對憑據。 |
+| `receivedDate` | 現場實收簽收日期 (YYYY-MM-DD)。 |
+| `receivedBy` | 現場點收人／簽收同仁姓名快照（如「王主任」）。 |
+| `totalAmount` | 進貨未稅總金額（明細小計合計，作為會計核算基準）。 |
+| `billingStatus` | 請款對帳狀態：<br>• `PENDING_BILLING`：待對帳請款（貨已進、簽收無誤，於廠商大水池中沉澱）。<br>• `BILLED`：已對帳請款（會計已勾選納入應付對帳單）。 |
+| `reconciliationId` | **會計對帳單勾稽外鍵 (Hook)**：未請款為 `NULL`；未來會計對帳單過帳時自動回填所屬 `reconciliationId`，實現雙模組乾淨對接。 |
+| `purchaseOrderId` | 對應採購單 ID（選填；首階段優先獨立運作，未來擴充採購模組時無縫關聯）。 |
+| `status` | 單據狀態：`DRAFT`（草稿）、`POSTED`（已過帳入水池）、`VOIDED`（作廢）。 |
+| `attachmentFileId` | 現場簽收單拍照圖檔／PDF 掃描檔 ID（調用 Vault 附件庫，供會計遠端查核紙本筆跡）。 |
+| `notes` | 進貨簽收備註（如「水泥防潮堆置工區 A 棟一樓」）。 |
+| `isDeleted` | 軟刪除標記（預設 `0`）。 |
+| `version` | 樂觀鎖版本號（預設 `1`）。 |
+| `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+
+> **🛡️ 職責分離憲法鐵律 (Separation of Concerns Safeguard)**：
+> 1. 進貨單嚴格不儲存 `invoiceNumber`（發票號碼）、`taxAmount`（營業稅）、`discountAmount`（折讓金額）、`paymentDueDate`（預計付款日）或票據欄位。
+> 2. 上述財務與發票欄位嚴格歸屬於會計模組之 `AccountsPayableReconciliation`（應付對帳單），確保現場打單最精簡、財務對帳最精確。
+
+### InboundReceiptItem｜進貨明細 (`inbound_receipt_items` / 原 `goods_receipt_items`)
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 進貨明細識別碼 (UUID)。 |
+| `receiptId` | 所屬進貨簽收單 ID (`InboundReceipt.id`)。 |
+| `itemCode` | 料件或工項代碼（選填，支援一次性或自訂品項）。 |
+| `itemName` | 材料品名全銜（如「國產實業 4000psi 預拌混凝土」、「環球石膏板 12mm」）。 |
+| `spec` | 規格型號／尺寸（如「抗滲型」、「3x6 台尺」）。 |
+| `unit` | 計量單位（如「包」、「m³」、「噸」、「才」、「塊」、「式」）。 |
+| `quantity` | 現場實收數量。 |
+| `unitPrice` | 約定進貨單價（最多 2 位小數）。 |
+| `lineAmount` | 行金額小計（`quantity * unitPrice`）。 |
+| `notes` | 單列備註。 |
 | `isDeleted` | 軟刪除標記。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### GoodsReceiptItem｜收貨明細
+### AccountsPayableReconciliation｜會計廠商應付對帳單 (`ap_reconciliations`)
+
+> **架構定位**：**【會計對帳水池核心 · 發票補登 · 折讓扣款 · 欠款水位與付款提醒】**。
+> 每逢月底月初，會計拉出指定廠商大水池中所有 `PENDING_BILLING` 之進貨簽收單勾選核對；當期無發票或有疑義者放著不勾選，保留於水池下期對帳。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 收貨明細識別碼。 |
-| `goodsReceiptId` | 所屬收貨單 ID。 |
-| `poItemId` | 對應採購明細 ID。 |
-| `receivedQuantity` | 現場實收數量。 |
-| `unitPrice` | 收貨單價；沿用 PO 價或超交時設為零。 |
-| `isOverReceipt` | 是否為超交零成本數量。 |
+| `id` | 應付對帳單識別碼。 |
+| `reconciliationNumber` | 對帳單號（編碼規範: `REC-YYYYMM-0001`）。 |
+| `companyId` | 本期入帳／稅務申報法人。 |
+| `vendorId` | 廠商商業夥伴 ID。 |
+| `billingPeriod` | 對帳期別（如 `2026-10`）。 |
+| `inboundTotalAmount` | 本期勾選進貨單之原始金額總和。 |
+| `discountAmount` | **折讓金額（粉紅扣款，以正數儲存）**：如領現金折讓、議價零頭扣減。 |
+| `taxType` | 稅額計算模式（`TAX_EXCLUSIVE` 外加 5% / `TAX_INCLUSIVE` 內含 / `TAX_EXEMPT` 免稅）。 |
+| `taxAmount` | 本期營業稅額。 |
+| `netPayableAmount` | 本期應付淨額（`inboundTotalAmount - discountAmount + taxAmount`）。 |
+| `invoiceNumber` | 本期發票號碼（多發票以逗號分隔或關聯發票主表；免用發票註記 `NONE`；跨期補票註記 `PENDING_NEXT`）。 |
+| `hasInvoice` | 本期是否具備發票（`BOOLEAN`）。 |
+| `paymentDueDate` | **預計付款日**（依廠商付款條件或協議排定，儀表板到期紅黃燈預警之基準）。 |
+| `status` | 對帳單狀態：`DRAFT`（草稿）、`APPROVED`（主管覆核/鎖定）、`PAID`（已放款沖銷）、`VOIDED`（作廢）。 |
+| `reconciledBy` | 對帳會計人員姓名。 |
+| `approvedBy` | 覆核主管姓名。 |
+| `disbursedAt` | 實際放款時間戳記。 |
+| `notes` | 對帳備註說明。 |
+| `isDeleted`、`version`、`createdAt`、`updatedAt` | 憲法標準欄位。 |
 
 供應商預付備料不另建 `PrepaidMaterialLedger`；採購端使用財務模組的共用 `PrepaymentLedger`，以 `partnerId`、`itemId`、`unitPrice`、`remainingQty` 及 `balanceAmount` 查詢對應預付批次。
 
@@ -797,7 +847,7 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 | `isDeleted` | 軟刪除標記。 |
 | `createdAt` | 建立時間。 |
 
-**規格提及、模型待補：**異常暫存的尾差調整額、調整原因及覆核人尚無專用欄位；Landed Cost 分攤模式及金額尚無資料模型。發票法人歸戶由共用 Invoice 的 `taxReportingCompanyId` 負責，不放在採購單；發票勾稽狀態由 `BillingInvoiceMapping` 推導，不在 `GoodsReceipt` 重複存 `isBilled`。
+**規格提及、模型待補：**異常暫存的尾差調整額、調整原因及覆核人尚無專用欄位；Landed Cost 分攤模式及金額尚無資料模型。發票法人歸戶由共用 Invoice 的 `taxReportingCompanyId` 負責，不放在進貨或採購單；發票勾稽狀態由 `AccountsPayableReconciliation` 與 `BillingInvoiceMapping` 推導，不在 `InboundReceipt` 重複存發票號碼與 `isBilled`。
 
 ## 發包合約與估驗計價
 

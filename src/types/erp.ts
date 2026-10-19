@@ -86,6 +86,7 @@ export type ModuleKey =
   | 'PROJECTS'
   | 'PARTNERS'
   | 'QUOTATIONS'
+  | 'INBOUND_RECEIPTS'
   | 'PURCHASE_ORDERS'
   | 'SUBCONTRACTS'
   | 'VALUATIONS'
@@ -505,6 +506,51 @@ export interface PurchaseOrderItem {
   unit: string;
   unitPrice: number;
   lineTotal: number;
+}
+
+// 現場進貨簽收模組 (Inbound Goods Management - 直入案場成本 A 模式)
+export type InboundReceiptStatus = 'DRAFT' | 'POSTED' | 'VOIDED';
+export type InboundBillingStatus = 'PENDING_BILLING' | 'BILLED';
+
+export interface InboundReceipt {
+  id: string;
+  receiptNumber: string; // INB-202610-0001
+  companyId: string;
+  projectId: string; // A 模式：直入案場成本
+  projectNameSnapshot?: string;
+  vendorId: string; // 供應商夥伴 ID
+  vendorNameSnapshot?: string;
+  vendorTaxIdSnapshot?: string;
+  deliveryNoteNumber: string; // 廠商送貨單號 / 現場簽收單號
+  receivedDate: string; // 簽收日期 YYYY-MM-DD
+  receivedBy: string; // 現場點收同仁姓名
+  totalAmount: number; // 未稅合計金額（明細小計加總）
+  billingStatus: InboundBillingStatus; // PENDING_BILLING | BILLED
+  reconciliationId?: string; // 會計對帳單勾稽外鍵錨點 (未請款為空)
+  reconciliationNumber?: string; // 對帳單號快照
+  purchaseOrderId?: string; // 預留未來採購單關聯
+  status: InboundReceiptStatus; // DRAFT | POSTED | VOIDED
+  attachmentFileId?: string; // 現場紙本簽收單照片/PDF附件 ID
+  attachmentFileName?: string;
+  notes?: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  items?: InboundReceiptItem[];
+}
+
+export interface InboundReceiptItem {
+  id: string;
+  receiptId: string;
+  itemCode?: string;
+  itemName: string;
+  spec?: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  notes?: string;
 }
 
 export interface Subcontract {

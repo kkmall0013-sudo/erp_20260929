@@ -16,7 +16,8 @@ import {
   Lock,
   FolderLock,
   Sparkles,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Truck
 } from 'lucide-react';
 
 export type LeftNavId =
@@ -30,6 +31,7 @@ export type LeftNavId =
   | 'MINI_APPS'
   | 'VAULT'
   | 'QUOTATIONS'
+  | 'INBOUND'
   | 'PROCUREMENT'
   | 'VALUATIONS'
   | 'FINANCE'
@@ -70,6 +72,7 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     { id: 'MINI_APPS', label: '小程式庫', icon: Sparkles },
     { id: 'VAULT', label: '檔案金庫', icon: FolderLock },
     { id: 'QUOTATIONS', label: '報價銷售', icon: FileSpreadsheet },
+    { id: 'INBOUND', label: '進貨管理', icon: Truck, badgeCount: 4 },
     { id: 'PROCUREMENT', label: '採購發包', icon: ShoppingCart },
     { id: 'VALUATIONS', label: '合約估驗', icon: HardHat },
     { id: 'FINANCE', label: '財務票據', icon: Receipt },
@@ -113,6 +116,8 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
         return isSuperadmin || isAdmin || can('PARTNERS', 'read');
       case 'QUOTATIONS':
         return isSuperadmin || isAdmin || can('QUOTATIONS', 'read');
+      case 'INBOUND':
+        return isSuperadmin || isAdmin || can('INBOUND_RECEIPTS', 'read') || can('PURCHASE_ORDERS', 'read');
       case 'PROCUREMENT':
         return isSuperadmin || isAdmin || can('PURCHASE_ORDERS', 'read') || can('SUBCONTRACTS', 'read');
       case 'VALUATIONS':

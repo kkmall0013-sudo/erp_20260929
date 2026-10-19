@@ -14,6 +14,10 @@ import {
   PartnerChequeRecord,
   PartnerBusinessCard,
   Item,
+  InboundReceipt,
+  InboundReceiptItem,
+  InboundReceiptStatus,
+  InboundBillingStatus,
   Quotation,
   QuotationRevision,
   QuotationItem,
@@ -647,6 +651,52 @@ function initializeTables(db: Database) {
       lineTotal REAL DEFAULT 0
     );
 
+    -- 6-1. 現場進貨簽收單與明細 (InboundReceipt & InboundReceiptItem - A模式直入案場成本)
+    CREATE TABLE IF NOT EXISTS inbound_receipts (
+      id TEXT PRIMARY KEY,
+      receiptNumber TEXT UNIQUE NOT NULL,
+      companyId TEXT NOT NULL,
+      projectId TEXT NOT NULL,
+      projectNameSnapshot TEXT,
+      vendorId TEXT NOT NULL,
+      vendorNameSnapshot TEXT,
+      vendorTaxIdSnapshot TEXT,
+      deliveryNoteNumber TEXT NOT NULL,
+      receivedDate TEXT NOT NULL,
+      receivedBy TEXT NOT NULL,
+      totalAmount REAL DEFAULT 0,
+      billingStatus TEXT DEFAULT 'PENDING_BILLING',
+      reconciliationId TEXT,
+      reconciliationNumber TEXT,
+      purchaseOrderId TEXT,
+      status TEXT DEFAULT 'DRAFT',
+      attachmentFileId TEXT,
+      attachmentFileName TEXT,
+      notes TEXT,
+      isDeleted INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS inbound_receipt_items (
+      id TEXT PRIMARY KEY,
+      receiptId TEXT NOT NULL,
+      itemCode TEXT,
+      itemName TEXT NOT NULL,
+      spec TEXT,
+      unit TEXT NOT NULL,
+      quantity REAL DEFAULT 1,
+      unitPrice REAL DEFAULT 0,
+      lineTotal REAL DEFAULT 0,
+      notes TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_inbound_project ON inbound_receipts (projectId, isDeleted);
+    CREATE INDEX IF NOT EXISTS idx_inbound_vendor ON inbound_receipts (vendorId, billingStatus, isDeleted);
+    CREATE INDEX IF NOT EXISTS idx_inbound_items_receipt ON inbound_receipt_items (receiptId);
+
+
     -- 7. 發包合約與估驗計價 (Subcontract & Valuation & ValuationItem)
     CREATE TABLE IF NOT EXISTS subcontracts (
       id TEXT PRIMARY KEY,
@@ -800,7 +850,7 @@ export function seedInitialData(db: Database) {
     'app_configs', 'companies', 'system_configs', 'regulatory_schedules', 'audit_logs', 'system_files', 'external_folder_links', 'file_links', 'projects', 'project_sites',
     'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
-    'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
+    'purchase_order_items', 'inbound_receipts', 'inbound_receipt_items', 'subcontracts', 'valuations', 'valuation_items',
     'accounts_payable', 'accounts_receivable', 'bank_checks'
   ];
   tables.forEach(t => db.run(`DELETE FROM ${t};`));
@@ -972,6 +1022,24 @@ export function seedInitialData(db: Database) {
       ('POI-02', 'PO-02', 'MAT-STEEL-SN', 'SN490C 特種耐震 H型鋼', '符合CNS標準合格銲材', 325, '噸', 48000, 15600000);
   `);
 
+  // 6-1. 現場進貨簽收單種子資料 (A模式直入南港與竹科案場成本，未請款沉澱於廠商大水池)
+  db.run(`
+    INSERT INTO inbound_receipts (id, receiptNumber, companyId, projectId, projectNameSnapshot, vendorId, vendorNameSnapshot, vendorTaxIdSnapshot, deliveryNoteNumber, receivedDate, receivedBy, totalAmount, billingStatus, reconciliationId, reconciliationNumber, purchaseOrderId, status, attachmentFileId, attachmentFileName, notes, isDeleted, version, createdAt, updatedAt)
+    VALUES
+      ('INB-01', 'INB-202603-0001', 'COMP-01', 'PRJ-01', '台北南港經貿園區商辦總部新建工程', 'BP-03', '台灣水泥股份有限公司 (台北營業所)', '03754904', 'TC-889922', '2026-03-12', '林工務主任', 288000, 'PENDING_BILLING', NULL, NULL, 'PO-01', 'POSTED', 'FILE-01', '台泥送貨簽收單_TC889922.pdf', '南港案B2底板澆置第一批點收無誤，坍度測試 18cm 合格', 0, 1, '2026-03-12 10:30:00', '2026-03-12 10:30:00'),
+      ('INB-02', 'INB-202603-0002', 'COMP-01', 'PRJ-01', '台北南港經貿園區商辦總部新建工程', 'BP-03', '台灣水泥股份有限公司 (台北營業所)', '03754904', 'TC-890105', '2026-03-18', '林工務主任', 360000, 'PENDING_BILLING', NULL, NULL, 'PO-01', 'POSTED', NULL, NULL, '南港案B2底板澆置第二批，現場已簽收磅單留存工務所', 0, 1, '2026-03-18 14:15:00', '2026-03-18 14:15:00'),
+      ('INB-03', 'INB-202603-0003', 'COMP-01', 'PRJ-01', '台北南港經貿園區商辦總部新建工程', 'BP-04', '中鋼結構工程股份有限公司', '86512390', 'CSC-202603-77', '2026-03-22', '周工務專員', 1200000, 'PENDING_BILLING', NULL, NULL, 'PO-02', 'POSTED', NULL, NULL, '首批地下柱核心構件吊裝進場，附出廠檢驗證明', 0, 1, '2026-03-22 09:00:00', '2026-03-22 09:00:00'),
+      ('INB-04', 'INB-202604-0004', 'COMP-01', 'PRJ-02', '新竹科技園區精密廠房無塵室機電擴建專案', 'BP-03', '台灣水泥股份有限公司 (台北營業所)', '03754904', 'TC-910022', '2026-04-10', '張現場監工', 176000, 'PENDING_BILLING', NULL, NULL, 'PO-03', 'DRAFT', NULL, NULL, '無塵室基座地坪填平用，現場初點簽單，待主任覆核', 0, 1, '2026-04-10 11:20:00', '2026-04-10 11:20:00');
+
+    INSERT INTO inbound_receipt_items (id, receiptId, itemCode, itemName, spec, unit, quantity, unitPrice, lineTotal, notes)
+    VALUES
+      ('INBI-01', 'INB-01', 'MAT-CONC-5000', '5000psi 自充填混凝土', '抗壓強度>350kgf/cm2', '立方米', 120, 2400, 288000, '出料車號 223-AB ~ 235-AB 共 12 車'),
+      ('INBI-02', 'INB-02', 'MAT-CONC-5000', '5000psi 自充填混凝土', '抗壓強度>350kgf/cm2', '立方米', 150, 2400, 360000, '連續澆置作業'),
+      ('INBI-03', 'INB-03', 'MAT-STEEL-SN', 'SN490C 特種耐震 H型鋼', '符合CNS標準合格銲材', '噸', 25, 48000, 1200000, '進場吊料 4 車'),
+      ('INBI-04', 'INB-04', 'MAT-CONC-3000', '3000psi 預拌混凝土', '抗壓強度>210kgf/cm2', '立方米', 80, 2200, 176000, '機房基座回填');
+  `);
+
+
   // 7. 下包合約與估驗計價 (Subcontracts & Valuations)
   db.run(`
     INSERT INTO subcontracts (id, contractCode, projectId, subcontractorId, companyId, subcontractorName, projectName, contractName, totalAmount, retentionRate, prepaidAmount, prepaidRemaining, startDate, endDate, status)
@@ -1060,7 +1128,7 @@ export function exportSqlDump(): string {
     'projects', 'project_sites',
     'project_wbs', 'business_partners', 'bp_bank_accounts', 'partner_addresses', 'partner_contacts', 'partner_cheque_records', 'items', 'quotations', 'quotation_revisions',
     'quotation_items', 'quotation_billing_milestones', 'purchase_orders',
-    'purchase_order_items', 'subcontracts', 'valuations', 'valuation_items',
+    'purchase_order_items', 'inbound_receipts', 'inbound_receipt_items', 'subcontracts', 'valuations', 'valuation_items',
     'accounts_payable', 'accounts_receivable', 'bank_checks'
   ];
 
@@ -1273,6 +1341,7 @@ export function getMaxExistingSequenceForPrefix(prefix: string, db?: Database): 
 
   const sequenceSources: { table: string; column: string }[] = [
     { table: 'purchase_orders', column: 'poNumber' },
+    { table: 'inbound_receipts', column: 'receiptNumber' },
     { table: 'valuations', column: 'valuationNumber' },
     { table: 'quotations', column: 'quoteNumber' },
     { table: 'accounts_payable', column: 'apNumber' },
@@ -1321,6 +1390,7 @@ export function reseedDocumentSequences(db?: Database): void {
 
   const sequenceSources: { table: string; column: string }[] = [
     { table: 'purchase_orders', column: 'poNumber' },
+    { table: 'inbound_receipts', column: 'receiptNumber' },
     { table: 'valuations', column: 'valuationNumber' },
     { table: 'quotations', column: 'quoteNumber' },
     { table: 'accounts_payable', column: 'apNumber' },
@@ -1366,6 +1436,7 @@ export function checkIfDocumentNumberExists(docNumber: string, db?: Database): b
 
   const sequenceSources: { table: string; column: string }[] = [
     { table: 'purchase_orders', column: 'poNumber' },
+    { table: 'inbound_receipts', column: 'receiptNumber' },
     { table: 'valuations', column: 'valuationNumber' },
     { table: 'quotations', column: 'quoteNumber' },
     { table: 'accounts_payable', column: 'apNumber' },
@@ -3981,6 +4052,27 @@ export function batchUpdateAppConfigs(
 
 export const DEFAULT_DOCUMENT_RULES: DocumentSequenceRule[] = [
   {
+    moduleKey: 'INB',
+    moduleName: '現場進貨簽收單 (Inbound Receipt)',
+    prefix: 'INB',
+    dateFormat: 'YYYYMM',
+    delimiter: '-',
+    serialLength: 4,
+    resetFrequency: 'MONTHLY',
+    description: '工地現場送貨簽收單、物料進場點收憑證 (A模式直入案場成本)',
+  },
+  {
+    moduleKey: 'REC',
+    moduleName: '廠商應付對帳單 (AP Reconciliation)',
+    prefix: 'REC',
+    dateFormat: 'YYYYMM',
+    delimiter: '-',
+    serialLength: 3,
+    resetFrequency: 'MONTHLY',
+    description: '月底廠商往來水池對帳、補登發票與折讓結算單',
+  },
+
+  {
     moduleKey: 'AP',
     moduleName: '應付帳款單據 (Accounts Payable)',
     prefix: 'AP',
@@ -4929,12 +5021,13 @@ export function recordAuditLog(
   notifyListeners();
 }
 
-// 12 大營造工程核心模組字典
+// 12+1 大營造工程核心模組字典
 export const SYSTEM_MODULES: { key: ModuleKey; name: string; category: string; description: string }[] = [
   { key: 'COMPANIES', name: '公司法人組織', category: '基礎架構', description: '集團多法人架構、統編與幣別維護' },
   { key: 'PROJECTS', name: '專案與案場工程', category: '工程工務', description: '工程案場主檔、WBS 節點、預算與成本' },
   { key: 'PARTNERS', name: '商業夥伴主檔', category: '主檔邊界', description: '業主、材料商、工程下包商與銀行帳號' },
   { key: 'QUOTATIONS', name: '報價與銷售 (CPQ)', category: '專案業務', description: 'REV-A/B 投標單、粉紅扣減折讓、里程碑請款' },
+  { key: 'INBOUND_RECEIPTS', name: '現場進貨管理', category: '工程工務', description: '工地現場送貨簽收、A模式直入案場成本、未結水池待會計對帳' },
   { key: 'PURCHASE_ORDERS', name: '採購與發包 (PO)', category: '採購發包', description: '物料採購單、計價拋轉、過帳實體快照' },
   { key: 'SUBCONTRACTS', name: '發包合約管理', category: '採購發包', description: '下包工程主約、保留款比例、預付款抵扣' },
   { key: 'VALUATIONS', name: '估驗計價請款', category: '工程工務', description: '工區累計進度、保留款扣款、憑單自動拋轉' },
@@ -4961,13 +5054,14 @@ export function seedUserPermissionData(db: Database) {
       ('GRP-SALES', 'PROJ_SALES', '專案業務組', '業主報價單 REV-A/B 維護、工程 WBS 預算節點控管、合約里程碑請款', 1, 5000000, 1, '2026-01-01', '2026-01-01');
   `);
 
-  // 2. 建立四大群組之 12 大模組權限矩陣 (Read, Write, Approve, Export)
+  // 2. 建立四大群組之全模組權限矩陣 (Read, Write, Approve, Export)
   const groupPermMap: Record<string, Record<ModuleKey, { r: number; w: number; a: number; e: number }>> = {
     'GRP-ENG': {
       COMPANIES: { r: 1, w: 0, a: 0, e: 0 },
       PROJECTS: { r: 1, w: 1, a: 0, e: 0 },
       PARTNERS: { r: 1, w: 0, a: 0, e: 0 },
       QUOTATIONS: { r: 0, w: 0, a: 0, e: 0 },
+      INBOUND_RECEIPTS: { r: 1, w: 1, a: 1, e: 1 },
       PURCHASE_ORDERS: { r: 1, w: 0, a: 0, e: 0 },
       SUBCONTRACTS: { r: 1, w: 0, a: 0, e: 0 },
       VALUATIONS: { r: 1, w: 1, a: 0, e: 0 },
@@ -4982,6 +5076,7 @@ export function seedUserPermissionData(db: Database) {
       PROJECTS: { r: 1, w: 0, a: 0, e: 0 },
       PARTNERS: { r: 1, w: 1, a: 0, e: 0 },
       QUOTATIONS: { r: 1, w: 0, a: 0, e: 0 },
+      INBOUND_RECEIPTS: { r: 1, w: 0, a: 0, e: 1 },
       PURCHASE_ORDERS: { r: 1, w: 0, a: 0, e: 0 },
       SUBCONTRACTS: { r: 1, w: 0, a: 0, e: 0 },
       VALUATIONS: { r: 1, w: 0, a: 0, e: 0 },
@@ -4996,6 +5091,7 @@ export function seedUserPermissionData(db: Database) {
       PROJECTS: { r: 1, w: 0, a: 0, e: 0 },
       PARTNERS: { r: 1, w: 1, a: 0, e: 0 },
       QUOTATIONS: { r: 0, w: 0, a: 0, e: 0 },
+      INBOUND_RECEIPTS: { r: 1, w: 1, a: 0, e: 1 },
       PURCHASE_ORDERS: { r: 1, w: 1, a: 1, e: 1 },
       SUBCONTRACTS: { r: 1, w: 1, a: 1, e: 0 },
       VALUATIONS: { r: 1, w: 0, a: 0, e: 0 },
@@ -5010,6 +5106,7 @@ export function seedUserPermissionData(db: Database) {
       PROJECTS: { r: 1, w: 1, a: 0, e: 0 },
       PARTNERS: { r: 1, w: 1, a: 0, e: 0 },
       QUOTATIONS: { r: 1, w: 1, a: 1, e: 1 },
+      INBOUND_RECEIPTS: { r: 1, w: 0, a: 0, e: 0 },
       PURCHASE_ORDERS: { r: 0, w: 0, a: 0, e: 0 },
       SUBCONTRACTS: { r: 0, w: 0, a: 0, e: 0 },
       VALUATIONS: { r: 1, w: 0, a: 0, e: 0 },
@@ -5047,6 +5144,51 @@ export function seedUserPermissionData(db: Database) {
 
 // 平滑資料庫完整性修復器 (保證現有快照升級時表結構與種子資料齊全)
 export function ensureDatabaseIntegrity(db: Database) {
+
+  // 🛡️ 現場進貨簽收單主表與明細表 (InboundReceipts)
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS inbound_receipts (
+        id TEXT PRIMARY KEY,
+        receiptNumber TEXT UNIQUE NOT NULL,
+        companyId TEXT NOT NULL,
+        projectId TEXT NOT NULL,
+        projectNameSnapshot TEXT,
+        vendorId TEXT NOT NULL,
+        vendorNameSnapshot TEXT,
+        vendorTaxIdSnapshot TEXT,
+        deliveryNoteNumber TEXT NOT NULL,
+        receivedDate TEXT NOT NULL,
+        receivedBy TEXT NOT NULL,
+        totalAmount REAL DEFAULT 0,
+        billingStatus TEXT DEFAULT 'PENDING_BILLING',
+        reconciliationId TEXT,
+        reconciliationNumber TEXT,
+        purchaseOrderId TEXT,
+        status TEXT DEFAULT 'DRAFT',
+        attachmentFileId TEXT,
+        attachmentFileName TEXT,
+        notes TEXT,
+        isDeleted INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        createdAt TEXT,
+        updatedAt TEXT
+      );
+      CREATE TABLE IF NOT EXISTS inbound_receipt_items (
+        id TEXT PRIMARY KEY,
+        receiptId TEXT NOT NULL,
+        itemCode TEXT,
+        itemName TEXT NOT NULL,
+        spec TEXT,
+        unit TEXT NOT NULL,
+        quantity REAL DEFAULT 1,
+        unitPrice REAL DEFAULT 0,
+        lineTotal REAL DEFAULT 0,
+        notes TEXT
+      );
+    `);
+  } catch (_) {}
+
   initializeTables(db);
 
   // 升級檢測：確保 users、user_groups、group_module_permissions、system_configs 擁有最新欄位與三柱版本控制
@@ -6824,3 +6966,440 @@ export function toggleGroupModulePermission(
 
 
 
+
+
+// ============================================================================
+// 🚚 現場進貨簽收模組 (Inbound Goods Management - 直入案場成本 A 模式)
+// ============================================================================
+
+export function getAllInboundReceipts(filters?: {
+  companyId?: string;
+  projectId?: string;
+  vendorId?: string;
+  status?: string;
+  billingStatus?: string;
+}): InboundReceipt[] {
+  if (!dbInstance) return [];
+  ensureDatabaseIntegrity(dbInstance);
+
+  let query = `SELECT * FROM inbound_receipts WHERE isDeleted = 0`;
+  const params: string[] = [];
+
+  if (filters?.companyId) {
+    query += ` AND companyId = '${filters.companyId}'`;
+  }
+  if (filters?.projectId) {
+    query += ` AND projectId = '${filters.projectId}'`;
+  }
+  if (filters?.vendorId) {
+    query += ` AND vendorId = '${filters.vendorId}'`;
+  }
+  if (filters?.status) {
+    query += ` AND status = '${filters.status}'`;
+  }
+  if (filters?.billingStatus) {
+    query += ` AND billingStatus = '${filters.billingStatus}'`;
+  }
+
+  query += ` ORDER BY receivedDate DESC, receiptNumber DESC;`;
+
+  const res = dbInstance.exec(query);
+  if (!res.length || !res[0].values.length) return [];
+
+  const receipts: InboundReceipt[] = res[0].values.map(row => ({
+    id: String(row[0]),
+    receiptNumber: String(row[1]),
+    companyId: String(row[2]),
+    projectId: String(row[3]),
+    projectNameSnapshot: row[4] ? String(row[4]) : undefined,
+    vendorId: String(row[5]),
+    vendorNameSnapshot: row[6] ? String(row[6]) : undefined,
+    vendorTaxIdSnapshot: row[7] ? String(row[7]) : undefined,
+    deliveryNoteNumber: String(row[8] || ''),
+    receivedDate: String(row[9] || ''),
+    receivedBy: String(row[10] || ''),
+    totalAmount: Number(row[11] || 0),
+    billingStatus: (row[12] || 'PENDING_BILLING') as InboundBillingStatus,
+    reconciliationId: row[13] ? String(row[13]) : undefined,
+    reconciliationNumber: row[14] ? String(row[14]) : undefined,
+    purchaseOrderId: row[15] ? String(row[15]) : undefined,
+    status: (row[16] || 'DRAFT') as InboundReceiptStatus,
+    attachmentFileId: row[17] ? String(row[17]) : undefined,
+    attachmentFileName: row[18] ? String(row[18]) : undefined,
+    notes: row[19] ? String(row[19]) : undefined,
+    isDeleted: Boolean(row[20]),
+    version: Number(row[21] || 1),
+    createdAt: String(row[22] || ''),
+    updatedAt: String(row[23] || ''),
+    items: [],
+  }));
+
+  // 抓取所有明細
+  for (const r of receipts) {
+    r.items = getInboundReceiptItems(r.id);
+  }
+
+  return receipts;
+}
+
+export function getInboundReceiptItems(receiptId: string): InboundReceiptItem[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`SELECT * FROM inbound_receipt_items WHERE receiptId = '${receiptId}' ORDER BY id ASC;`);
+  if (!res.length || !res[0].values.length) return [];
+
+  return res[0].values.map(row => ({
+    id: String(row[0]),
+    receiptId: String(row[1]),
+    itemCode: row[2] ? String(row[2]) : undefined,
+    itemName: String(row[3] || ''),
+    spec: row[4] ? String(row[4]) : undefined,
+    unit: String(row[5] || '式'),
+    quantity: Number(row[6] || 0),
+    unitPrice: Number(row[7] || 0),
+    lineTotal: Number(row[8] || 0),
+    notes: row[9] ? String(row[9]) : undefined,
+  }));
+}
+
+export function getInboundReceiptById(id: string): InboundReceipt | null {
+  if (!dbInstance) return null;
+  const receipts = getAllInboundReceipts();
+  return receipts.find(r => r.id === id) || null;
+}
+
+export function createInboundReceipt(
+  data: Partial<InboundReceipt>,
+  items: Partial<InboundReceiptItem>[] = []
+): InboundReceipt {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+
+  const now = new Date().toISOString();
+  const id = data.id || `INB-REC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const receivedDate = data.receivedDate || now.slice(0, 10);
+
+  // 產生單號：若為草稿暫存使用 TEMP 前綴或直接取號
+  let receiptNumber = data.receiptNumber;
+  if (!receiptNumber || receiptNumber.trim() === '') {
+    if (data.status === 'POSTED') {
+      receiptNumber = getNextDocumentNumber('INB', receivedDate);
+    } else {
+      receiptNumber = `TEMP-${Date.now().toString().slice(-6)}`;
+    }
+  }
+
+  // 取得專案名稱與廠商名稱快照
+  let projectNameSnapshot = data.projectNameSnapshot;
+  if (!projectNameSnapshot && data.projectId) {
+    const prjRes = dbInstance.exec(`SELECT name FROM projects WHERE id = '${data.projectId}';`);
+    if (prjRes.length && prjRes[0].values.length) {
+      projectNameSnapshot = String(prjRes[0].values[0][0]);
+    }
+  }
+
+  let vendorNameSnapshot = data.vendorNameSnapshot;
+  let vendorTaxIdSnapshot = data.vendorTaxIdSnapshot;
+  if ((!vendorNameSnapshot || !vendorTaxIdSnapshot) && data.vendorId) {
+    const bpRes = dbInstance.exec(`SELECT name, taxId FROM business_partners WHERE id = '${data.vendorId}';`);
+    if (bpRes.length && bpRes[0].values.length) {
+      vendorNameSnapshot = vendorNameSnapshot || String(bpRes[0].values[0][0]);
+      vendorTaxIdSnapshot = vendorTaxIdSnapshot || String(bpRes[0].values[0][1]);
+    }
+  }
+
+  // 計算明細總額
+  let totalAmount = 0;
+  const processedItems: InboundReceiptItem[] = items.map((it, idx) => {
+    const qty = Number(it.quantity || 0);
+    const price = Number(it.unitPrice || 0);
+    const lineTotal = Number(it.lineTotal !== undefined ? it.lineTotal : (qty * price));
+    totalAmount += lineTotal;
+
+    return {
+      id: it.id || `INBI-${Date.now()}-${idx + 1}`,
+      receiptId: id,
+      itemCode: it.itemCode || '',
+      itemName: it.itemName || '未命名材料',
+      spec: it.spec || '',
+      unit: it.unit || '式',
+      quantity: qty,
+      unitPrice: price,
+      lineTotal,
+      notes: it.notes || '',
+    };
+  });
+
+  const status = data.status || 'DRAFT';
+  const billingStatus = data.billingStatus || 'PENDING_BILLING';
+
+  dbInstance.run(`
+    INSERT INTO inbound_receipts (
+      id, receiptNumber, companyId, projectId, projectNameSnapshot,
+      vendorId, vendorNameSnapshot, vendorTaxIdSnapshot, deliveryNoteNumber,
+      receivedDate, receivedBy, totalAmount, billingStatus,
+      reconciliationId, reconciliationNumber, purchaseOrderId,
+      status, attachmentFileId, attachmentFileName, notes,
+      isDeleted, version, createdAt, updatedAt
+    ) VALUES (
+      '${id}',
+      '${receiptNumber.replace(/'/g, "''")}',
+      '${(data.companyId || 'COMP-01').replace(/'/g, "''")}',
+      '${(data.projectId || '').replace(/'/g, "''")}',
+      '${(projectNameSnapshot || '').replace(/'/g, "''")}',
+      '${(data.vendorId || '').replace(/'/g, "''")}',
+      '${(vendorNameSnapshot || '').replace(/'/g, "''")}',
+      '${(vendorTaxIdSnapshot || '').replace(/'/g, "''")}',
+      '${(data.deliveryNoteNumber || '').replace(/'/g, "''")}',
+      '${receivedDate}',
+      '${(data.receivedBy || '點收人').replace(/'/g, "''")}',
+      ${totalAmount},
+      '${billingStatus}',
+      ${data.reconciliationId ? `'${data.reconciliationId}'` : 'NULL'},
+      ${data.reconciliationNumber ? `'${data.reconciliationNumber}'` : 'NULL'},
+      ${data.purchaseOrderId ? `'${data.purchaseOrderId}'` : 'NULL'},
+      '${status}',
+      ${data.attachmentFileId ? `'${data.attachmentFileId}'` : 'NULL'},
+      ${data.attachmentFileName ? `'${data.attachmentFileName.replace(/'/g, "''")}'` : 'NULL'},
+      ${data.notes ? `'${data.notes.replace(/'/g, "''")}'` : 'NULL'},
+      0, 1, '${now}', '${now}'
+    );
+  `);
+
+  for (const item of processedItems) {
+    dbInstance.run(`
+      INSERT INTO inbound_receipt_items (id, receiptId, itemCode, itemName, spec, unit, quantity, unitPrice, lineTotal, notes)
+      VALUES (
+        '${item.id}',
+        '${id}',
+        '${(item.itemCode || '').replace(/'/g, "''")}',
+        '${item.itemName.replace(/'/g, "''")}',
+        '${(item.spec || '').replace(/'/g, "''")}',
+        '${item.unit.replace(/'/g, "''")}',
+        ${item.quantity},
+        ${item.unitPrice},
+        ${item.lineTotal},
+        '${(item.notes || '').replace(/'/g, "''")}'
+      );
+    `);
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    id,
+    receiptNumber,
+    companyId: data.companyId || 'COMP-01',
+    projectId: data.projectId || '',
+    projectNameSnapshot,
+    vendorId: data.vendorId || '',
+    vendorNameSnapshot,
+    vendorTaxIdSnapshot,
+    deliveryNoteNumber: data.deliveryNoteNumber || '',
+    receivedDate,
+    receivedBy: data.receivedBy || '點收人',
+    totalAmount,
+    billingStatus,
+    reconciliationId: data.reconciliationId,
+    reconciliationNumber: data.reconciliationNumber,
+    purchaseOrderId: data.purchaseOrderId,
+    status,
+    attachmentFileId: data.attachmentFileId,
+    attachmentFileName: data.attachmentFileName,
+    notes: data.notes,
+    isDeleted: false,
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    items: processedItems,
+  };
+}
+
+export function updateInboundReceipt(
+  id: string,
+  data: Partial<InboundReceipt>,
+  items?: Partial<InboundReceiptItem>[]
+): InboundReceipt {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+  const existing = getInboundReceiptById(id);
+  if (!existing) throw new Error(`找不到進貨簽收單: ${id}`);
+
+  if (existing.billingStatus === 'BILLED') {
+    throw new Error('該進貨簽收單已納入會計對帳單請款，依法鎖定禁止修改');
+  }
+
+  const now = new Date().toISOString();
+  const newVersion = (existing.version || 1) + 1;
+
+  let totalAmount = existing.totalAmount;
+
+  if (items && items.length > 0) {
+    dbInstance.run(`DELETE FROM inbound_receipt_items WHERE receiptId = '${id}';`);
+    totalAmount = 0;
+    for (let idx = 0; idx < items.length; idx++) {
+      const it = items[idx];
+      const qty = Number(it.quantity || 0);
+      const price = Number(it.unitPrice || 0);
+      const lineTotal = Number(it.lineTotal !== undefined ? it.lineTotal : (qty * price));
+      totalAmount += lineTotal;
+
+      const itemId = it.id || `INBI-${Date.now()}-${idx + 1}`;
+      dbInstance.run(`
+        INSERT INTO inbound_receipt_items (id, receiptId, itemCode, itemName, spec, unit, quantity, unitPrice, lineTotal, notes)
+        VALUES (
+          '${itemId}',
+          '${id}',
+          '${(it.itemCode || '').replace(/'/g, "''")}',
+          '${(it.itemName || '材料').replace(/'/g, "''")}',
+          '${(it.spec || '').replace(/'/g, "''")}',
+          '${(it.unit || '式').replace(/'/g, "''")}',
+          ${qty},
+          ${price},
+          ${lineTotal},
+          '${(it.notes || '').replace(/'/g, "''")}'
+        );
+      `);
+    }
+  }
+
+  const updates: string[] = [
+    `version = ${newVersion}`,
+    `updatedAt = '${now}'`,
+    `totalAmount = ${totalAmount}`,
+  ];
+
+  if (data.deliveryNoteNumber !== undefined) updates.push(`deliveryNoteNumber = '${data.deliveryNoteNumber.replace(/'/g, "''")}'`);
+  if (data.receivedDate !== undefined) updates.push(`receivedDate = '${data.receivedDate}'`);
+  if (data.receivedBy !== undefined) updates.push(`receivedBy = '${data.receivedBy.replace(/'/g, "''")}'`);
+  if (data.notes !== undefined) updates.push(`notes = '${(data.notes || '').replace(/'/g, "''")}'`);
+  if (data.status !== undefined) updates.push(`status = '${data.status}'`);
+  if (data.attachmentFileId !== undefined) updates.push(`attachmentFileId = ${data.attachmentFileId ? `'${data.attachmentFileId}'` : 'NULL'}`);
+  if (data.attachmentFileName !== undefined) updates.push(`attachmentFileName = ${data.attachmentFileName ? `'${data.attachmentFileName.replace(/'/g, "''")}'` : 'NULL'}`);
+
+  dbInstance.run(`UPDATE inbound_receipts SET ${updates.join(', ')} WHERE id = '${id}';`);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return getInboundReceiptById(id)!;
+}
+
+export function postInboundReceipt(id: string): InboundReceipt {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+  const existing = getInboundReceiptById(id);
+  if (!existing) throw new Error(`找不到進貨簽收單: ${id}`);
+
+  let receiptNumber = existing.receiptNumber;
+  if (receiptNumber.startsWith('TEMP-') || !receiptNumber) {
+    receiptNumber = getNextDocumentNumber('INB', existing.receivedDate);
+  }
+
+  const now = new Date().toISOString();
+  dbInstance.run(`
+    UPDATE inbound_receipts 
+    SET status = 'POSTED',
+        billingStatus = 'PENDING_BILLING',
+        receiptNumber = '${receiptNumber}',
+        updatedAt = '${now}'
+    WHERE id = '${id}';
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return getInboundReceiptById(id)!;
+}
+
+export function voidInboundReceipt(id: string, notes?: string): InboundReceipt {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+  const existing = getInboundReceiptById(id);
+  if (!existing) throw new Error(`找不到進貨簽收單: ${id}`);
+
+  if (existing.billingStatus === 'BILLED') {
+    throw new Error('此進貨單已由會計完成請款對帳，禁止逕行作廢；須先由會計取消對帳');
+  }
+
+  const now = new Date().toISOString();
+  const updatedNotes = notes ? `${existing.notes || ''} [作廢原因: ${notes}]` : existing.notes;
+
+  dbInstance.run(`
+    UPDATE inbound_receipts 
+    SET status = 'VOIDED',
+        notes = '${(updatedNotes || '').replace(/'/g, "''")}',
+        updatedAt = '${now}'
+    WHERE id = '${id}';
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return getInboundReceiptById(id)!;
+}
+
+export function deleteInboundReceipt(id: string): boolean {
+  if (!dbInstance) return false;
+  const existing = getInboundReceiptById(id);
+  if (!existing) return false;
+
+  if (existing.status === 'POSTED' || existing.billingStatus === 'BILLED') {
+    throw new Error('已過帳或已對帳之進貨單據禁止物理刪除，請使用「作廢」功能');
+  }
+
+  dbInstance.run(`UPDATE inbound_receipts SET isDeleted = 1 WHERE id = '${id}';`);
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🌊 取得廠商往來大水池水位總表 (Vendor Ledger Pool)
+export interface VendorPoolSummary {
+  vendorId: string;
+  vendorName: string;
+  vendorTaxId: string;
+  pendingCount: number;
+  pendingTotalAmount: number;
+  billedCount: number;
+  billedTotalAmount: number;
+  earliestDate: string;
+  latestDate: string;
+}
+
+export function getVendorLedgerPoolSummary(companyId?: string): VendorPoolSummary[] {
+  if (!dbInstance) return [];
+  ensureDatabaseIntegrity(dbInstance);
+
+  const receipts = getAllInboundReceipts({ companyId });
+  const poolMap = new Map<string, VendorPoolSummary>();
+
+  for (const r of receipts) {
+    if (r.status === 'VOIDED') continue; // 排除作廢
+
+    let item = poolMap.get(r.vendorId);
+    if (!item) {
+      item = {
+        vendorId: r.vendorId,
+        vendorName: r.vendorNameSnapshot || '廠商',
+        vendorTaxId: r.vendorTaxIdSnapshot || '',
+        pendingCount: 0,
+        pendingTotalAmount: 0,
+        billedCount: 0,
+        billedTotalAmount: 0,
+        earliestDate: r.receivedDate,
+        latestDate: r.receivedDate,
+      };
+      poolMap.set(r.vendorId, item);
+    }
+
+    if (r.billingStatus === 'PENDING_BILLING' && r.status === 'POSTED') {
+      item.pendingCount++;
+      item.pendingTotalAmount += r.totalAmount;
+    } else if (r.billingStatus === 'BILLED') {
+      item.billedCount++;
+      item.billedTotalAmount += r.totalAmount;
+    }
+
+    if (r.receivedDate < item.earliestDate) item.earliestDate = r.receivedDate;
+    if (r.receivedDate > item.latestDate) item.latestDate = r.receivedDate;
+  }
+
+  return Array.from(poolMap.values()).sort((a, b) => b.pendingTotalAmount - a.pendingTotalAmount);
+}

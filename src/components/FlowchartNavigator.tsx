@@ -226,37 +226,37 @@ export const FlowchartNavigator: React.FC<FlowchartNavigatorProps> = ({
             </div>
           </div>
 
-          {/* 節點 3: 採購與發包 */}
+          {/* 節點 3: 現場進貨簽收 (直入案場成本 A 模式) */}
           <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/20 hover:border-amber-400 hover:shadow-md transition-all group relative">
             <div className="flex items-center justify-between mb-3">
               <div className="w-9 h-9 rounded-lg bg-amber-600 text-white flex items-center justify-center">
                 <ShoppingCart className="w-5 h-5" />
               </div>
               <span className="text-xs font-mono font-medium text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
-                {stats.posCount} 張採購單
+                現場進貨簽收 (A模式)
               </span>
             </div>
 
             <h4 className="text-sm font-bold text-slate-900 group-hover:text-amber-600 transition-colors flex items-center gap-1.5">
-              03. 採購單與發包
+              03. 現場進貨管理 (Inbound)
               <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
             </h4>
             <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-              材料/設備訂購 · 預付扣抵連動 · 廠商統編文字快照 · 多法人稅務調度
+              料件到場點收 · 直入案場成本 (A模式) · 廠商送貨單號 · 沉澱大水池待對帳
             </p>
 
             <div className="mt-4 pt-3 border-t border-amber-100 flex items-center justify-between">
               <button
-                onClick={() => onNavigate('PROCUREMENT')}
-                className="text-xs font-semibold text-amber-700 hover:text-amber-900 flex items-center gap-1"
+                onClick={() => onNavigate('INBOUND')}
+                className="text-xs font-semibold text-amber-700 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
               >
-                <span>管理採購發包</span>
+                <span>進入進貨管理</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
               <button
-                onClick={() => onNavigate('PROCUREMENT')}
-                className="p-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 transition-colors"
-                title="開立採購單"
+                onClick={() => onNavigate('INBOUND')}
+                className="p-1 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 transition-colors cursor-pointer"
+                title="新增進貨簽收單"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
