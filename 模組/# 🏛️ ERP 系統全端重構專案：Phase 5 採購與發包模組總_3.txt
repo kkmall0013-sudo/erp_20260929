@@ -1,0 +1,255 @@
+# 🏛️ ERP 系統全端重構專案：Phase 5 採購與發包模組總綱 (Prisma 旗艦版)
+
+**文件定位**：本文件為 Phase 5 (Procurement & Subcontracting) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：打造兼具「極簡操作（月底批次對帳/盲收）」與「強硬防弊（預付沖銷、尾差鎖定、內外帳實體隔離）」的企業級採購發包防護網。並結合「離線 AI 輔助與直貼網格」實現零 API 成本的高效結算，無縫支撐多法人稅務調度。
+
+---
+
+## 壹、 業務需求與跨角色實務情境 (BRD)
+
+### 1. 現場操作彈性：零單價簽收與流程複雜度開關
+* **零單價現場簽收 (Blind Receipt)**：工地現場或工廠進料點收時，現場人員僅需確認實物數量，系統支援「零單價收貨」機制，單價欄位留空不予阻擋。最終真實單價統一於月底會計匯入廠商對帳發票時補登並確立。
+* **流程複雜度開關 (全域設定)**：系統內建全域開關。規模精簡時開啟**「極簡模式」**（會計一鏡到底，一鍵完成 PO -> GR -> AP）；未來擴編時切換至**「嚴謹模式」**（強制解耦現場請購與辦公室採購權限，啟動三單比對）。
+
+### 2. 會計視角：月底批次建檔與異常暫存區
+* **月底對帳單批次匯入引擎 (手動 Gemini 辨識與網格直貼)**：捨棄不穩定且燒錢的 OCR API。針對月底大量單據，會計使用免費版 Gemini 辨識請款單並產出標準表格後，直接使用 `Ctrl+C / Ctrl+V` 貼上系統的「Excel 式網格 (Data Grid)」。系統於背景自動補齊對應之虛擬收貨單與採購單紀錄，並自動平帳拋轉至應付覆核區。
+* **異常人工覆核暫存區 (Exception Holding Area)**：取消一切自動去尾數或尾差調節功能。當匯入之發票總額與系統依單價試算之金額出現哪怕 1 元誤差時，系統強制將該憑單移送至「異常暫存區」。必須由人工介入判斷、手動覆寫並留下審計軌跡後，方可放行過帳。
+
+### 3. 預付備料沖銷與附加成本攤提
+* **預付備料分類帳**：針對預付購買之大宗物料（如 C 型鋼），設立「預付備料帳戶」，精準追蹤存放在特定廠商處之剩餘料件總量與折算金額。
+* **分批進貨自動扣減**：分批進貨且請款單註記「(預)」時，系統支援 `[扣減預付款]` 功能，自動從廠商預付額度中扣除數量與金額，轉入施工案場成本，且本期該品項之實際應付帳款 (AP) 自動歸零。
+* **附加成本攤提雙軌制 (Landed Cost)**：針對吊車費等附加費用，提供模式 A (按比例攤入材料「庫存單價」中，還原真實落地價) 與模式 B (作為案場「工程雜支」獨立認列，不干擾底價)。
+
+### 4. 老闆專屬：內外帳財稅隔離與擔保品管理
+* **廢料回收內帳管理 (Off-Book Isolation)**：針對下腳料、廢鐵變賣等直接匯入老闆私人帳戶且無發票之現金流，建立獨立之「內部虛擬資金帳戶」。此帳戶紀錄**僅限老闆/最高管理員可見**，嚴禁產生會計傳票或拋轉財務模組。
+* **實物擔保品登錄簿**：用以登記下包商提交之保固本票、銀行保證函等非現金抵押品，並結合「保固期滿前自動提醒」排程。
+
+### 5. 【新版憲法擴充】：多法人調度、虛實隔離與超交防線
+* **多法人發票調度與內部交易**：採購單記錄「名義發單法人」。月底會計將 Gemini 整理的資料貼上後，可依據發票買受方將發票歸戶至 `taxReportingCompanyId`。若發票申報法人與專案成本歸屬不同，系統底層自動切轉「關係企業往來」。
+* **料件虛實隔離 (MATERIAL vs SERVICE)**：買實體材料必須過庫存；買「點工/租車」強制標記為 `SERVICE` 並綁定會計費用碼，跳過庫存直接拋轉 Phase 7 營業費用 (OPEX)。
+* **超交之「零成本攤薄防線」 (GR/IR Cap)**：叫貨 10 組，送來 12 組且不載回。系統收貨單自動拆為 `[10組 @ 原價]` + `[2組 @ $0]`。實體增加 12 組並攤薄移動平均成本，但財務應付總額鎖死。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 5.1：流程控制與資安防弊鐵律
+* **[全域流程開關控制權]**：切換為「極簡模式」時，API 解鎖三單順序校驗，允許直接調用追溯建檔；切換為「嚴謹模式」時，任何未經採購單 (PO) 與收貨單 (GR) 勾稽之應付憑單，API 必須回傳 `403 Forbidden`。
+* **[內帳資料物理隔離]**：`InternalVirtualCashPool` (內部虛擬資金帳戶) 表之 API 必須實作嚴格 RBAC 權限。後端 TypeScript 與 Prisma 代碼**嚴禁**編寫任何將該表數據 `JOIN` 或 `include` 至會計總帳表 (`LedgerEntries`) 或稅務申報 View 之邏輯，徹底物理隔離。
+
+### Rule 5.2：數據合規與財稅安全隔離鐵律
+* **[異常暫存區強制性]**：嚴禁代碼包含「尾數自動調帳」邏輯。所有不符對帳單之金額，必須原封不動留存於 `PENDING_REVIEW` 狀態，人工修正必須寫入 `AuditLog`。
+* **[營業費用模組移轉]**：辦公室零用金、廠長雜支等非 COGS (銷貨成本) 之支出，一律拒絕在 Phase 5 處理，強制移交 Phase 7 金流模組進行 OPEX (營業費用) 認列。
+
+### Rule 5.3：數學防呆與高精度計算
+* **稅金靜態化與平衡驗證**：主單必須開設 `netAmount`, `taxAmount`, `totalAmount`，並由 Zod 在伺服器端進行三者相加的平衡驗證，嚴禁後端直接寫死乘 0.05（以應對免稅或特殊稅額）。
+* **高精度計算**：資料庫採用 `@db.Decimal(15,4)` 儲存單價與數量。計算 `quantity * unitPrice == lineAmount` 時，必須全域使用 `decimal.js` 處理浮點數。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約 (Prisma Schema Models)
+
+```prisma
+/// 單據審核與過帳狀態
+enum DocumentStatus {
+  DRAFT
+  PENDING_REVIEW   // 異常暫存區 (金額有誤差待覆核)
+  APPROVED         // 已核准
+  POSTED           // 已過帳 (鎖定)
+  VOIDED           // 已作廢
+}
+
+/// 採購訂單主檔 (PO)
+model PurchaseOrder {
+  id               String           @id @default(uuid())
+  poNumber         String           @unique
+  
+  // 【新版擴充】多公司法人調度
+  purchasingCompanyId String        @db.Uuid // 名義發單法人
+  isIntercompany   Boolean          @default(false)
+
+  projectId        String?          // 專案下放，可綁定特定案場
+  vendorId         String           // 關聯至 Phase 3 BusinessPartner
+
+  // 過帳時凍結對手方及專案資訊，主檔改名不影響歷史憑證
+  counterpartyNameSnapshot String?  @db.VarChar(255)
+  counterpartyTaxIdSnapshot String? @db.VarChar(50)
+  projectNameSnapshot      String?  @db.VarChar(255)
+  postedAt         DateTime?
+  
+  status           DocumentStatus   @default(DRAFT)
+  
+  // 稅金靜態化，精準財務欄位
+  netAmount        Decimal          @db.Decimal(15, 2)
+  taxAmount        Decimal          @db.Decimal(15, 2)
+  totalAmount      Decimal          @db.Decimal(15, 2)
+
+  items            PurchaseOrderItem[]
+  receipts         GoodsReceipt[]
+
+  isDeleted        Boolean          @default(false)
+  version          Int              @default(1)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@map("purchase_orders")
+}
+
+/// 採購明細表 (支援零單價與預付扣減)
+model PurchaseOrderItem {
+  id                 String         @id @default(uuid())
+  purchaseOrderId    String
+  purchaseOrder      PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id])
+  
+  // 維度下放：支援一單多案場
+  projectId          String         @db.Uuid // 專案成本歸屬；跨案時拆分採購明細
+  productId          String?        // 關聯至 Phase 4 Product
+  description        String
+  
+  // 【新版擴充】料件虛實邊界
+  itemType           String         @default("MATERIAL") // "MATERIAL" | "SERVICE"
+  expenseCodeId      String?        @db.Uuid // 若為 SERVICE，強制綁定此費用碼
+
+  quantity           Decimal        @db.Decimal(15, 4)
+  unitPrice          Decimal?       @db.Decimal(15, 4) // 允許 NULL (零單價現場簽收)
+  lineAmount         Decimal        @db.Decimal(15, 2)
+  
+  // 預付扣減標記
+  isPrepaidDeduction Boolean        @default(false)
+
+  isDeleted          Boolean        @default(false)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  
+  receiptItems       GoodsReceiptItem[] // 關聯收貨明細
+
+  @@map("purchase_order_items")
+}
+
+/// 收貨單主檔 (GR)
+model GoodsReceipt {
+  id               String         @id @default(uuid())
+  receiptNumber    String         @unique
+  purchaseOrderId  String?        // 在嚴謹模式下必填
+  purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  
+  isDropShip       Boolean        @default(false) // 是否直撥工地
+  receivedDate     DateTime       @default(now())
+  status           DocumentStatus @default(DRAFT)
+
+  items            GoodsReceiptItem[] // 【新版擴充】關聯明細
+
+  isDeleted        Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("goods_receipts")
+}
+
+/// 【新版擴充】收貨單明細 (超交零成本防線)
+model GoodsReceiptItem {
+  id                  String   @id @default(uuid())
+  goodsReceiptId      String
+  poItemId            String   
+  
+  receivedQuantity    Decimal  @db.Decimal(15, 4) // 現場實收數量
+  unitPrice           Decimal  @db.Decimal(15, 4) // 繼承 PO 或強制為 0
+  isOverReceipt       Boolean  @default(false)    // 超交零成本印記
+
+  goodsReceipt        GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  poItem              PurchaseOrderItem @relation(fields: [poItemId], references: [id], onDelete: Restrict)
+  
+  @@map("goods_receipt_items")
+}
+
+// 供應商預付料款及品項批次餘額使用財務模組的 PrepaymentLedger；
+// itemId、unitPrice、remainingQty 讓採購端依供應商／料件／批次查詢，不另建第二份金額餘額表。
+
+/// 內部虛擬資金帳戶 (內帳專用，絕對物理隔離)
+model InternalVirtualCashPool {
+  id               String         @id @default(uuid())
+  transactionDate  DateTime       @default(now())
+  amount           Decimal        @db.Decimal(15, 2) // 正負數代表收支
+  description      String
+  
+  createdBy        String         // 操作者 ID (僅限老闆/Admin)
+
+  isDeleted        Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+
+  @@map("internal_virtual_cash_pool")
+}
+```
+
+### Zod 高精度數學防呆與狀態鎖定 (Zod Schema)
+
+```typescript
+import { z } from "zod";
+import Decimal from "decimal.js";
+
+// Zod superRefine 財務防呆 (Rule 5.3)
+export const PurchaseOrderValidationSchema = z.object({
+  netAmount: z.string().transform((val) => new Decimal(val)),
+  taxAmount: z.string().transform((val) => new Decimal(val)),
+  totalAmount: z.string().transform((val) => new Decimal(val)),
+  items: z.array(z.object({
+    projectId: z.string().uuid(),
+    quantity: z.string().transform((val) => new Decimal(val)),
+    unitPrice: z.string().nullable().transform((val) => val ? new Decimal(val) : null), // 支援零單價
+    lineAmount: z.string().transform((val) => new Decimal(val)),
+    itemType: z.enum(["MATERIAL", "SERVICE"]), // 虛實料件防呆
+    expenseCodeId: z.string().uuid().nullable(),
+  }))
+}).superRefine((data, ctx) => {
+  // 1. 驗證明細金額加總是否等於 netAmount (容許 0.01 誤差)
+  const calculatedNet = data.items.reduce((sum, item) => sum.plus(item.lineAmount), new Decimal(0));
+  if (calculatedNet.minus(data.netAmount).abs().greaterThan(0.01)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "明細小計加總不等於主單未稅總額",
+      path: ["netAmount"],
+    });
+  }
+
+  // 2. 驗證 netAmount + taxAmount == totalAmount
+  const calculatedTotal = data.netAmount.plus(data.taxAmount);
+  if (calculatedTotal.minus(data.totalAmount).abs().greaterThan(0.01)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "未稅額 + 稅金必須等於總額",
+      path: ["totalAmount"],
+    });
+  }
+
+  // 3. 驗證單價*數量 == 明細金額 (排除零單價) 與 SERVICE 費用碼
+  data.items.forEach((item, index) => {
+    if (item.unitPrice !== null) {
+      const calcSub = item.quantity.times(item.unitPrice);
+      if (calcSub.minus(item.lineAmount).abs().greaterThan(0.01)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `第 ${index + 1} 項明細計算錯誤：數量 * 單價 != 明細金額`,
+          path: ["items", index, "lineAmount"],
+        });
+      }
+    }
+    
+    if (item.itemType === "SERVICE" && !item.expenseCodeId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `第 ${index + 1} 項明細為虛擬服務，必須綁定費用科目碼`,
+        path: ["items", index, "expenseCodeId"],
+      });
+    }
+  });
+});
+```
+
+---
+
+## 肆、 UI/UX 大師級操作體驗規範 (現場防呆與會計賦能)
+
+1. **現場大叔友善的「盲收打卡機」介面**：針對工地主任的手機端進料簽收，UI 必須極致簡化。移除所有與「金額、稅率」相關的欄位。現場人員只需輸入「阿明鋼鐵、H型鋼、送來 50 支」，系統自動將該筆 `GoodsReceipt` 拋回後台，徹底杜絕現場人員亂填單價造成帳務錯亂的實務災難。
+2. **月底對帳單「左右拖曳」批次覆核台**：UI 需提供類似 IDE 的「Diff 對比視窗」。會計將 Gemini 辨識出來的表格直接貼在右側的「網格直貼引擎 (Smart Paste Grid)」中，左邊顯示系統現場收貨單試算的金額。若有 1 元誤差，該列自動標示「深黃色警告 (PENDING_REVIEW)」，強制會計手動敲入「尾差調整金額」並註記原因後，該列才會變綠放行過帳。
+3. **預付備料水位警示儀表板**：採購打單時，當選擇特定供應商與料件，畫面上方立刻彈出「預付備料水位表 (如：C型鋼尚存 500 支已付款)」。並提供醒目的 `[本次從預付款扣抵]` 按鈕。按下後，該筆採購明細的 `isPrepaidDeduction` 自動設為 true，單據總額自動為零，防止重複付款給廠商。
+4. **【新版擴充】多法人稅務調度下拉選單**：在批次覆核台放行過帳時，會計依實體發票買受方設定發票主檔的 `taxReportingCompanyId`；採購單的 `purchasingCompanyId` 仍表示名義發單法人。系統會自動發動背景切轉，讓內帳成本與外帳法人完美解耦。

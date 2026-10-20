@@ -1,0 +1,159 @@
+## 【第三篇】主檔邊界與專案工程 (Master Data & Project Engineering)
+
+> **【架構師聲明】**
+> 本篇章為系統的「資料血緣源頭」。商業夥伴 (BP)、料件工項 (Item) 與專案合約 (Project) 的建檔品質，決定了後續採購、估驗與財務沖銷的正確性。所有主檔的建立與版本控管，必須嚴格遵守本篇定義的解耦與防呆機制，嚴禁為了前端操作方便而犧牲歷史溯源的底線。
+
+### 🛡️ RULE-3.1：劣質包商防換殼、柔性警報與記點淘汰 (Blacklist & Scorecard Integration)
+1. **背景比對機制**：建立商業夥伴時，後端 API 必須於背景自動比對「負責人身分證字號」與「聯絡電話」是否曾存在於歷史停權或黑名單廠商中。
+2. **柔性警報不卡死**：為保留實務彈性，比對命中時系統「不阻斷」建檔流程，但底層強制打上 `isHighRisk = true` 標記。
+3. **前端高光提示**：未來任何人員在建立採購單、報價單並選擇該廠商時，前端 UI 必須強制跳出紅色警示 Banner（「⚠️ 此廠商具備高風險關聯」），將最終發包決定權交還給主管。
+4. **缺失記點自動淘汰防線**：當工地現場開立「缺失單」或「罰款單」時，底層評鑑引擎自動對該廠商扣點。分數低於 60 分時，狀態降級為 `WARNING`；低於 40 分時，狀態強制切換為 `SUSPEND`，後端 API 閘門立即死鎖，阻斷該廠商參與全集團後續新發包。
+
+### 🛡️ RULE-3.2：多廠區統編重複、母子血緣與全域視圖覆蓋 (BP Hierarchy & Global View)
+1. **解除統編唯一性**：為適應大型企業「多廠區/分公司共用同一統編但帳號地址不同」之實務，資料庫中 `taxId` 允許重複，僅建立普通索引。
+2. **名稱強制唯一**：作為配套防呆，商業夥伴的 `name` (名稱) 必須設定為唯一值 (`@unique`)，前端建檔必須強制加上後綴（例：`台積電-F18廠`）。
+3. **母子血緣綁定**：允許建立 `parentBpId` 關聯。子廠區實體寫入與母公司相同的統編，未來可支援「獨立廠區請款」或「母公司匯總對帳」之雙軌財務作業。
+4. **全域預設與公司視圖解耦 (Global BP & Company View)**：
+   * **全域共用層**：物理屬性（名稱、統編、地址）全集團共用，改一次全站更新。
+   * **公司覆蓋層**：商業屬性（付款條件、預設帳戶）允許各子公司獨立調整。底層採用 `COALESCE` 降級回退邏輯，若子公司未設條件，自動抓取全域預設值。
+5. **法人變更歷史繼承引擎 (Predecessor/Successor)**：針對包商變更統編（換新公司），嚴禁直接覆蓋舊統編。必須將舊 BP 標記為 `FROZEN`，建立新 BP 並將其 `predecessorId` 指向舊 BP，無縫繼承歷史評鑑分數，且切開新舊單據血緣。
+6. **手動應收付互抵引擎 (AR/AP Netting)**：同一商業夥伴同時具備 `isCustomer` 與 `isVendor` 雙重身分時，系統預設「一碼歸一碼」獨立對帳。必須由會計於財務模組手動發動沖銷，方可進行應收付互抵。
+
+### 🛡️ RULE-3.3：四方角色模型與中途代付協議 (4-Party Model & Alternative Payee)
+1. **隱藏版四方角色**：專案資料庫實體必須具備 `clientId` (簽約方)、`shipToId` (收貨方)、`billToId` (發票開立方)、`payerId` (實際付款方)，以支援農會代付或集團統購等複雜稅務情境。
+2. **UI 漸進式揭露 (Progressive Disclosure)**：前端介面預設僅顯示單一「[客戶/業主]」下拉選單。進階的四方角色設定隱藏於「展開」按鈕後，維持 95% 日常打單的極簡體驗。
+3. **後端影子補齊 (Shadow Auto-fill)**：若前端僅傳遞單一 `clientId`，後端 API 寫入資料庫瞬間，必須強制將 `shipToId`、`billToId`、`payerId` 全部拷貝自動補齊為該 `clientId`，確保底層資料完整性。
+4. **中途代付與債權讓與引擎**：若案場發生包商財務危機導致材料商拒絕出貨，允許在「計價單/應付憑單」層級發動特權，指定**替代受款人 (Alternative Payee)**。系統自動拆分付款：部分款項付給原包商，部分款項代為支付給材料商，確保不破壞原始合約且稅金流向合法。
+
+### 🛡️ RULE-3.4：料件虛實邊界、雜項工項與度量衡防呆 (Item Type & UoM Guard)
+1. **物理屬性標記**：料件/工項主檔 (Item Master) 必須具備 `itemType` 分類，嚴格區分 `MATERIAL` (實體材料，如：H型鋼) 與 `SERVICE` (虛擬勞務/工程，如：泥作工程、設計費)。
+2. **系統底層自動豁免**：在後續採購與估驗流程中，底層業務邏輯一旦偵測到明細項目為 `SERVICE`，必須「自動豁免」所有庫存進退料與安全水位檢核，防止純工程發包導致系統卡死。
+3. **文字型雜項工項強制綁定費用碼**：針對一次性雜項（如臨時租賃），允許採購明細手打中文字品名，但**底層強制必須下拉綁定「費用類別碼 (Cost Code)」**，確保前端彈性與後端歸帳之完美平衡。
+4. **供應商專屬度量衡轉換 (Vendor-Specific UoM)**：允許針對特定廠商設定專屬換算率（例：A廠商1箱=1000支，B廠商1桶=800支）。選定廠商後，底層自動換算入庫量，**前端 UI 強制亮起藍色提示**，嚴禁人腦重複計算。
+5. **點收絕對死鎖與事前變更單**：現場點收實體品項若與系統採購單 V1 版本不符（如同等品換料），系統不給予特批權限，強制死鎖阻斷。必須由採購於源頭開立 `V2 採購變更單`，現場方能重新整理並點收。
+
+### 🛡️ RULE-3.5：集團內部交易映射與機具隱性成本 (Intercompany & Hidden Cost Engine)
+1. **內部公司映射**：為支援多公司陣列，商業夥伴主檔必須具備 `internalCompanyId` 隱藏欄位。若該廠商實為集團內其他子公司，會計可將此欄位綁定對應的系統公司 ID。
+2. **交易自動標記**：未來只要與該商業夥伴發生任何交易（報價、採購、請款），系統底層 API 必須自動在單據打上 `isIntercompany = true`。
+3. **戰情室防虛胖**：於營運戰情室計算「集團總營收」時，必須無條件濾除或抵銷所有帶有 `isIntercompany = true` 的單據，確保集團財報絕不虛胖。
+4. **漸進式機具隱性成本引擎 (Progressive Hidden Cost)**：針對公司自有重機具跨案場調度，實施漸進式主檔架構：
+   * **隱性成本模式 (第一階段)**：主檔設定機具內部日租金。機具調度打卡時，會計帳維持於總公司；但老闆戰情室會自動在該專案扣除一筆「隱性成本」，揭露真實利潤。
+   * **硬性計價模式 (第二階段)**：全域參數切換後，系統自動觸發內部計價單，硬性自專案預算中扣除轉移。
+
+### 🛡️ RULE-3.6：專案合約防篡改、雙軌鎖定與保留款控制 (Project Lock & Retention)
+1. **觸發邊界**：當專案底下已產生「任何一張已核准之報價單或採購單」時，專案主檔即進入「營運鎖定狀態」。
+2. **全域開關控制**：由最高權限於 SystemConfig 切換 `PROJECT_LOCK_MODE`：
+   * **STRICT (強硬攔截制)**：專案之 `clientId`、`contractName` 物理死鎖，強行修改 API 直接拋出 `403 Forbidden`。
+   * **FLEXIBLE (柔性追蹤制 - 預設)**：允許主管修改，但不阻擋流程。API 寫入後自動觸發 Audit Log，並於專案畫面留下永久「紅燈標記」。
+3. **預算疊加制與零和流用單**：原始預算核准即鎖死為 Baseline。業主追加必須開立「附約」，以 Delta 方式往上累加。若為專案內部子項預算調整，工務必須開立「預算流用單」，且強制符合「零和遊戲（Zero-Sum，A扣除額=B增加額）」，確保總預算不變。
+4. **雙軌保留款模式鎖 (Retention Method Lock)**：專案合約內建 `retentionRate (保留款比例)` 與計算模式：
+   * `PER_PERIOD`：逐期扣留，每期計價自動攔截對應比例。
+   * `FINAL_MILESTONE`：尾款集中扣留，前幾期全額放行，直至最後一期執行一次性終極攔截。保留款自動鎖進虛擬金庫，保固期滿方可一鍵釋放。
+5. **專案狀態機與遲到帳解耦**：專案結案切換為 `CLOSED` 後全線死鎖。結案後之遲到發票或保固修繕，主管需特批切換為 `WARRANTY` 狀態。系統實施**雙軌日期解耦**：外帳過帳日押於當期以合法報稅，內帳歸屬日死釘於專案，回溯扣除專案總毛利。
+
+### 🛡️ RULE-3.7：報價單不可變更複製版控 (Quotation Immutability & Cloning)
+1. **草稿期無限修改**：報價單狀態為 `DRAFT` 時，允許無限制新增或修改明細與金額。
+2. **核准後物理死鎖**：一旦報價單狀態轉為 `RELEASED` (已送出) 或 `APPROVED` (已核准)，該單據即刻**物理死鎖**。嚴禁以 `UPDATE` 語法修改任何內容，確保業主手上的紙本與系統紀錄 100% 吻合。
+3. **V1/V2 複製版控升級**：若業主議價或變更工項，業務必須使用「版本升級 (Clone)」功能。系統自動產生一張內容相同但版號 +1 的新報價單（如 V2）供業務修改，而舊版（V1）則永久保留為歷史唯讀證據。
+
+### 🛡️ RULE-3.8：專案結構雙軌解耦與階段毛利分析 (Dual-Track WBS & Margin Mapping)
+1. **支出 WBS 與收入 SOV 解耦**：專案強制解耦為兩套獨立樹狀結構。工務發包依賴「支出結構樹 (Cost WBS，如：鋼筋、混凝土)」；業務請款依賴「收入結構樹 (Revenue SOV，如：一樓底板、二樓結構)」。兩者日常營運獨立作業。
+2. **底層進度里程碑映射引擎**：工務發包時，系統強制要求拉出百分比映射線（例如：此包鋼筋有 20% 成本屬於一樓底板）。
+3. **老闆戰情室即時切片利潤**：系統自動透過底層映射分配成本，讓老闆能即時算出「特定樓層/特定進度」的精準階段淨利，消除營運過程中的財務盲區。
+
+### 🛡️ RULE-3.9：歷史憑證絕對鎖死鐵律 (Document Posted Snapshotting)
+1. **單據過帳快照鎖死 (Snapshotting Base)**：當發包採購單、計價單等單據被核准或過帳時，底層 API 強制發動快照引擎。
+2. **實體純文字刻死**：嚴禁單據僅依賴 ID 關聯。系統必須將核准當下的「廠商名稱、統編、專案名稱、稅率」複製並轉化為純文字，實體刻入單據的隱藏快照欄位中。
+3. **抗審計不溯及既往**：未來主檔改名，調閱歷史單據時系統**強制讀取快照文字**，確保 2024 年的單據永遠印出 2024 年的公司名，100% 符合國稅局原始憑證要求。
+
+---
+
+### 💻 附錄：第三篇核心 Zod 防呆與 Prisma 結構範本
+
+    // ==========================================
+    // Prisma Schema: 報價單版控與四方角色 (RULE-3.3, 3.7)
+    // ==========================================
+    // 以下 Project、BusinessPartner 與 PurchaseOrder 僅為欄位補充片段，應合併至各模組完整模型，不是獨立第二份資料表定義。
+    model Project {
+      id              String   @id @default(uuid()) @db.Uuid
+      contractName    String
+      
+      // RULE-3.3: 隱藏版四方角色 (前端預設僅顯示 clientId)
+      clientId        String   @db.Uuid
+      shipToId        String   @db.Uuid
+      billToId        String   @db.Uuid
+      payerId         String   @db.Uuid
+      
+      @@map("projects")
+    }
+
+    // ==========================================
+    // Backend API 邏輯示範: 專案雙軌鎖定防禦 (RULE-3.6)
+    // ==========================================
+    /*
+    async function updateProject(projectId, inputData, currentUser) {
+      const project = await prisma.project.findUnique({ where: { id: projectId }, include: { quotations: true } });
+      const hasActiveDocs = project.quotations.some(q => q.status !== 'DRAFT');
+      
+      if (hasActiveDocs && inputData.clientId !== project.clientId) {
+        // 讀取全域開關
+        const lockMode = await getSystemConfig('PROJECT_LOCK_MODE');
+        if (lockMode === 'STRICT') {
+          throw new HttpError(403, '專案已進入營運階段，嚴禁變更客戶！');
+        } else if (lockMode === 'FLEXIBLE') {
+          // 柔性追蹤：允許修改，但寫入高危險 Audit Log 並發送警報
+          await createSecurityAlert({
+            target: projectId,
+            message: `注意！${currentUser.name} 於營運期間強制變更了專案客戶。`
+          });
+        }
+      }
+      return await prisma.project.update({ where: { id: projectId }, data: inputData });
+    }
+    */
+
+    // ==========================================
+    // 擴充 Prisma Schema: 廠商全域與快照鎖定 (RULE-3.2, 3.9)
+    // ==========================================
+    model BusinessPartner {
+      id                String   @id @default(uuid()) @db.Uuid
+      taxId             String?  
+      name              String   @unique // 全域標準名稱 (Global View)
+      status            String   @default("ACTIVE") 
+      isCustomer        Boolean  @default(false)
+      isVendor          Boolean  @default(false)
+      isHighRisk        Boolean  @default(false)
+      
+      predecessorId     String?  @unique @db.Uuid
+      predecessor       BusinessPartner? @relation("BPHistory", fields: [predecessorId], references: [id])
+      successor         BusinessPartner? @relation("BPHistory")
+
+      companyOverrides  BPCompanyOverride[]
+      @@map("business_partners")
+    }
+
+    model BPCompanyOverride {
+      id                String          @id @default(uuid()) @db.Uuid
+      bpId              String          @db.Uuid
+      companyId         String          @db.Uuid // 子公司獨立統編法人 ID
+      paymentTermsDays  Int?            // 覆蓋全域之特殊付款票期天數
+      
+      businessPartner   BusinessPartner @relation(fields: [bpId], references: [id], onDelete: Cascade)
+      @@unique([bpId, companyId])
+      @@map("bp_company_overrides")
+    }
+
+    model PurchaseOrder {
+      id                 String   @id @default(uuid()) @db.Uuid
+      poNumber           String   @unique
+      vendorId           String   @db.Uuid
+      projectId          String   @db.Uuid
+
+      // 🛡️ RULE-3.9: 老闆定死之單據過帳實體快照欄位，過帳即鎖死文字
+      counterpartyNameSnapshot String  @db.VarChar(255)
+      counterpartyTaxIdSnapshot String @db.VarChar(50)
+      projectNameSnapshot String      @db.VarChar(255)
+      
+      postedAt           DateTime?
+      @@map("purchase_orders")
+    }

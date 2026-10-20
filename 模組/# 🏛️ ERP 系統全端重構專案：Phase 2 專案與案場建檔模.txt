@@ -1,0 +1,218 @@
+# 🏛️ ERP 系統全端重構專案：Phase 2 專案與案場建檔模組總綱 (Prisma 旗艦版)
+
+[cite_start]**文件定位**：本文件為 Phase 2 (Project & Site Management) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR) [cite: 1]。
+[cite_start]**核心精神**：全面相容台灣工程與營建業界特有的「灰階操作與實務彈性」，透過預算報價表裡分離、保留款動態覆寫機制，在滿足工地現場與工廠產線動態調度需求的同時，確保後端財務管理與審計軌跡的絕對硬核防弊 [cite: 1]。
+
+---
+
+## 壹、 業務需求與實務情境白皮書 (BRD)
+
+### 1. 專案基本身分、三軌財務脫鉤與多法人解耦
+* [cite_start]**實務雙名稱機制與自動編碼**：專案建檔時必須同時具備 `contractName`（合約正式全銜，用於開票與發票勾稽）與 `internalName`（內部俗稱，供工務與工地主任現場溝通使用） [cite: 1][cite_start]。專案代號統一採 `YYYYMM-流水號` 的格式自動生成 [cite: 1]。
+* [cite_start]**佣金介紹費追蹤點**：主檔內建「介紹人/推薦人」欄位，作為未來 Phase 7 會計發放佣金與介紹費的利潤追蹤節點 [cite: 1]。
+* [cite_start]**三軌財務脫鉤（防範低報發票與私帳沖銷痛點）**：為解決營建業主常因規避營業稅而協商低報合約發票的潛規則，系統底層架構嚴禁強制執行「發票金額 = 合約總價」的剛性校驗 [cite: 1]。專案必須並行三軌帳務：
+  * [cite_start]**管理帳**：登錄真實合約總價，作為內部成本計算與真實利潤分析的單一事實來源 (SSoT) [cite: 1]。
+  * [cite_start]**稅務帳**：登錄合約約定的官方開票額，專門拋轉至發票與稅務申報模組 [cite: 1]。
+  * [cite_start]**資金帳**：真實資金流紀錄，允許會計將未開發票之差額款項合法沖銷至「老闆私人共用帳戶/內部資金池」 [cite: 1]。
+* **【新版憲法擴充】多法人歸戶解耦 (Null Shared Pattern)**：專案作為集團「共用利潤中心」，底層不綁死單一 `companyId`。母公司統包叫貨時，工務內帳明細綁定真實案場算成本；會計外帳可動態指派發票歸屬給不同子公司銷項，系統自動切轉關係企業往來，賦予極致稅務調度彈性。
+
+### 2. 報價與預算之「表裡分離」（防範藏工於料痛點）
+* [cite_start]**實務痛點**：廠長或工務在向客戶報價時，習慣憑經驗將工資、機具費與利潤「拆分並均攤灌水」進鋼構或五金等材料單價中 [cite: 1][cite_start]。若 ERP 直接以報價單當作採購控管預算，將導致超支攔截防護網完全失效 [cite: 1]。
+* **雙軌預算演進模式**：
+  * [cite_start]**過渡期（手動大水庫模式）**：允許初學者與現場管理員快速建檔，由財務直接手動輸入總合約價、巨觀的「預估純料成本」與「預估人工/發包成本」，後續採購單超支警告皆以此為控管基準 [cite: 1]。
+  * [cite_start]**未來接軌（利潤分配矩陣）**：系統底層保留分配拉桿與均攤矩陣介面，工務打出真實成本底價，系統自動灌水產生報價單，但底層牢牢鎖定真實預算 [cite: 1]。
+
+### 3. WBS 子專案與保固期叫料機制
+* [cite_start]**工作分解結構 (WBS) 子專案架構**：針對跨年度大案場，嚴禁直接修改原始合約總價 [cite: 2][cite_start]。必須採用子專案延伸架構（WBS），將「各期工程」或「追加減 VO」作為子節點獨立建檔控管 [cite: 2]。
+* [cite_start]**保固期維修叫料成本鎖定**：進入「維修保固」後，工務開立的費用必須強制歸類為「保固成本 (Warranty Cost)」，單獨從淨毛利中扣除，防止污染主體建造成本 [cite: 2]。
+* [cite_start]**里程碑進度時間軸**：系統強制追蹤合約日、開工日、完工日及保固起訖日，作為財務認列損益的時間依據 [cite: 2]。
+
+### 4. 估驗計價與保留款彈性 (AR vs AP 差異化)
+* [cite_start]**業主應收端（AR）**：對上游業主通常嚴格執行合同條款，系統預設採 `PERCENTAGE`（按期別比例自動計算） [cite: 2]。
+* [cite_start]**下包應付端（AP）**：對現場土水點工等下包商，實務上常採手動扣留整數金額。系統預設採 `MANUAL` 模式，允許會計覆寫，提供最高實務彈性 [cite: 2]。
+
+---
+
+## 貳、 技術白皮書與資料庫架構 (HLD)
+
+### 1. 專案級別資料列安全 (Project-Level Security & RLS)
+* [cite_start]**多對多成員綁定**：建立 `Project` 主表與 `ProjectMember` 關聯表，明確指派專案經理、工地主任及主辦會計 [cite: 2]。
+* [cite_start]**底層安全防禦濾網**：結合 Phase 1 權限架構，Prisma 查詢層級必須自動掛載專案成員過濾條件，確保員工僅能撈取自身參與團隊之專案成本與利潤數據，嚴禁跨案場窺探 [cite: 2]。
+
+### 2. 跨年度在建工程 (WIP) 庫存緩衝會計引擎
+* [cite_start]**避免損益失真**：為解決「一期大量買料、二期才分批施工」導致當月損益暴跌的痛點，系統實作 WIP 緩衝機制 [cite: 2]。
+* [cite_start]**憑證轉化路徑**：大宗物料採購到貨若直撥工地，先借記「專案庫存/在建工程 (WIP 資產)」 [cite: 2][cite_start]。唯有當工地開立「領料單」或會計執行「估驗計價」時，系統才自動將該資產轉入當期「工程成本 (COGS)」 [cite: 2]。
+
+---
+
+## 參、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 2.1：預算與報價之脫鉤鐵律
+* [cite_start]**嚴禁底層耦合**：系統底層絕對禁止將「客戶端報價單」之總額直接等同於「內部採購預算」 [cite: 3][cite_start]。必須建立完全獨立的 `ProjectBudget` 實體 [cite: 3]。
+* [cite_start]**攔截基準防線**：所有採購與發包單的超支防呆驗證，唯一合法比對對象是 `ProjectBudget` 中的預估成本，徹底無視報價單上藏工於料的虛胖單價 [cite: 3]。
+
+### Rule 2.2：金流與稅務三軌平衡平帳介面
+* [cite_start]**借貸平衡強制性**：當實收現金與轉帳金額大於官方發票金額時，必須強制觸發「差額過帳機制」 [cite: 3][cite_start]。後端必須要求選擇差額歸屬科目，確保專案會計分錄借貸絕對平衡 [cite: 3]。
+
+### Rule 2.3：保留款參數化與後端覆寫追蹤
+* [cite_start]**禁止 Hardcode 邏輯**：嚴禁將 `10%` 保留款邏輯寫死在代碼中，必須完全參數化 [cite: 3]。
+* [cite_start]**審計稽核線索**：當前端送出的交易層級真實扣款不等於系統算出的建議扣款時，後端必須強制將 `isRetentionOverridden` 設為 `true`，嚴禁前端惡意竄改，用作後續防弊稽核指標 [cite: 3]。
+
+### Rule 2.4：保固期維修成本強制覆寫
+* [cite_start]**狀態狀態機鎖定**：當專案狀態變更為 `WARRANTY` 時，任何掛載至該專案之費用單據，其明細屬性必須在後端被強制覆寫為 `WARRANTY_EXPENSE` [cite: 3][cite_start]。任何試圖偽裝成常規工程成本的請求一律攔截 [cite: 3]。
+
+### Rule 2.5：【新版擴充】絕對財務結案硬鎖 (Financial Close Lock)
+* **關帳阻斷**：一旦專案狀態進入 `CLOSED` (財務結案)，Prisma 的全域攔截器必須硬性阻斷任何關聯該專案的新採購單、估驗計價單或費用報銷，徹底鎖定專案歷史損益。
+
+---
+
+## 肆、 核心功能要求與 Prisma Schema 契約 (Prisma Schema Models)
+
+```prisma
+/// 專案狀態列舉
+enum ProjectStatus {
+  DRAFT       // 草稿 (允許 SaveDraftSchema 雙軌驗證)
+  PLANNING    // 規劃中
+  ONGOING     // 執行中
+  WARRANTY    // 維修保固
+  CLOSED      // 財務結案 (觸發 Rule 2.5 硬結案鎖)
+}
+
+/// 保留款計價類型列舉
+enum RetentionMethod {
+  PER_PERIOD
+  FINAL_MILESTONE
+  MANUAL
+  NONE
+}
+
+/// 專案主檔表 (符合多公司全域工作區與三軌財務架構)
+model Project {
+  id                   String        @id @default(uuid()) [cite: 4]
+  projectCode          String        @unique // 自動編碼 YYYYMM-流水號 [cite: 4]
+  contractName         String        // 合約正式名稱 (開票用) [cite: 4]
+  internalName         String        // 內部俗稱 (工務溝通) [cite: 4]
+  status               ProjectStatus @default(DRAFT) [cite: 4, 5]
+  
+  // 三軌財務額度控制
+  managementContractAmount Decimal     @db.Decimal(15, 2) // 管理帳: 真實總合約價 [cite: 5]
+  taxInvoiceAmount     Decimal       @db.Decimal(15, 2) // 稅務帳: 官方開發票總額；非稅額 [cite: 5]
+  
+  // 合作對象與推薦節點
+  clientId             String        // 業主 ID (關聯至 BusinessPartner) [cite: 5]
+  shipToId             String        // 收貨方 ID (關聯至 BusinessPartner)
+  billToId             String        // 發票抬頭對象 ID (關聯至 BusinessPartner)
+  payerId              String        // 實際付款方 ID (關聯至 BusinessPartner)
+  referrerName         String?       // 介紹人/推薦人 [cite: 5, 6]
+  
+  // 保留款關鍵欄位設計 (合約層級預設)
+  retentionMethod      RetentionMethod @default(PER_PERIOD) [cite: 6]
+  retentionRate        Decimal       @default(0.00) @db.Decimal(5, 2) // 例如 10.00% [cite: 6]
+  retentionCapAmount   Decimal       @default(0.00) @db.Decimal(15, 2) // 保留款累計上限 (供估驗參考) [cite: 6]
+  retentionReleaseDate DateTime?     // 退保固款日期 [cite: 6, 7]
+  
+  // 里程碑時間軸
+  contractDate         DateTime?     // 合約簽訂日 [cite: 7, 8]
+  estStartDate         DateTime?     // 預估開工日 [cite: 8, 9]
+  actStartDate         DateTime?     // 實際開工日 [cite: 9, 10]
+  estEndDate           DateTime?     // 預估完工日 [cite: 10, 11]
+  actEndDate           DateTime?     // 實際完工日 [cite: 11, 12]
+  warrantyStartDate    DateTime?     // 保固起始日 [cite: 12]
+  warrantyEndDate      DateTime?     // 保固結束日 [cite: 12, 13]
+
+  // WBS 子專案樹狀結構支援
+  parentId             String?       [cite: 13, 14]
+  parentProject        Project?      @relation("WbsHierarchy", fields: [parentId], references: [id]) [cite: 14]
+  subProjects          Project[]     @relation("WbsHierarchy") [cite: 14]
+
+  // 關聯設定
+  members              ProjectMember[] [cite: 14]
+  budgets              ProjectBudget[] [cite: 14]
+
+  // 全域標配
+  isDeleted            Boolean       @default(false) [cite: 14]
+  version              Int           @default(1) [cite: 14, 15]
+  createdAt            DateTime      @default(now()) [cite: 15]
+  updatedAt            DateTime      @updatedAt [cite: 15]
+
+  @@map("projects")
+}
+
+/// 專案成員關聯表 (用於專案級安全隔離 RLS)
+model ProjectMember {
+  id            String   @id @default(uuid()) [cite: 15]
+  projectId     String   [cite: 15]
+  project       Project  @relation(fields: [projectId], references: [id]) [cite: 15]
+  userId        String   // 關聯至 AuthUser [cite: 15, 16]
+  roleInProject String   // PM, SITE_MANAGER, ACCOUNTANT [cite: 16]
+
+  isDeleted     Boolean  @default(false) [cite: 16]
+  version       Int      @default(1) [cite: 16]
+  createdAt     DateTime @default(now()) [cite: 16]
+  updatedAt     DateTime @updatedAt [cite: 16]
+
+  @@unique([projectId, userId]) [cite: 16]
+  @@map("project_members") [cite: 16]
+}
+
+/// 專案獨立預算表 (Rule 2.1 報價預算表裡分離之防線)
+model ProjectBudget {
+  id                 String   @id @default(uuid()) [cite: 16]
+  projectId          String   [cite: 16]
+  project            Project  @relation(fields: [projectId], references: [id]) [cite: 16]
+  
+  // 巨觀大水庫控管額度
+  estimatedMaterialCost Decimal @db.Decimal(15, 2) // 預估純料總成本 (採購超支防呆唯一基準) [cite: 17]
+  estimatedLaborCost    Decimal @db.Decimal(15, 2) // 預估人工發包總成本 [cite: 17]
+  estimatedExpenses     Decimal @db.Decimal(15, 2) // 預估工地管銷雜支 [cite: 17]
+
+  isDeleted          Boolean  @default(false) [cite: 17]
+  version            Int      @default(1) [cite: 17]
+  createdAt          DateTime @default(now()) [cite: 17]
+  updatedAt          DateTime @updatedAt [cite: 17]
+
+  @@map("project_budgets") [cite: 17]
+}
+```
+
+### Zod 專案建檔海關清洗與保留款驗證標準
+
+```typescript
+import { z } from "zod"; [cite: 17, 18]
+
+// 【新版擴充】模式 A：SaveDraftSchema 草稿模式 (允許未完全填妥)
+export const ProjectSaveDraftSchema = z.object({
+  contractName: z.string().trim().min(1, "合約正式名稱不可為空"),
+  internalName: z.string().trim().min(1, "內部俗稱不可為空"),
+  managementContractAmount: z.string().transform((val) => val === "" ? null : val).optional(),
+});
+
+// 【新版擴充】模式 B：ActiveSchema 啟用防呆模式
+export const ProjectCreateSchema = ProjectSaveDraftSchema.extend({
+  clientId: z.string().uuid(), [cite: 19]
+  shipToId: z.string().uuid(),
+  billToId: z.string().uuid(),
+  payerId: z.string().uuid(),
+  retentionMethod: z.enum(["PER_PERIOD", "FINAL_MILESTONE", "MANUAL", "NONE"]), [cite: 19]
+  retentionRate: z.number().min(0).max(100).default(0), [cite: 19]
+}); [cite: 19, 20]
+
+// 交易與計價層級的保留款 Zod 強校驗與自動覆寫判定 (Rule 2.3)
+export const RetentionValuationSchema = z.object({
+  calcRetentionAmount: z.string().transform((val) => new z.Types.Decimal(val)), [cite: 18]
+  actualRetentionAmount: z.string().transform((val) => new z.Types.Decimal(val)), [cite: 18]
+  isRetentionOverridden: z.boolean().default(false), // 【新版擴充】後端稽核標記
+}).superRefine((data, ctx) => {
+  // 後端強制判定是否發生人工覆寫，該邏輯在 Service 層必須與 isRetentionOverridden 聯動 [cite: 18]
+  // 容許誤差 0.00 [cite: 18]
+});
+```
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (初學者與工地現場防呆)
+
+1. [cite_start]**老闆專屬「毛利照妖鏡」隱藏儀表板**：在專案建檔與預算編列畫面的最底部，設有管理者特權解鎖的隱藏式即時分析區 [cite: 20][cite_start]。當工務調整「管理帳合約總價」與「大水庫純料成本」時，儀表板會即時連動演算顯示：`管理總額 - (純料成本 + 人工成本) = 預估毛利率` [cite: 20][cite_start]。無懼利潤與工資被分攤隱藏至底層料件單價中，讓高層一目了然最真實的接單毛利 [cite: 20]。
+2. [cite_start]**初學者友善之「預算大水庫」拉桿模式**：為照顧不熟悉複雜 ERP 系統明細編列的初級工務或廠長，UI 介面提供「大水庫簡化建檔」切換開關 [cite: 20][cite_start]。使用者無需手動抓取數百項鋼構工法庫明細，只需在介面上拉動三個宏觀拉桿（純料比例、人工發包、現場管銷），系統便會自動將總預算配比填入 `ProjectBudget`，實現秒級建檔並同時啟動 Phase 5 的防爆超支攔截鎖 [cite: 20]。
+3. [cite_start]**WBS 樹狀子專案直覺化視覺看板**：針對跨年度的複雜變更與追加工程，UI 放棄難懂的扁平化清單，改採直觀的「階層樹狀結構卡片」展現 [cite: 20][cite_start]。工地主任可以像看電腦資料夾一樣，一秒點開主專案下方的「第一期工程」與「追加工程」，並以視覺化進度條即時查看各子節點的預算消耗進度，防止現場工務擅自更改原合約總價，達到完美防弊 [cite: 20]。
+4. **【新版擴充】雙軌驗證迫降 (Draft Fallback)**：PM 新建案場時預設套用 `ProjectSaveDraftSchema`，只需輸入名稱即可暫存；點擊「正式啟用」時切換為嚴格模式，配合畫面防抖自動滾動至未填寫的客戶或金額欄位。
