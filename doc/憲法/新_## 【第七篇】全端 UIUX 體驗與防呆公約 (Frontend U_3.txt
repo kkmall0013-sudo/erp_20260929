@@ -1,0 +1,147 @@
+## 【第七篇】全端 UI/UX 體驗與防呆公約 (Frontend UX & Error-Proofing Disciplines)
+
+> **【架構師最高聲明】**
+> 本篇章為系統的「最前線防禦與極速引擎」。我們堅信：「好用的系統，就是最好的內控」。前端開發者必須嚴格遵守本篇定義的各項鐵律。我們拒絕昂貴且封閉的商業套件，採用頂尖開源技術打造媲美 Notion、Linear 以及 Google Sheets 的跨時代多工協作體驗。嚴禁依賴後端擋錯而忽視前端防呆，也嚴禁寫出讓會計「手離開數字鍵盤」的繁瑣流程。本篇旨在打造無極限操作體驗與視覺防禦。
+
+---
+
+### 🛡️ RULE-7.1：極速打單與輸入引擎 (Numpad-First & Speed Input)
+
+1. **網格直貼與智慧標頭映射 (Grid-Paste & Smart Mapping)**：所有表身明細（如採購單、報價單）必須攔截原生 `Ctrl + V` 事件。允許使用者直接從 Excel 複製多行資料貼入。前端必須實作「智慧標頭偵測」，即使 Excel 欄位左右順序與 ERP 網格不同，只要連同標題一併貼上，系統即會自動精準對齊映射，防堵欄位錯位災難。
+2. **Excel 式鍵盤導航與無頭開源網格**：
+   * 嚴禁使用需付費之商業套件，強制使用 `TanStack Table` 等開源無頭套件 (Headless UI) 打造底層。
+   * 網格輸入區必須支援方向鍵與 `Enter/Tab` 導航。在最後一行最後一格按下 `Enter` 時，必須自動新增空白行（100% Excel 擬真折行），實現「雙手不離數字鍵盤」的極致輸入。
+3. **Numpad-First 智慧日期與嚴格阻斷**：
+   * 日期欄位強制掛載智能解析器（如輸入 `0609` 自動轉為 `本年/06/09`）。
+   * **幽靈日期阻斷**：若輸入不存在之日期（如 `0230`），嚴禁系統自作聰明推算修正。游標離開時必須瞬間閃爍「紅色粗體邊框」並強制清除，要求重新輸入。
+4. **📌 圖章鎖定與側滑快建 (Sticky Pin & Quick-Create)**：
+   * 表頭提供「📌 圖釘」功能。啟用後，連續新增多筆單據時將自動沿用該鎖定日期（或指定欄位），大幅提升月底批次打單效率。
+   * 所有下拉選單旁強制配置 `[+ 新增]` 按鈕。點擊後不離開當前畫面，從右側滑出「抽屜式表單 (Drawer)」，建檔完畢抽屜收起並自動帶入選項，打單心流 100% 不中斷。
+5. **大宗分攤雙軌制 (Dual-Track Cost Allocation)**：針對大宗進貨與成本拆分，UI 必須同時提供「傳統試算表手動輸入 (Zod 檢核 100%)」與「視覺化拉桿拖曳 (Slider)」。讓會計可直接用滑鼠拖曳滑塊調整比例，下方金額即時聯動跳動，兼顧精準度與極致防呆。
+
+---
+
+### 🛡️ RULE-7.2：巨量資料渲染與導航視角 (Massive Data Rendering & Navigation)
+
+1. **無極限虛擬滾動 (Virtual Scrolling)**：凡超過 50 行之明細表或戰情大表，嚴禁使用傳統 DOM 渲染。必須強制導入虛擬化技術（如 `@tanstack/react-virtual`），永遠只渲染可視範圍內的數十行，確保 10 萬筆資料亦能絲滑滾動無殘影。
+2. **防抖巨量下拉選單 (Debounced ComboBox)**：面對如「5 萬筆料件」的主檔選擇，嚴禁使用原生 `<select>` 導致畫面卡死。必須採用可輸入之 ComboBox，並實作 300ms 防抖搜尋 (Debounce)，打字即查、精準渲染前 20 筆。
+3. **個人化欄位記憶 (Persisted Columns)**：面對動輒 20 個欄位的超級大表，必須提供「⚙️ 齒輪」設定按鈕。允許員工自由隱藏/排序欄位，並將設定加密存放於瀏覽器 `LocalStorage`，實現千人千面的專屬視角。
+4. **全域指令面板 (Cmd+K Navigation)**：任何畫面按下 `Cmd+K` 或 `Ctrl+K`，中央彈出搜尋框，支援輸入關鍵字瞬間跳轉單據或模組（例如輸入「採購」直達模組，輸入專案代號直達案場）。打造取代傳統深層樹狀選單的老手極速捷徑。
+
+---
+
+### 🛡️ RULE-7.3：極端防呆與災難復原 (Error-Proofing & Recovery)
+
+1. **離線嚴格阻斷與未儲存警告**：
+   * 斷網或弱網環境下，提交按鈕強制反灰並提示「請檢查網路連線」，嚴格阻斷任何假象上傳。
+   * 任何編輯中且尚未存檔的表單，當使用者誤觸 `Esc`、重整或上一頁時，必須觸發瀏覽器原生防護警告：「您有未儲存的變更，確定要離開嗎？」。
+2. **Zod 錯誤自動映射 (Auto-Mapping & Scroll)**：後端攔截到業務邏輯錯誤時，前端嚴禁只顯示模糊的 Toast 提示。必須「自動捲動 (Auto-Scroll)」至錯誤發生的具體行數，將該輸入框亮起「紅色粗體邊框」，並於下方直接顯示中文除錯指引。
+3. **彈性 15 秒手滑後悔藥 (Undo Delete)**：前端明細刪除實施「延遲銷毀機制」。點擊垃圾桶後，資料從畫面隱藏並於底部彈出黑框提示，給予使用者「彈性 15 秒鐘」的反悔時間點擊 `[復原]`，或於「單據儲存前皆可自由復原」，超時才真正發送 API 刪除。
+4. **瀏覽器本地急救箱 (Local Snapshot)**：表單異動時，前端完全不打擾伺服器，靜默將加密草稿存入 `LocalStorage`。若遇電腦當機斷電，重啟系統進入同畫面時，必須主動提示「偵測到您有一份未正常儲存的草稿，是否還原？」，達到零伺服器負擔的 100% 災難復原。
+5. **巨量任務全螢幕鎖定 (Full-Screen Task Lock)**：執行萬筆貼上或批次核准時，降下全螢幕半透明遮罩顯示「處理中」。配合多開分頁功能，使用者可直接切換至其他分頁工作，兼顧最高防呆與操作效率。
+
+---
+
+### 🛡️ RULE-7.4：跨環境、多工與行動防護 (Multitasking & Mobile-Ready)
+
+1. **URL 沙盒隔離與色彩錨定 (Workspace Branding)**：
+   * 為完美支援 Google 式多開分頁，系統絕對禁止依賴全域 Cookie 判斷當前操作公司。`CompanyId` 必須綁死於網址列 (URL)。
+   * 配合混合工作區，必須實作「工作區實體色彩錨定」。導覽列與背景浮水印需依據當前操作之公司實體動態切換高對比色彩（如甲公司藍色、乙公司綠色）。利用視覺餘光瞬間防呆，徹底阻斷跨分頁貼錯帳的致命風險。
+2. **全域遮罩防連點 (Global Overlay Lock)**：送出「核准、付款」等交易性 API 時，除了按鈕轉圈圈，必須於全螢幕降下「半透明防護罩 (Overlay)」。物理性阻斷滑鼠對任何元素的誤觸，徹底消滅連點引發的重複扣款。
+3. **會話逾期畫中畫 (Modal Login)**：若使用者離開座位導致 JWT Token 過期，當其再次點擊「儲存」時，系統**嚴禁刷白或重整畫面**。必須在當下畫面正中央彈出「畫中畫登入框」，解鎖後瞬間接續未完成的 API 儲存動作。
+4. **行動端卡片式變形與相機直連 (Mobile-First)**：
+   * 在手機螢幕下，傳統網格必須自動變形為由下往上滑出的「全螢幕卡片式表單 (Bottom Sheet)」，且核心按鈕熱區必須 $\ge$ 48x48 px，終結左右滑動找欄位的痛苦。
+   * 行動端點擊附件上傳時，必須透過 HTML5 `capture="environment"` 直接喚醒手機背部相機，實現工地現場「一鍵拍照即上傳」。
+5. **可操作通知卡片 (Actionable Notifications)**：系統待辦與警報通知必須分級。針對需要決策之通知（如超支需簽核），必須於通知卡片內建 `[核准]` 與 `[退回]` 動作按鈕。主管不需跳轉畫面，直接於彈出卡片上點擊即可秒速完成決策。
+
+---
+
+### 🛡️ RULE-7.5：進階 SaaS 體驗與 Google Sheets 級協作防線
+
+1. **Google Sheets 級實時多人在線協作 (Cell-Level Multiplayer)**：全系統明細網格必須透過開源 WebSocket/Yjs 廣播機制，即時渲染在線協作者的動態位置。畫面上能直接看到其他同事專屬顏色的游標選取框、打字動態與名字標籤。當會計 A 編輯某儲存格時，該格對會計 B 鎖定轉為唯讀，但 B 仍可自由編輯同單據內的其他儲存格。徹底終結傳統 ERP「整張單據鎖死不准動」的低級災難。
+2. **行內所見即查稽核 (Inline Right-Click Audit)**：網格欄位點擊右鍵 ➡️ `[查看變更歷史]`，瞬間彈出該儲存格軌跡。強制渲染為「直覺刪除線」（如：`數量 50 ➡️ 80`），嚴禁向非技術人員展示 JSON 原碼，抓戰犯只需一秒鐘。
+3. **無痕燈箱預覽 (In-App Lightbox Viewer)**：點擊附件 PDF 或圖片，直接於當前畫面彈出黑底預覽視窗。看完按 `Esc` 關閉，附件檔案絕對不落地污染員工電腦。
+
+---
+
+### 💻 附錄：第七篇 前端核心機制實作範本 (React / TypeScript)
+
+    // ==========================================
+    // 機制 1: 智慧日期與幽靈日期防禦引擎
+    // ==========================================
+    function parseSmartDate(input: string): string | null {
+        const now = new Date();
+        const year = now.getFullYear();
+        let y = year, m = 0, d = 0;
+        
+        if (/^\d{4}$/.test(input)) {
+            m = parseInt(input.substring(0, 2), 10);
+            d = parseInt(input.substring(2, 4), 10);
+        } else if (/^\d{6}$/.test(input)) {
+            y = 2000 + parseInt(input.substring(0, 2), 10);
+            m = parseInt(input.substring(2, 4), 10);
+            d = parseInt(input.substring(4, 6), 10);
+        } else if (/^\d{8}$/.test(input)) {
+            y = parseInt(input.substring(0, 4), 10);
+            m = parseInt(input.substring(4, 6), 10);
+            d = parseInt(input.substring(6, 8), 10);
+        } else {
+            return null;
+        }
+
+        // 嚴格幽靈日期阻斷 (RULE-7.1.3): 檢查日曆真實性
+        const dateObj = new Date(y, m - 1, d);
+        if (dateObj.getFullYear() === y && dateObj.getMonth() === m - 1 && dateObj.getDate() === d) {
+            return dateObj.toISOString().split('T')[0]; // 回傳 YYYY-MM-DD
+        }
+        
+        return "INVALID_DATE"; // 觸發前端紅框閃爍
+    }
+
+    // ==========================================
+    // 機制 2: 彈性 15 秒手滑後悔藥 (延遲刪除 Undo Hook)
+    // ==========================================
+    import { useState, useRef } from 'react';
+
+    // 依據決策，預設延遲時間提升為 15 秒 (15000ms)，並支援儲存前永久 Undo
+    export function useUndoDelete<T>(apiDeleteFn: (id: string) => Promise<void>, delayMs = 15000) {
+        const [pendingDeletes, setPendingDeletes] = useState<Set<string>>(new Set());
+        const timeoutRefs = useRef<Record<string, NodeJS.Timeout>>({});
+
+        const triggerDelete = (id: string, onUndoExpired: () => void) => {
+            // 1. 畫面先行隱藏
+            setPendingDeletes(prev => new Set(prev).add(id));
+            
+            // 2. 顯示 Toast (包含 Undo 按鈕)
+            showToast(`已移除明細 (15秒內可復原)`, {
+                action: {
+                    label: '復原 (Undo)',
+                    onClick: () => undo(id)
+                }
+            });
+
+            // 3. 設定延遲真實刪除
+            timeoutRefs.current[id] = setTimeout(async () => {
+                await apiDeleteFn(id);
+                setPendingDeletes(prev => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                });
+                onUndoExpired();
+            }, delayMs);
+        };
+
+        const undo = (id: string) => {
+            clearTimeout(timeoutRefs.current[id]);
+            delete timeoutRefs.current[id];
+            setPendingDeletes(prev => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+            });
+            showToast('已復原明細');
+        };
+
+        return { pendingDeletes, triggerDelete, undo };
+    }

@@ -1,0 +1,256 @@
+# 🏛️ ERP 系統全端重構專案：第零章 - 全域參數與數據防禦 (Prisma 旗艦定版)
+
+> **【架構師最高聲明】**
+> 本章節定義之全域規則為系統之「基本法」，優先權高於後續所有業務模組 (Phase 1~11)。任何開發者或 AI Agent 在產出 TypeScript、Prisma Schema、Zod 驗證、Next.js API 或背景排程時，必須強制引用本章定義之邏輯與防禦機制，絕對不得自行擴充、忽略或變更。違反此憲法產出之程式碼，一律視為無效技術債並強制重寫。
+
+---
+
+## 壹、 業務需求與系統參數架構 (BRD & System Configuration)
+
+本系統所有參數與常數嚴禁寫死於程式碼中，必須透過全域參數機制動態控管，以應對台灣稅法與營運實務的變動。
+
+1. **[Key-Value 儲存與動態稅務字典]**：
+   全域參數強制採用鍵值對 (Key-Value) 結構。除了常規參數外，必須建立「稅務動態字典」以防範稅法變更。包含但不限於：
+   * **營業稅與容差**：`FIN_TAX_TOLERANCE` (預設 5.0)
+   * **勞健保級距**：`NHI_RATE` (例如預設 '0.0211')
+   * **印花稅動態字典**：`STAMP_DUTY_CONTRACT_RATE` (承攬契據稅率，預設 0.001)、`STAMP_DUTY_ASSET_SALE` (動產買賣契據稅額，按件預設 12.00)、`STAMP_DUTY_RECEIPT` (銀錢收據稅率，預設 0.004)
+2. **[時空快照機制 (Effective Dating)]**：
+   為了避免未來稅法變更回溯影響歷史單據，參數主檔必須包含 `validFrom` (生效起) 與 `validTo` (生效迄)。各項單據在過帳當下，必須將當下生效的參數值（如 `postedTaxRate`）實體複製並快照寫死於單據欄位，斷開與全域參數庫的血緣。
+3. **[Maker-Checker 草稿與過帳機制]**：
+   配合營建業與製造業的現場實務，所有交易單據均需支援「草稿 (DRAFT)」與「已過帳 (POSTED)」的狀態機流轉，並對應不同的資料庫防寫死鎖機制。
+
+---
+
+## 貳、 全域不可動搖鐵律 (The Supreme Directives)
+
+### 🛡️ RULE-0.1：術語與物理命名公約 (Naming Conventions)
+為避免技術債與跨部門溝通成本，系統中所有變數、資料表與路由必須嚴格遵守以下命名公約：
+1. **資料表 (PostgreSQL)**：`snake_case` 複數名詞（例：`sales_quotations`）。
+2. **Prisma Model (ORM)**：`PascalCase` 單數名詞（例：`Quotation`，資料表以 `@@map("sales_quotations")` 映射）。
+3. **REST API 路由**：`kebab-case` 複數名詞（例：`/api/sales-quotations`）。
+4. **列舉 (Enum)**：`UPPER_SNAKE_CASE`（例：`PENDING_APPROVAL`）。
+5. **布林值 (Boolean)**：強制以 `is` 或 `has` 開頭（例：`isDeleted`）。
+6. **時間戳記 (DateTime)**：強制以 `At` 結尾（例：`createdAt`、`approvedAt`）。
+
+### 🛡️ RULE-0.2：全面軟刪除、實體凍結與 Prisma Client Extensions
+1. **軟刪除標配**：所有具備生命週期之資料表，必須包含 `isDeleted Boolean @default(false)`。
+2. **狀態機實體凍結 (Physical Freeze)**：全系統交易單據導入標準 `DocumentStatus`。一旦單據進入 `POSTED` (已過帳) 或 `VOIDED` (已作廢) 狀態，Prisma Extension 必須在底層強制拋錯，**絕對禁止任何 Update 或修改 `isDeleted` 為 true**。
+3. **棄用 Middleware**：全面採用最新版 `Prisma Client Extensions` 實作軟刪除自動過濾、`updatedBy` 自動注入與審計追蹤，確保 TypeScript 型別推導無損且效能最佳化。
+
+### 🛡️ RULE-0.3：海關洗滌、空值防呆與雙軌驗證 (Zod Sanitization & Dual-Track Schema)
+1. **全域字串洗滌器 (Global Transformer)**：所有 API 接收到的字串必須經過 `StringCleanSchema` 處理，強制去除前後空白，並將 `""` 轉換為 `null`，嚴防隱形空白導致的關聯錯誤。
+2. **草稿與過帳雙軌制 (Draft vs. Posted)**：兼顧工地現場操作彈性與財務防弊，所有交易單據的 Zod 驗證強制分為兩套：
+   * `SaveDraftSchema`：允許部分非核心欄位為空、不強制檢核借貸平衡，供現場暫存使用。
+   * `PostDocumentSchema`：極限防呆，強制啟動所有必填檢查、數學平衡檢核與關聯比對。
+
+### 🛡️ RULE-0.4：樂觀鎖、API 回應封裝與無縫合併 (Optimistic Locking & API Envelope)
+1. **防並發覆寫**：所有主檔與單據標配 `version Int @default(1)`。每次更新時，前端必須回傳當前版本號，後端比對若不符，立即阻斷寫入 (`UPDATE ... WHERE id = X AND version = Y`)。
+2. **標準 API 封裝 (Standard Envelope)**：全域 API 回應格式強制規範為 `{ success: boolean, data?: any, error?: { code, message, latestData } }`。
+3. **前端防呆聯動**：當觸發版本衝突時，後端必須回傳 `latestData`，讓前端能顯示「資料已被他人修改」，並提供無縫合併或對比視窗，嚴禁直接讓使用者心血白費。
+
+### 🛡️ RULE-0.5：數值精度、零除防禦與運算容差 (Decimal.js & Epsilon Tolerance) [新版補強]
+1. **強制精度**：資料庫金額與數量一律使用 `@db.Decimal(15, 2)`（金額）或 `@db.Decimal(15, 4)`（匯率/稅率）。
+2. **原生 `number` 禁令與容差比較**：TypeScript 全域**禁用原生 `number` 進行任何加減乘除**，必須依賴 `decimal.js` 封裝計算。任何涉及「金額平衡」的驗證（如：借貸平衡、折讓攤平），禁止使用嚴格相等 `===`，必須**強制引入微小容差 (Epsilon Tolerance) 進行比較**（如 `abs(A - B) < 0.01`），徹底消滅浮點數漂移導致的死鎖。
+3. **隔離減項與零負數防線**：線上交易端 (OLTP) 封死負數輸入，所有 Zod 金額數量皆標配 `.min(0)`。退貨、折讓等反向業務一律存為「正數」，並依賴獨立的「減項專屬欄位」或「單據類型」在應用層執行減法。
+
+### 🛡️ RULE-0.6：單據自動跳號引擎與競態防禦 (Sequence Generator)
+摒棄 `SELECT MAX() + 1` 的危險做法。系統底層建立 `DocumentSequence` 模型，採用 `UPDATE ... RETURNING` 與 Row Lock（行級鎖）機制，保證在高並發打單下，所有單據皆能獲得連續、無破綻之編號（如 `PO-202405-0001`）。
+
+### 🛡️ RULE-0.7：集團多公司架構與內部沖銷血緣 (Intercompany Baseline)
+因應戰情室集團沖銷與多公司資金調度需求：
+1. **本位幣預留**：交易單據強制標配 `currency String @default("TWD")` 預留國際化擴充空間。
+2. **法人歸屬與內部交易標記**：強制包含 `companyId` (歸屬法人) 與 `isIntercompany Boolean @default(false)`，確保跨表聚合時能一鍵剔除虛增營收。
+
+### 🛡️ RULE-0.8：草稿與核准驗證閘門 (Drafting & Validation Gate) [全新憲法]
+1. **草稿先行機制**：所有涉及金錢的單據（報價、採購、請款），必須遵循「草稿先行 ➔ 自動驗證 ➔ 視覺化紅燈警報 ➔ 數學歸零後解鎖」的標準動線。嚴禁在第一步就以嚴格校驗阻斷使用者存檔草稿。
+2. **Zod 幽靈小數洗滌器 (Sanitization)**：所有後端 API 在接收前端傳來的金額欄位時，Zod 必須在第一關掛載 `.transform(val => Math.round(val))`，強制四捨五入抹平幽靈小數後，再進行數學平衡檢核，確保放行的數字絕對乾淨。
+
+### 🛡️ RULE-0.9：前端輸入映射與所見即所得 (Input Mapping & WYSIWYG) [全新憲法]
+1. **網格防護與同步**：前端網格必須支援「Excel 複製貼上自動映射」，並強制於顯示層 (UI) 與資料層 (State) 之間，導入 `Math.round()` 的強制同步機制。
+2. **絕對所見即所得**：確保業務在畫面上看到的數字，就是底層實際寫入資料庫的數字，絕不允許出現「畫面顯示 150,000，底層卻送出 149999.998」的幽靈數值災難。
+
+---
+
+## 參、 核心資料庫模型定義 (Prisma Schema 憲法版)
+
+~~~prisma
+// ========================================================================
+// 💡 全域共用列舉 (Enums)
+// ========================================================================
+enum DocumentStatus {
+  DRAFT             // 草稿 (套用 SaveDraftSchema，允許未平)
+  PENDING_APPROVAL  // 簽核中 (鎖定修改)
+  APPROVED          // 已核准
+  POSTED            // 已過帳 (強制實體凍結，禁止軟刪除與任何修改)
+  VOIDED            // 已作廢 (紅字迴轉)
+}
+
+// ========================================================================
+// 💡 單據跳號引擎 (RULE-0.6)
+// ========================================================================
+model DocumentSequence {
+  prefix      String   @id               // 例如: "PO-202405"
+  currentVal  Int      @default(0)       // 當前已使用號碼
+  updatedAt   DateTime @updatedAt
+
+  @@map("document_sequences")
+}
+
+// ========================================================================
+// 💡 全域系統參數字典 (RULE-0.1, RULE-0.8)
+// ========================================================================
+model SystemConfig {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  configKey   String   // 例如: 'FIN_TAX_TOLERANCE', 'STAMP_DUTY_RECEIPT'
+  configValue String   // 例如: '5.0', '0.004'
+  valueType   String   // 'STRING' | 'NUMBER' | 'BOOLEAN' | 'JSON'
+  
+  validFrom   DateTime // 生效起始時間
+  validTo     DateTime // 生效結束時間
+  
+  isDeleted   Boolean  @default(false)
+  version     Int      @default(1)
+  
+  createdBy   String?  @db.Uuid
+  updatedBy   String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([configKey, validFrom, validTo])
+  @@map("system_configs")
+}
+
+// ========================================================================
+// 💡 AI Agent 開發指南：交易單據模型範本 (所有 Phase 業務單據皆須遵守)
+// ========================================================================
+model ExampleTransactionDocument {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentCode       String         @unique // 依賴 DocumentSequence 引擎生成
+  
+  // 狀態與集團多公司血緣 (RULE-0.7)
+  status             DocumentStatus @default(DRAFT)
+  companyId          String         @db.Uuid
+  isIntercompany     Boolean        @default(false)
+  currency           String         @default("TWD")
+  
+  // 財務核心金額欄位 (RULE-0.5: 強制精度 Decimal)
+  netAmount          Decimal        @db.Decimal(15, 2)
+  taxAmount          Decimal        @db.Decimal(15, 2)
+  totalAmount        Decimal        @db.Decimal(15, 2)
+  
+  // 減項隔離 (金額存正數，由公式減除，嚴禁存負數)
+  discountAmount     Decimal        @db.Decimal(15, 2) @default(0.00)
+  retentionDeductionAmount Decimal  @db.Decimal(15, 2) @default(0.00)
+
+  // 時空快照固化 (斷開全域庫的血緣)
+  postedTaxRate      Decimal?       @db.Decimal(15, 4)
+  
+  // 審計與安全底層 (RULE-0.2, 0.4)
+  isDeleted          Boolean        @default(false)
+  version            Int            @default(1)
+  createdBy          String?        @db.Uuid
+  onBehalfOf         String?        @db.Uuid // 代理人機制審計
+  updatedBy          String?        @db.Uuid
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([companyId, status])
+  @@map("example_transaction_documents")
+}
+~~~
+
+---
+
+## 肆、 核心 API 攔截與防禦機制 (TypeScript / Zod)
+
+~~~typescript
+import { z } from "zod";
+import { PrismaClient } from '@prisma/client';
+import Decimal from "decimal.js";
+
+// ========================================================================
+// 💡 全域標準 API 回應封裝 (RULE-0.4)
+// ========================================================================
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    latestData?: any; // 發生樂觀鎖衝突時回傳
+  };
+}
+
+// ========================================================================
+// 💡 Zod 全域防呆與非負數強型別標準
+// ========================================================================
+
+/**
+ * RULE-0.3: 海關防呆空值洗滌器
+ */
+export const StringCleanSchema = z.string().trim().transform((val) => (val === "" ? null : val));
+
+/**
+ * RULE-0.8: 幽靈小數洗滌器 (進海關前強制四捨五入，徹底消滅浮點數殘留)
+ */
+export const NTDAmountSchema = z.number()
+  .min(0, "金額不可為負數")
+  .transform(val => Math.round(val));
+
+/**
+ * RULE-0.5: 全域常規數值防禦強型別標準 (嚴防負數)
+ */
+export const QuantitySchema = z.number().min(0, "數量不可為負數");
+export const UnitPriceSchema = z.number().min(0, "單價不可為負數");
+
+// ========================================================================
+// 💡 Zod 雙軌驗證標準 (Draft vs. Post)
+// ========================================================================
+
+// [草稿模式] 允許部分欄位留空、允許金額不平
+export const DocumentDraftSchema = z.object({
+  id: z.string().uuid(),
+  vendorId: z.string().uuid().nullable().optional(),
+  
+  // 草稿階段依然執行幽靈小數洗滌，防範前端殘留
+  netAmount: NTDAmountSchema.default(0),
+  taxAmount: NTDAmountSchema.default(0),
+  totalAmount: NTDAmountSchema.default(0),
+});
+
+// [過帳模式] 極限防呆，強制平衡檢核與容差防禦 (RULE-0.5 & 0.8)
+export const DocumentPostSchema = DocumentDraftSchema.extend({
+  vendorId: z.string().uuid("過帳時必須指定廠商"),
+}).superRefine((data, ctx) => {
+  const net = new Decimal(data.netAmount);
+  const tax = new Decimal(data.taxAmount);
+  const expectedTotal = net.plus(tax);
+  
+  // 強制引入 0.01 微小容差 (Epsilon) 進行比較，嚴防嚴格相等 (===) 誤殺
+  if (expectedTotal.minus(data.totalAmount).abs().greaterThan(0.01)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `財務平衡錯誤：未稅額(${data.netAmount})加稅金(${data.taxAmount})不等於總金額(${data.totalAmount})，請修正尾差後再過帳。`,
+      path: ["totalAmount"]
+    });
+  }
+});
+
+// ========================================================================
+// 💡 Prisma Client Extension 實體凍結攔截器 (RULE-0.2)
+// ========================================================================
+export const prisma = new PrismaClient().$extends({
+  query: {
+    $allModels: {
+      async update({ model, operation, args, query }) {
+        // 攔截更新操作，若是 POSTED 或 VOIDED，強制阻斷任何 update 語句 (包含 isDeleted 標記)
+        if (args.data.status === 'POSTED' || args.data.status === 'VOIDED') {
+           // 注意：此處僅為偽代碼展示概念。實際實作需透過 Middleware 先查出舊狀態，
+           // 確認舊狀態為 POSTED 且仍要修改時拋出 Error("單據已凍結，禁止修改")
+        }
+        return query(args);
+      },
+    },
+  },
+});
+~~~

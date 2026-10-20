@@ -1,0 +1,781 @@
+// ERP 系統全模組型別定義 (依據《ERP全模組資料庫欄位與用途總表》及《系統憲法》)
+
+export type CompanyId = string;
+
+export interface PhoneItem {
+  id: string;
+  type: '市話' | '傳真' | '工務專線' | '行動電話' | '緊急聯絡';
+  number: string;
+}
+
+export interface KeyPerson {
+  id: string;
+  title: string; // 職稱如: 董事長, 總經理, 財務長, 營造特助
+  name: string;
+  phone?: string;
+}
+
+export interface Company {
+  id: string;
+  companyCode: string;
+  name: string;
+  shortName?: string;
+  entityType: 'GROUP' | 'CORPORATION' | 'PERSONAL';
+  parentId?: string;
+  taxId?: string; // 公司法人 8 碼統編
+  nationalId?: string; // 個人實體台灣身分證字號 (1 碼英文字母 + 9 碼數字加權防呆)
+  representative?: string; // 法定代表人 / 負責人
+  keyPersonnel?: KeyPerson[]; // 公司重要人物清單
+  documentPrefix?: string;
+  phones?: PhoneItem[];
+  email?: string;
+  registeredAddress?: string;
+  contactAddress?: string;
+  capitalAmount?: number;
+  baseCurrency: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'USER';
+
+export interface User {
+  id: string;
+  username: string;
+  fullName: string;
+  email: string;
+  role: UserRole;
+  canManageUsers?: boolean; // 【Superadmin 特許帳號管理專人】可進帳號管理模組與重設他人密碼
+  canManageSystemConfigs?: boolean; // 【Superadmin 特許授權】開放此 Admin 修改全域核心參數
+  canManageAdmins?: boolean; // 【Superadmin 特許同階管理】開放此 Admin 新增、編輯、重設密碼與刪除同階 Admin
+  canManageAllCompanies?: boolean; // 【全集團跨法人管理特許】代替Superadmin統籌管理全集團所有公司法人（不受限於特定子公司，如老闆/營運長）
+  groupId?: string; // 當 role === 'USER' 時主要群組 ID
+  groupIds?: string[]; // 支援同仁同時隸屬多個業務群組矩陣 (PBAC 多重群組)
+  status: 'ACTIVE' | 'DISABLED';
+  title?: string;
+  allowedCompanies: string[];
+  defaultCompanyId: string;
+  passwordHash?: string; // 密碼字串或雜湊
+  isPasswordReset?: boolean; // 是否為重設後之初始預設密碼標記
+  lastLoginAt?: string;
+  deleteStage?: 'ACTIVE' | 'PENDING_DELETE' | 'ARCHIVED'; // 帳號生命週期三態：正常啟用、待刪除冷卻中、深度封存中
+  stageDeletedAt?: string; // 進入待刪除/封存狀態時間戳 (ISO)
+  purgeDueAt?: string; // 7日冷卻截止時間 (ISO)
+  deletedBy?: string; // 執行刪除或移交操作者姓名
+  stageNotes?: string; // 刪除或封存備註
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserGroup {
+  id: string;
+  groupCode: string;
+  groupName: string;
+  description: string;
+  isSystem: boolean; // 系統內建預設群組防誤刪
+  approvalLimit: number; // 單筆核准金額上限 ($0 ~ 無限制)
+  canExport: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ModuleKey =
+  | 'COMPANIES'
+  | 'PROJECTS'
+  | 'PARTNERS'
+  | 'QUOTATIONS'
+  | 'INBOUND_RECEIPTS'
+  | 'PURCHASE_ORDERS'
+  | 'SUBCONTRACTS'
+  | 'VALUATIONS'
+  | 'FINANCE_AP'
+  | 'FINANCE_AR'
+  | 'BANK_CHECKS'
+  | 'SYSTEM_CONFIGS'
+  | 'AUDIT_LOGS';
+
+export interface GroupModulePermission {
+  id: string;
+  groupId: string;
+  moduleKey: ModuleKey;
+  canRead: boolean;
+  canWrite: boolean;
+  canApprove: boolean;
+  canExport: boolean;
+}
+
+export interface AppConfig {
+  id: string;
+  configKey: string;
+  configValue: string;
+  description?: string;
+  valueType: 'STRING' | 'NUMBER' | 'BOOLEAN' | 'JSON';
+  isDeleted: boolean;
+  version: number;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SystemConfig {
+  id: string;
+  configKey: string;
+  configValue: string;
+  description?: string;
+  valueType: 'STRING' | 'NUMBER' | 'BOOLEAN' | 'JSON';
+  validFrom: string;
+  validTo?: string;
+  isDeleted: boolean;
+  version: number;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AuditLog {
+  id: string;
+  userId: string;
+  userName: string;
+  action: string; // 'CREATE' | 'UPDATE' | 'DELETE' | 'POST' | 'VOID' | 'LOGIN' | 'SWITCH_USER' | 'PASSWORD_RESET' 等全模組事件
+  targetTable: string;
+  targetId: string;
+  beforeJson?: string;
+  afterJson?: string;
+  ipAddress: string;
+  createdAt: string;
+}
+
+export interface DocumentSequence {
+  prefix: string;
+  currentVal: number;
+  maxExistingVal?: number;
+  nextVal: number;
+  updatedAt: string;
+}
+
+export interface DocumentSequenceRule {
+  moduleKey: string;
+  moduleName: string;
+  prefix: string;
+  dateFormat: 'YYYYMM' | 'YYYY' | 'YYYYMMDD' | 'NONE';
+  delimiter: '-' | '' | '_';
+  serialLength: number;
+  resetFrequency: 'MONTHLY' | 'YEARLY' | 'NEVER';
+  description?: string;
+  updatedAt?: string;
+}
+
+export interface DocumentModuleSequenceStatus {
+  moduleKey: string;
+  moduleName: string;
+  prefix: string;
+  rule: DocumentSequenceRule;
+  currentPeriod: string;
+  currentPeriodPrefix: string;
+  currentPeriodMaxVal: number;
+  currentPeriodLatestDoc: string | null;
+  currentPeriodNextVal: number;
+  currentPeriodNextDoc: string;
+  nextMonthPeriod: string;
+  nextMonthReservedNextDoc: string;
+  historicalPeriods: {
+    period: string;
+    prefixKey: string;
+    maxVal: number;
+    latestDoc: string;
+    count: number;
+    isLocked: boolean;
+  }[];
+}
+
+export interface RegulatorySchedule {
+  id: string;
+  configKey: string;
+  configLabel: string;
+  scheduledValue: string;
+  effectiveDate: string;
+  status: 'SCHEDULED' | 'APPLIED' | 'CANCELLED';
+  createdBy?: string;
+  createdAt?: string;
+  appliedAt?: string;
+  notes?: string;
+}
+
+export interface Project {
+  id: string;
+  projectCode: string;
+  name: string;
+  ownerName: string;
+  ownerTaxId: string;
+  contractAmount: number;
+  budgetAmount: number;
+  committedCost: number;
+  actualCost: number;
+  startDate: string;
+  endDate: string;
+  status: 'PLANNING' | 'ACTIVE' | 'LOCKED' | 'COMPLETED';
+  isLocked: boolean;
+  companyId: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectSite {
+  id: string;
+  projectId: string;
+  siteName: string;
+  address: string;
+  contactPerson: string;
+  contactPhone: string;
+  permitNumber?: string;
+}
+
+export interface ProjectWBS {
+  id: string;
+  projectId: string;
+  nodeCode: string;
+  nodeName: string;
+  parentId?: string;
+  budgetAmount: number;
+  committedAmount: number;
+  actualAmount: number;
+}
+
+export interface PartnerAddress {
+  id: string;
+  partnerId: string;
+  addressType: 'COMMUNICATION' | 'REGISTERED' | 'FACTORY' | 'SITE_OFFICE' | 'OTHER';
+  label?: string; // 自訂標籤如: "總部通訊", "林口一廠", "工務所" (預設一般寫「地址」)
+  postalCode?: string; // 3 碼中華郵政郵遞區號 (如 100, 248)
+  city?: string; // 縣市 (如 臺北市, 新北市)
+  district?: string; // 鄉鎮市區 (如 中正區, 五股區)
+  streetAddress?: string; // 街道巷弄號樓等詳細路段 (拆分輸入)
+  fullAddress: string;
+  isDeleted: boolean;
+}
+
+export interface PartnerContact {
+  id: string;
+  partnerId: string;
+  contactType: 'PRIMARY' | 'FINANCE' | 'ENGINEERING' | 'SALES' | 'PURCHASE' | 'OTHER';
+  name: string;
+  title?: string; // 職稱如: 負責人、工務主任、會計主管、業務窗口
+  phone?: string; // 總機/座機
+  mobile?: string; // 行動電話
+  extension?: string; // 分機號碼
+  email?: string;
+  notes?: string;
+  isDeleted: boolean;
+}
+
+export interface PartnerBusinessCard {
+  id: string;
+  partnerId: string;
+  name: string; // 姓名 (名片上稱謂)
+  title?: string; // 職稱
+  companyName?: string; // 名片公司全稱
+  phone?: string; // 總機電話
+  mobile?: string; // 行動電話
+  email?: string; // 電子信箱
+  address?: string; // 名片地址
+  exchangeDate?: string; // 交換名片日期 (YYYY-MM-DD)
+  cardFrontUrl?: string; // 名片正面圖檔或 PDF
+  cardBackUrl?: string; // 名片背面圖檔
+  cardFileType?: 'IMAGE' | 'PDF';
+  notes?: string; // 備註
+  createdAt?: string;
+}
+
+export interface StoredMediaFile {
+  id: string;
+  name: string;
+  dataUrl: string; // Base64 或 Data URL (圖片或 PDF)
+  fileType: 'IMAGE' | 'PDF';
+  sizeBytes?: number;
+  uploadedAt: string;
+}
+
+export interface BPBankAccount {
+  id: string;
+  bpId: string;
+  bankCode: string; // 3 碼銀行機構代碼 (如 004, 013, 822)
+  bankName: string; // 銀行名稱
+  branchCode?: string; // 4 碼分行代碼
+  branchName?: string; // 分行名稱
+  accountNumber: string; // 帳號
+  accountName: string; // 戶名
+  isPrimary: boolean;
+  passbookFileId?: string; // 存摺封面照片附件 ID
+  passbookFileData?: string; // 存摺封面預覽資料 (Base64 / Data URL)
+  passbookFiles?: StoredMediaFile[]; // 支援多張存摺封面、內頁或印鑑卡檔案
+  isDeleted?: boolean;
+}
+
+export interface PartnerChequeRecord {
+  id: string;
+  partnerId: string;
+  direction: 'RECEIPT' | 'PAYMENT'; // RECEIPT: 收受支票, PAYMENT: 開出支票
+  bankCode: string; // 付款金融機構代碼 (3 碼)
+  bankName: string; // 付款銀行名稱
+  branchName?: string; // 付款分行名稱
+  accountNumber: string; // 支票扣款帳號
+  checkNumber: string; // 支票號碼
+  receivedDate?: string; // 收到支票時間 (收票時) 或 寄出給付時間 (開票時)
+  issueDate: string; // 支票票面發票日 (約定可兌換提示日 YYYY-MM-DD)
+  dueDate: string; // 支票到期日 / 票期 (可兌換時間 / 提示兌現日 YYYY-MM-DD)
+  statutoryExpiryDate?: string; // 票據法法定消滅時效日 (發票日+1年，系統自動計算提示)
+  cashableDate?: string; // 支票可兌換時間 (同到期提示日)
+  amount: number; // 支票金額 (嚴格正數)
+  payeeName: string; // 受款人抬頭
+  isNonNegotiable: boolean; // 是否禁止背書轉讓 (true / false)
+  chequeFileId?: string; // 支票影本 / PDF 掃描檔附件 ID
+  chequeFileData?: string; // 支票影本縮圖或預覽 Data URL
+  chequeFiles?: StoredMediaFile[]; // 支援正反面多影本或 PDF 掃描檔
+  status: 'ISSUED' | 'RECEIVED' | 'DEPOSITED' | 'CLEARED' | 'BOUNCED' | 'VOIDED'; // 已開立/已收受/已託收/已兌現/退票/作廢
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PartnerServiceCategoryItem {
+  id: string;
+  main: string;
+  sub: string;
+}
+
+export interface BusinessPartner {
+  id: string;
+  bpCode: string;
+  name: string;
+  taxId: string; // 8 碼公司統編 或 10 碼自然人身分證號
+  entityType?: 'CORPORATION' | 'NATURAL_PERSON'; // 公司法人 vs 自然人 (地主/工班師傅)
+  type: 'CUSTOMER' | 'VENDOR' | 'SUBCONTRACTOR' | 'BOTH';
+  isCustomer?: boolean; // 具備業主 (客戶/發包方) 身分
+  isVendor?: boolean; // 具備合作廠商 (協力包商/材料商) 身分
+  convertedFromVendorId?: string; // 若此業主由合作廠商「一鍵引薦轉換加入變業主」，記錄來源廠商 ID (SSoT)
+  serviceCategoryMain?: string; // 合作廠商主要工項大類 (主要)
+  serviceCategorySub?: string; // 合作廠商主要工項子類 (主要)
+  serviceCategories?: PartnerServiceCategoryItem[]; // 支援加入多項多元工種清單！
+  ownerIdNumber?: string; // 負責人身分證字號 (防弊/防換殼)
+  representative?: string; // 負責人姓名
+  contactPerson: string; // 主要聯絡人
+  phone: string; // 主要聯絡電話
+  email: string;
+  address: string; // 主要通訊地址
+  bankName: string;
+  bankCode: string;
+  bankAccount: string;
+  bankAccountName?: string;
+  bankFeePayer?: 'COMPANY' | 'PARTNER'; // 手續費/匯費負擔方：預設 COMPANY (公司自行吸收，請款100全額匯100不內扣)
+  hasInvoice?: boolean; // 是否可開立三聯式統一發票 (自然人工班可為否)
+  paymentTermsDays: number; // 付款條件天數 (如 30 天, 45 天, 60 天)
+  isHighRisk: boolean;
+  riskReason?: string;
+  currentScore?: number; // 廠商評鑑分數 (0 ~ 100)
+  status?: 'ACTIVE' | 'PENDING' | 'WARNING' | 'SUSPENDED' | 'PAYMENT_LOCKED';
+  companyId: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt?: string;
+  updatedAt?: string;
+
+  // 關聯子集合 (前端多分頁或展開檢視)
+  addresses?: PartnerAddress[];
+  contacts?: PartnerContact[];
+  bankAccounts?: BPBankAccount[];
+  chequeRecords?: PartnerChequeRecord[];
+  businessCards?: PartnerBusinessCard[];
+}
+
+export interface Item {
+  id: string;
+  itemCode: string;
+  name: string;
+  category: string;
+  unit: string;
+  unitPrice: number;
+  standardCost: number;
+  isDeleted: boolean;
+}
+
+export type QuotationPricingMode = 'HEADER_DISCOUNT' | 'UNIT_PRICE_ADJUSTMENT' | 'SHADOW_ALLOCATION';
+
+export interface Quotation {
+  id: string;
+  quoteNumber: string;
+  projectId: string;
+  customerId: string;
+  customerName: string;
+  companyId: string;
+  currency: string;
+  pricingMode?: QuotationPricingMode; // 🛡️ 三軌並行議價模式：表頭折讓 / 單價微調 / 影子均攤備註
+  customDiscountText?: string; // 軌道三專用自訂協議文字 (例如：「經雙方協議同意以 150,000 承製」)
+  agreedTotalAmount?: number; // 軌道三約定成交總價
+  netAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  discountAmount: number;
+  currentRevision: string;
+  status: 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED' | 'CONVERTED';
+  validityDate: string;
+  parentQuotationId?: string; // 歷史血緣追蹤 (Rule 4.1 深拷貝版本鏈)
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuotationRevision {
+  id: string;
+  quotationId: string;
+  revisionCode: string; // REV-A, REV-B, V_FINAL
+  pricingMode?: QuotationPricingMode;
+  netAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  discountAmount?: number;
+  isWinning: boolean;
+  lostReason?: string;
+  createdAt: string;
+}
+
+export interface QuotationItem {
+  id: string;
+  quotationId: string;
+  revisionCode: string;
+  itemType: 'NORMAL' | 'DEDUCTION'; // 憲法規範：粉紅扣款折讓 (DEDUCTION 嚴格存正數)
+  itemName: string;
+  spec: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number; // 對外報價單價 (最多 2 位小數)
+  lineTotal: number; // 明細小計
+  estimatedUnitCost?: number; // 預估單位成本
+  effectiveUnitPrice?: number; // 歸一化影子有效單價 (折讓後有效退款基準，防止追加減溢退)
+  isAwarded?: boolean; // 🛡️ 部分得標開關 (Rule 4.1，V_FINAL 決選版未得標不刪除)
+  lostReason?: string; // 失標原因 (如：業主預算不足砍項、非關鍵次要項目等)
+  remark?: string;
+}
+
+export interface QuotationBillingMilestone {
+  id: string;
+  quotationId: string;
+  stageIndex: number;
+  stageName: string;
+  percentage: number; // 請款比例總和為 100
+  estimatedDate?: string;
+  amount: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  companyId: string;
+  projectId: string;
+  vendorId: string;
+  currency: string;
+  netAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  discountAmount: number;
+  retentionDeductionAmount: number;
+  postedTaxRate: number;
+  counterpartyNameSnapshot: string;
+  counterpartyTaxIdSnapshot: string;
+  projectNameSnapshot: string;
+  isPrepaidDeduction: boolean;
+  prepaidDeductionAmount: number;
+  status: 'DRAFT' | 'APPROVED' | 'POSTED' | 'VOIDED';
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  purchaseOrderId: string;
+  itemCode: string;
+  itemName: string;
+  spec: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+// 現場進貨簽收模組 (Inbound Goods Management - 直入案場成本 A 模式)
+export type InboundReceiptStatus = 'DRAFT' | 'POSTED' | 'VOIDED';
+export type InboundBillingStatus = 'PENDING_BILLING' | 'BILLED';
+
+export interface InboundReceipt {
+  id: string;
+  receiptNumber: string; // INB-202610-0001
+  companyId: string;
+  projectId: string; // A 模式：直入案場成本
+  projectNameSnapshot?: string;
+  vendorId: string; // 供應商夥伴 ID
+  vendorNameSnapshot?: string;
+  vendorTaxIdSnapshot?: string;
+  deliveryNoteNumber: string; // 廠商送貨單號 / 現場簽收單號
+  receivedDate: string; // 簽收日期 YYYY-MM-DD
+  receivedBy: string; // 現場點收同仁姓名
+  totalAmount: number; // 未稅合計金額（明細小計加總）
+  billingStatus: InboundBillingStatus; // PENDING_BILLING | BILLED
+  reconciliationId?: string; // 會計對帳單勾稽外鍵錨點 (未請款為空)
+  reconciliationNumber?: string; // 對帳單號快照
+  purchaseOrderId?: string; // 預留未來採購單關聯
+  status: InboundReceiptStatus; // DRAFT | POSTED | VOIDED
+  attachmentFileId?: string; // 現場紙本簽收單照片/PDF附件 ID
+  attachmentFileName?: string;
+  notes?: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  items?: InboundReceiptItem[];
+}
+
+export interface InboundReceiptItem {
+  id: string;
+  receiptId: string;
+  itemCode?: string;
+  itemName: string;
+  spec?: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  notes?: string;
+}
+
+export interface Subcontract {
+  id: string;
+  contractCode: string;
+  projectId: string;
+  subcontractorId: string;
+  companyId: string;
+  subcontractorName: string;
+  projectName: string;
+  contractName: string;
+  totalAmount: number;
+  retentionRate: number; // e.g. 10 (%)
+  prepaidAmount: number;
+  prepaidRemaining: number;
+  startDate: string;
+  endDate: string;
+  status: 'ACTIVE' | 'CLOSED' | 'TERMINATED';
+}
+
+export interface Valuation {
+  id: string;
+  valuationNumber: string;
+  subcontractId: string;
+  projectId: string;
+  subcontractorId: string;
+  companyId: string;
+  periodIndex: number; // 第幾期估驗
+  periodName: string;
+  cumulativeProgressPct: number;
+  grossAmount: number;
+  retentionDeductionAmount: number;
+  prepaidDeductionAmount: number;
+  otherDeductionAmount: number;
+  netPayableAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'POSTED' | 'VOIDED';
+  counterpartyNameSnapshot: string;
+  projectNameSnapshot: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ValuationItem {
+  id: string;
+  valuationId: string;
+  itemType: 'NORMAL' | 'DEDUCTION'; // 粉紅扣款
+  itemName: string;
+  unit: string;
+  contractQuantity: number;
+  contractUnitPrice: number;
+  previousQty: number;
+  currentQty: number;
+  currentAmount: number;
+  remark?: string;
+}
+
+export interface AccountPayable {
+  id: string;
+  apNumber: string;
+  sourceTable: 'PURCHASE_ORDER' | 'VALUATION';
+  sourceId: string;
+  companyId: string;
+  vendorId: string;
+  vendorName: string;
+  originalAmount: number;
+  appliedAmount: number;
+  remainingAmount: number;
+  dueDate: string;
+  invoiceNumber?: string;
+  taxReportingCompanyId?: string;
+  status: 'OPEN' | 'PARTIAL' | 'PAID' | 'VOIDED';
+  createdAt: string;
+}
+
+export interface AccountReceivable {
+  id: string;
+  arNumber: string;
+  projectId: string;
+  customerId: string;
+  customerName: string;
+  companyId: string;
+  amount: number;
+  appliedAmount: number;
+  remainingAmount: number;
+  dueDate: string;
+  status: 'OPEN' | 'PARTIAL' | 'COLLECTED' | 'VOIDED';
+  createdAt: string;
+}
+
+export interface BankCheck {
+  id: string;
+  checkNumber: string;
+  type: 'PAYABLE' | 'RECEIVABLE'; // 應付票據 / 應收票據
+  companyId: string;
+  counterpartyName: string;
+  amount: number;
+  issueDate: string;
+  dueDate: string;
+  bankName: string;
+  status: 'ISSUED' | 'DEPOSITED' | 'CLEARED' | 'VOIDED' | 'BOUNCED';
+  voidReason?: string;
+  notes?: string;
+}
+
+export interface OwnerContract {
+  id: string;
+  contractNumber: string;
+  projectId: string;
+  projectName: string;
+  ownerName: string;
+  ownerTaxId: string;
+  totalAmount: number;
+  retentionRate: number;
+  signDate: string;
+  status: 'ACTIVE' | 'COMPLETED' | 'TERMINATED';
+}
+
+export interface SystemFile {
+  id: string;
+  targetTable: string;
+  targetId: string;
+  fileName: string;
+  originalName?: string;
+  savedName?: string;
+  fileSizeBytes: number;
+  mimeType: string;
+  fileCategory: string;
+  storagePath: string; // POSIX 相對路徑如 'storage/public_docs/2026/10/uuid.pdf'
+  isEncrypted: boolean; // 是否為敏感文件採 AES-256-GCM 加密存放
+  fileHash: string; // SHA-256 指紋
+  companyId?: string;
+  uploadTime: string;
+  parentFileId?: string; // 前一版本檔案 ID，建立版本堆疊
+  isObsolete?: boolean; // 舊版或模糊發票作廢標記
+  status?: 'NORMAL' | 'MISSING'; // 實體健康檢查狀態
+  isDeleted?: boolean; // 軟刪除標記
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ExternalFolderLink {
+  id: string;
+  companyId: string;
+  projectId?: string; // 綁定案場 CAD 圖庫
+  partnerId?: string; // 綁定特定廠商共用區
+  targetTable: string; // 關聯主模組 (如 'projects', 'business_partners')
+  targetId: string; // 關聯單據 ID
+  nasFolderPath: string; // 實體 NAS 共用資料夾路徑 (如 \\192.168.1.10\Drawings\Project-A)
+  description?: string;
+  isDeleted: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FileLink {
+  id: string;
+  fileId: string;
+  companyId?: string; // 法人隔離錨點
+  projectId?: string; // 專案授權穿透錨點
+  partnerId?: string; // 夥伴授權穿透錨點
+  userId?: string; // 人資身分授權錨點
+  targetTable: string; // 關聯主單據 (如 'business_partners', 'purchase_orders', 'valuations')
+  targetId: string; // 關聯主單據 ID
+  isDeleted: boolean;
+  version: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AnnualArchiveSnapshot {
+  id: string;
+  archiveYear: number;
+  archiveFileName: string;
+  relativePath: string;
+  recordCount: number;
+  fileSizeBytes: number;
+  fileHash: string;
+  isSealed: boolean;
+  sealedAt: string;
+  sealedBy: string;
+  description?: string;
+}
+
+export type RestoreStrategy = 'SKIP' | 'UPDATE';
+
+export interface BackupTimeFilter {
+  mode: 'ALL' | 'YEAR' | 'RANGE';
+  year?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface ModularBackupPackage {
+  formatVersion: '1.0';
+  exportDate: string;
+  exportedBy: string;
+  targetModules: string[];
+  timeFilter?: BackupTimeFilter;
+  tables: Record<string, any[]>;
+  recordCount: number;
+}
+
+export interface RestoreResult {
+  success: boolean;
+  message: string;
+  insertedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  details?: string[];
+}
+
+// 營運戰情室財務指標模型 (Phase 10 & 憲法第六篇)
+export interface CashFlowMetrics {
+  currentBankBalance: number;
+  projectedAR: number;
+  projectedAP: number;
+  unclearedChecks: number;
+  estimatedVAT: number;
+  recurringExpenses: number;
+  projectedNetCash: number;
+  pendingChangeOrdersAmount: number; // 待補簽追加減工程風險金額
+}

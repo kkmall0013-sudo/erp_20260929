@@ -1,0 +1,295 @@
+# 🏛️ ERP 系統全端重構專案：Phase 8 業主合約與營運進階總綱 (Prisma 憲法全卷版 - 旗艦定版)
+
+**文件定位**：本文件為 Phase 8 (Owner Contracts & Billing) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：徹底打通營建業與專案導向企業的「收入端命脈」。本模組專職管理工程實務與「應收帳款淨額 (AR Net Amount)」之核算，與 Phase 7 之後端稅務申報與實體金流完全解耦。本版全面修補四方角色繼承、業主法人層級溢付池流轉、以及可調式附件強制防線，完美對齊新憲法第 0 章至第 7 章之底層強硬內控。
+
+---
+
+## 壹、 業務需求與跨角色實務情境白皮書 (BRD)
+
+### 1. 巨大追減與合併請款 (Consolidated Billing & Re-allocation)
+* **主約與 VO 脫鉤**：原始合約一旦生效即永久鎖定作為 Baseline，後續所有追加減工程皆視為「獨立的 VO 子合約」。系統支援每月「合併計價」，在同一張網格介面內同時列出主合約進度與 VO 進度，由前端依據項目類型進行欄位與色彩隔離。
+* **期別重組與瀑布斷尾**：遇到遭遇巨大追減導致無法走完原定期數之實務常態時，會計可啟動「期別重組精靈」手動調整當期金額，並勾選 `isFinalPeriod = true` (提早完工結案)。系統底層將自動發動瀑布式收尾，將後續所有未請款期別強制物理失效，確保當期計價單絕不出現負數。
+
+### 2. 雙軌制預付款扣回 (Recoupment Dual-Track)
+* 系統支援兩種預收工程款模式，由合約主表的 `recoupmentMode` 開關控制：
+  * **各自獨立流**：簽約金/工程預付款視為「第 0 期計價」，開立憑證後直接認列應收，後續期別獨立請款，互不干擾。
+  * **預收沖抵流**：針對業主預撥大額材料款，預收餘額由共用 `PrepaymentLedger` 提供。後續每期請款時，會計透過明細中的「預收沖抵」正數金額逐期扣減，直到台帳餘額歸零。
+
+### 3. 業主保留款與保固長效追蹤 (Retention & Warranty)
+* **內外帳全面解耦**：本模組僅負責計算應收保留款之累計，其對應之實體發票開立時機（全額開發票或淨額開發票）由本主表 `retentionInvoiceMode` 參數記錄，並在拋轉至 Phase 7 財會模組時，由財會系統之勾稽中間表自動驅動，本模組不直接干涉稅務申報。
+* **保固子專案掛載**：主專案驗收結案後，保留款可一鍵轉為保固金，並自動掛載專屬的「保固期子專案」。保固期間內現場發生的所有維修與材料成本全數歸入該子專案，精準隔離並還原主案場之真實營運毛利。
+
+### 4. 應收帳款尾差與自動平帳容差 (AR Tolerance & Auto-Balancing)
+* **前端淨額本位**：Phase 8 僅計算核發 `receivableAmount` (業主應收金額)。
+* **尾差自動沖銷**：當此單據拋轉至 Phase 7 進行實體收款時，若因業主系統逐項取整（如台積電等強勢業主系統）導致 1~5 元之借貸不平，會計可指定差異原因碼為 `TOLERANCE_WRITE_OFF`。後端將讀取全域參數 `taxToleranceAmount`（容差範圍 ±1~5 元）自動放行平帳，不卡死金流。
+
+### 5. 老闆特批壞帳與法律爭議款凍結 (Disputed Accounts)
+* **老闆特批壞帳**：針對業主無憑證之惡意扣款，必須由 Admin 特批放行欄位 `adminChargeOffAmt`（存為正數），系統自動將差額於後端拋轉時列為「營業外損失」，保持 AR 帳目之絕對平衡。
+* **爭議款冰凍視覺**：若尾款談不攏進入訴訟，會計可將單據狀態標記為 `DISPUTED`。列表將立即覆蓋「冰藍色視覺濾鏡」，自動剔除於催款警報與 Phase 6/10 的現金流預測盤外，確保高層戰情室數據之絕對真實。
+
+### 6. 隱藏版四方角色自動繼承 (4-Party Model Inheritance)
+* **全防線角色鏈**：完美對齊憲法 Rule 3.3，合約主表實體全面配置 `clientId` (簽約業主)、`shipToId` (工地收貨方)、`billToId` (發票開立方)、`payerId` (實際撥款方)。
+* **後端影子補齊**：前端 UI 預設採用漸進式呈現，僅需選擇專案。後端 API 在寫入合約瞬間，將自動穿透並強制從 Phase 3 的專案主檔（Project Master）將這四個角色的 UUID 拷貝繼承下來，在維持打單極簡體驗的同時，確保底層具備強大的稅務多法人因應基因。
+
+### 7. 溢付款資金池法人層級流轉 (Partner-Level Overpayment Pool)
+* **打破案場死鎖**：完美修正舊版漏洞，對齊憲法 Rule 5.4。業主溢付之資金池 `OverpaymentPool` 底層嚴格綁定 `partnerId` (業主法人 ID) 而非特定案場 ID。
+* **跨專案彈性扣抵**：當 A 業主在「A 工地」發生溢付款時，資金自動掛入 A 業主總戶頭。下個月 A 業主的「B 工地」向我們請款時，系統能自動攔截並允許跨案場沖抵扣回，完美契合現實中營造廠與大型業主多案場聯合對帳之靈活實務。
+
+### 8. 附件強制性雙軌防線開關 (Dual-Track Attachment Lock)
+* **可調式內控閘門**：本模組計價單送出與過帳時，底層 API 將強制讀取全域參數 `VALUATION_ATTACHMENT_MODE`：
+  * **`FLEXIBLE` (柔性防呆 - 預設)**：若會計未上傳 Vault 附件（如業主簽核單），介面僅跳出「黃色驚示燈」柔性提醒，**絕對不阻斷流程**，包容目前人力精簡、現場單據後補之實務。
+  * **`STRICT` (強硬攔截)**：未來規模擴大、行政人力充足時，切換此參數後，若無 Phase 9 檔案關聯，[確認過帳] 按鈕將直接反灰死鎖，拋出 `422 Unprocessable Entity`。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 8.1：全域全紅紅字迴轉單鐵律 (AR Reversal Document)
+* 業主計價單一旦狀態變更為 `POSTED` 即啟動實體凍結，嚴禁任何物理 `UPDATE` 與刪除。若發票開錯或計價有誤，系統僅允許生成一張 `isReversal = true` 的迴轉單。
+* 會計於畫面上直接輸入正數（嚴守 Rule 0.9 零負數鐵律），UI 前端強制渲染為「警告全紅色」，底層過帳時自動借貸對調，完美合法沖銷 AR 並釋放原期別額度。
+
+### Rule 8.2：超請防線與越權審計日誌 (Over-Billing Defense)
+* **總價承攬防線**：若合約為 `LUMP_SUM`，過帳時執行強硬樂觀鎖校驗：`歷次已請累計 + 本期請款 <= 最新合約總額(主約+已核准VO)`。超請者 API 直接拋出死鎖阻斷。
+* **實做實算防線**：若合約為 `UNIT_PRICE`，數量超出預估時亮起黃色警報，允許高階主管特批存檔，但底層強制發動 Rule 0.5 寫入變更前後 JSON 至 `audit_logs` 審計表，不可代理。
+
+### Rule 8.3：歷史憑證時空永凍快照 (Document Snapshotting)
+* 完美落實 Rule 3.9。當計價單被核准過帳 (`POSTED`) 的微秒間，快照引擎發動，必須將當時的 `counterpartyNameSnapshot` (業主名稱文字)、`counterpartyTaxIdSnapshot` (業主統編文字) 實體刻入計價單隱藏欄位中。日後主檔不論如何改名，歷史單據永遠印出當年文字，確保 100% 抗審計。
+
+### Rule 8.4：全域零負數與隔離減項 (OLTP Non-Negative Boundary)
+* 嚴格遵守 Rule 0.9。資料庫內不論是明細工項還是主表金額，一律禁止寫入實體負數。所有追減、扣款、折讓、預付款扣回，其金額在資料庫中皆以**正數（Positive Value）**儲存，主表透過標準「四柱平衡公式」進行減除，明細則綁定 `itemType: DEDUCTION`，由計價引擎非同步算術還原。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約
+
+~~~prisma
+// ========================================================================
+// Module: Phase 8 - Owner Contracts & Billing (憲法對齊旗艦定版)
+// ⚠️ 嚴守 RULE-0.1(命名), RULE-0.2(軟刪除), RULE-0.4(樂觀鎖), RULE-0.9(零負數)
+// ========================================================================
+
+enum ContractType { MAIN, VO }
+enum PricingType { LUMP_SUM, UNIT_PRICE }
+enum RecoupmentMode { INDEPENDENT, PREPAID_POOL }    // 雙軌預收扣回模式
+enum RetentionInvoiceMode { FULL_AMOUNT, NET_AMOUNT } // 雙軌保留款發票模式
+enum RetentionMethod { PER_PERIOD, FINAL_MILESTONE, MANUAL, NONE }
+
+enum ARValuationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  POSTED
+  PARTIALLY_PAID
+  PAID
+  DISPUTED             // 法律爭議冰凍狀態
+  VOIDED
+}
+
+/// 業主合約主表 (主約與 VO 隔離架構)
+model OwnerContract {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid // RULE-0.4 UUIDv7預留
+  companyId           String               @db.Uuid // RULE-0.5 多公司權限隔離
+  projectId           String               @db.Uuid // 關聯至核心專案主檔
+  contractNo          String               @unique  // 合約編號 (如: CON-2026-001)
+  
+  contractType        ContractType         @default(MAIN)
+  pricingType         PricingType          @default(LUMP_SUM)
+  parentId            String?              @db.Uuid // 若為 VO，指向主合約 ID
+  
+  // 財務額度
+  currency            String               @default("TWD")
+  contractAmount      Decimal              @db.Decimal(15, 2)
+  targetMargin        Decimal?             @db.Decimal(5, 2)  // 目標毛利率警報線
+  
+  // 💥 繼承自憲法第 3 章專案主檔之四方角色鏈 (前端隱藏，後端影子補齊)
+  clientId            String               @db.Uuid // 簽約業主 BP ID
+  shipToId            String               @db.Uuid // 收貨方 BP ID
+  billToId            String               @db.Uuid // 發票抬頭方 BP ID
+  payerId             String               @db.Uuid // 實際撥款方 BP ID
+  
+  // 雙軌實務開關
+  recoupmentMode      RecoupmentMode       @default(INDEPENDENT)
+  retentionMethod     RetentionMethod      @default(PER_PERIOD)
+  retentionRate       Decimal              @default(0.00) @db.Decimal(5, 2)
+  retentionCapAmount  Decimal              @default(0.00) @db.Decimal(15, 2)
+  retentionInvoiceMode RetentionInvoiceMode @default(FULL_AMOUNT)
+  taxToleranceAmount  Decimal              @default(1.00) @db.Decimal(5, 2)  // 專案級可調式容差
+
+  // 憲法標配防禦三件套
+  isDeleted           Boolean              @default(false) // RULE-0.2 全面軟刪除
+  version             Int                  @default(1)     // RULE-0.4 樂觀鎖控制
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  items               ContractItem[]
+  valuations          BillingValuation[]
+
+  @@index([companyId, projectId, isDeleted])
+  @@map("ar_owner_contracts")
+}
+
+/// 合約明細工項表 (支援藏工於料與正數減項)
+model ContractItem {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  contractId          String               @db.Uuid
+  contract            OwnerContract        @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  
+  itemCode            String               @db.VarChar(50)
+  description         String               @db.VarChar(255)
+  itemType            String               @default("STANDARD") // 'STANDARD' 加項 | 'DEDUCTION' 減項 (RULE-0.9)
+  
+  // 數量與單價 (絕對正數，禁用負數)
+  quantity            Decimal              @db.Decimal(15, 4)
+  unitPrice           Decimal              @db.Decimal(15, 4)
+  lineAmount          Decimal              @db.Decimal(15, 2)
+  
+  // 累計請款追蹤 (用於超請防線鎖定)
+  cumulativeBilledQty Decimal              @default(0.0000) @db.Decimal(15, 4)
+  cumulativeBilledAmount Decimal           @default(0.00) @db.Decimal(15, 2)
+
+  @@map("ar_contract_items")
+}
+
+/// 業主估驗計價單 (AR 業務憑單主表 - 專管應收金額，不與實體發票綁死)
+model BillingValuation {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId           String               @db.Uuid
+  contractId          String               @db.Uuid
+  contract            OwnerContract        @relation(fields: [contractId], references: [id])
+  
+  periodName          String               @db.VarChar(100) // 如 "第 5 期工程款"
+  isFinalPeriod       Boolean              @default(false)  // 巨大追減：瀑布斷尾結案標記
+  isReversal          Boolean              @default(false)  // 憲法 Rule 8.1：全紅迴轉單標記
+  
+  // 雙軌日期視角 (Rule 5.1)
+  documentDate        DateTime             // 憑證發生日/發票真實日
+  postingDate         DateTime             // 會計入帳日
+  
+  // 四柱沖銷金額欄位 (全面正數儲存，嚴禁負數)
+  grossAmount         Decimal              @db.Decimal(15, 2) // 本期估驗總額
+  retentionDeductionAmount Decimal         @default(0.00) @db.Decimal(15, 2) // 本期預扣保留款 (公式中減除)
+  retentionReleaseAmount Decimal           @default(0.00) @db.Decimal(15, 2) // 本期請回保留款 (公式中加項)
+  prepaymentAppliedAmount Decimal          @default(0.00) @db.Decimal(15, 2) // 本期預收沖抵扣回 (公式中減除)
+  adminChargeOffAmt   Decimal              @default(0.00) @db.Decimal(15, 2) // 老闆特批壞帳折讓 (公式中減除)
+  
+  // 應收淨額 (由前端與後端 Zod 依四柱公式運算檢核)
+  receivableAmount    Decimal              @db.Decimal(15, 2) // 拋轉給財務模組執行收款之應收金額
+  
+  status              ARValuationStatus    @default(DRAFT)
+  
+  // 🛡️ 完美落實 Rule 3.9：過帳當下實體文字永凍快照，抗審計不溯及既往
+  counterpartyNameSnapshot   String?       @db.VarChar(255)
+  counterpartyTaxIdSnapshot  String?       @db.VarChar(50)
+  
+  // 憲法標配防禦三件套
+  isDeleted           Boolean              @default(false)
+  version             Int                  @default(1)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  lineItems           BillingLineItem[]
+
+  @@index([companyId, status, postingDate, isDeleted])
+  @@map("ar_billing_valuations")
+}
+
+/// 估驗計價明細表 (支援主約與 VO 跨網格直貼合併計價)
+model BillingLineItem {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  valuationId         String               @db.Uuid
+  valuation           BillingValuation     @relation(fields: [valuationId], references: [id], onDelete: Cascade)
+  
+  contractItemId      String               @db.Uuid
+  billedQuantity      Decimal              @db.Decimal(15, 4) // 本期計價數量 (正數)
+  lineAmount          Decimal              @db.Decimal(15, 2) // 本期計價金額 (正數)
+
+  @@map("ar_billing_line_items")
+}
+
+/// 業主溢付資金池 (升級至 Partner 法人層級，解鎖跨案場自由沖抵)
+model OverpaymentPool {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId           String               @db.Uuid
+  partnerId           String               @db.Uuid // 綁定業主 BP ID，不再鎖死於特定 project
+  
+  sourceValuationId   String?              @db.Uuid // 引發超收之原始計價單 ID (若有)
+  balanceAmount       Decimal              @db.Decimal(15, 2) // 尚可跨案場扣抵的溢付款餘額
+  isFullyApplied      Boolean              @default(false)
+  
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([companyId, partnerId, isFullyApplied])
+  @@map("ar_overpayment_pools")
+}
+~~~
+
+---
+
+## 肆、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+~~~typescript
+import { z } from "zod";
+
+// RULE-0.9: 幽靈小數洗滌器與全域非負數邊界
+const SafeAmountSchema = z.number()
+  .min(0, "內控錯誤：憲法不允許在 OLTP 資料庫寫入實體負數，扣減項請填寫正數")
+  .transform(val => Math.round(val)); // 全台台幣本位整數洗滌
+
+export const BillingValuationZodSchema = z.object({
+  grossAmount: SafeAmountSchema,
+  retentionDeductionAmount: SafeAmountSchema.default(0),
+  retentionReleaseAmount: SafeAmountSchema.default(0),
+  prepaymentAppliedAmount: SafeAmountSchema.default(0),
+  adminChargeOffAmt: SafeAmountSchema.default(0),
+  receivableAmount: SafeAmountSchema,
+  
+  // 專案級可調式容差參數 (由合約參數注入)
+  taxTolerance: z.number().default(1),
+  
+  // 附件強制性防線開關控制標記 (由控制台 SystemConfig 傳入)
+  VALUATION_ATTACHMENT_MODE: z.enum(["FLEXIBLE", "STRICT"]).default("FLEXIBLE"),
+  hasAttachments: z.boolean().default(false)
+}).superRefine((data, ctx) => {
+  
+  // 1. 附件雙軌機制硬性防禦檢驗
+  if (data.VALUATION_ATTACHMENT_MODE === "STRICT" && !data.hasAttachments) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "資安與內控阻斷：當前系統處於 STRICT 嚴格模式，必須前往 Phase 9 金庫上傳業主簽核單附件方可過帳。",
+      path: ["hasAttachments"]
+    });
+  }
+
+  // 2. 雙向四柱平衡算術檢核 (純加減運算，分母防零除保護)
+  // 公式：期望應收淨額 = 本期估驗總額 - 本期預扣保留款 + 本期請回保留款 - 本期預收沖抵 - 老闆特批壞帳
+  const expectedNet = data.grossAmount 
+                    - data.retentionDeductionAmount 
+                    + data.retentionReleaseAmount 
+                    - data.prepaymentAppliedAmount 
+                    - data.adminChargeOffAmt;
+
+  // 3. 尾差平帳容許度判定
+  if (Math.abs(expectedNet - data.receivableAmount) > data.taxTolerance) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `借貸不平衡：應收金額 (${data.receivableAmount}) 與期望值 (${expectedNet}) 差距超過合約容差 (±${data.taxTolerance}元)。`,
+      path: ["receivableAmount"]
+    });
+  }
+});
+~~~
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (極速輸入與防弊防呆)
+
+1. **一鍵 VO 合併計價面板 (TanStack Table + 虛擬滾動)**：
+   * 新增期別估驗單時，介面自動劃分為 `[主合約網格]` 與 `[VO 追加減網格]` 雙視窗。會計無需切換頁面，且強制導入 `@tanstack/react-virtual` 虛擬滾動技術。縱使大型案場工項破萬行，依然維持 60fps 絲滑不卡頓。
+2. **全紅迴轉單與粉紅減項視覺隔離 (Red & Pink UI)**：
+   * 當發票有誤需要生成 `REVERSAL` 迴轉單時，整張單據背景強制轉為**「警告全紅色」**，提醒會計正常輸入正數即可。
+   * 明細中若工項類型為 `DEDUCTION` (追減/扣罰)，該行輸入框與背景強制渲染為**「粉紅色」**，利用視覺餘光提供直覺防呆。
+3. **爭議款一鍵凍結 (冰凍藍視覺濾鏡)**：
+   * 當業主拖欠工程款進入訴訟階段，點擊 `[標記為爭議款 (Disputed)]`。該筆資料列表覆蓋「冰藍色半透明濾鏡」與 ❄️ 冰凍圖示。系統後端自動切斷其催款排程，並在戰情室雷達中將該筆隱形，防止髒數據污染可用現金流。
+4. **LocalStorage 靜默急救箱 (Local Snapshot)**：
+   * 遭遇巨大期別計價打單、貼上萬筆 Excel 數據時，前端每 5 秒靜默將表單加密草稿存入瀏覽器 `LocalStorage`。若現場電腦突然斷電或當機，重新登入進入同畫面時，系統將主動彈出通知：「偵測到您有一份未正常儲存的 100 萬計價單草稿，是否一鍵還原？」，達到零伺服器負擔的災難復原。

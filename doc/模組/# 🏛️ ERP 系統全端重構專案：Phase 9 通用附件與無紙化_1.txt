@@ -1,0 +1,184 @@
+# 🏛️ ERP 系統全端重構專案：Phase 9 通用附件與無紙化歸檔模組總綱 (Prisma 憲法全卷版 - 旗艦定版)
+
+**文件定位**：本文件為 Phase 9 (Universal Vault & Paperless Archiving) 之最高指導總綱，完美整合業務需求 (BRD)、技術架構 (HLD) 與開發鐵律 (ADR)。
+**核心精神**：打造 100% 內網封閉環境穩定運行的企業級文檔中心。落實「工務前端綁定明細、會計後端核對總額」的權責分離。採用「財務 Vault 保險箱（檔案本位）」與「營運 Workspace 工作桌（資料夾本位）」之雙軌制，完美解決 PDF 版本堆疊與 CAD 圖檔塞爆 NAS 的實務衝突。
+
+---
+
+## 壹、 業務需求與跨角色實務情境 (BRD)
+
+### 1. 內網優先與會計人工最終覆核 (Intranet-First & Manual SSoT)
+* **無外網封閉防禦**：本模組全面封印外部 AI/OCR 依賴，保證系統在 100% 無外網的封閉內網環境下亦能全速運行。
+* **權責分離拆帳流**：廠商月底送來多個案場的合併對帳單與發票時，各工項細項在前端進貨收料（Phase 10）或採購（Phase 5）發生當下，即由前線人員與工地主任**完成案場綁定**。發票與附件進總公司後，會計僅需建立主檔核對「總金額與發票是否對上」，明細行自動從前端單據帶出，徹底解耦會計對現場物料歸屬的認知負擔。
+
+### 2. 雙軌制隔離：財務保險箱與營運資料夾連結 (Vault vs Workspace)
+* **保險箱機制 (Vault)**：針對發票、收據、正式合約、PDF 施工圖等「定稿/低頻更新憑證」，由系統重新 UUID 化命名存入 Vault 區，計算 SHA-256 指紋並啟用「版本堆疊 (Version Stacking)」。
+* **工作桌機制 (Workspace / 資料夾本位)**：針對巨型、修改極度頻繁的設計圖紙（CAD/DWG），ERP 系統**絕對不建置實體檔案資料庫**。改為僅紀錄該專案在實體 NAS 上的**「外部資料夾路徑」**。工程師於 NAS 直接覆蓋存檔，ERP 僅提供「一鍵開啟資料夾」捷徑，避開容量爆炸與無意義的版控災難。
+
+### 3. 三段式健康檢查與幽靈檔案防禦 (Storage Health Check)
+* **幽靈指標消除**：為防止實體 NAS 硬碟損壞或人員誤刪檔案導致 ERP 資料庫與硬碟脫鉤，系統內建三段式防禦掃描排程（啟動掃描、跨日半夜全域校驗、UI手動同步）。遇到實體遺失時系統絕不崩潰，而是將狀態標記為 `MISSING` 供人工例外處理。
+
+---
+
+## 貳、 系統開發最高憲法 (ADR) - Prisma 實作鐵律
+
+### Rule 9.1：多型關聯解耦與多維度 PBAC 授權矩陣 (Polymorphic PBAC)
+* **[多型解耦]**：嚴禁在各業務單據（如計價單、專案主檔）中建立實體檔案欄位。必須透過 `FileLink` 中介表，利用 `targetTable` 與 `targetId` 動態多型綁定。
+* **[多維度授權錨點]**：`FileLink` 強制標配 `companyId` (多法人隔離)、`projectId` (專案授權穿透)、`partnerId` (廠商保密協定穿透) 與 `userId` (人資加密穿透)。系統將依據這四個錨點，合法發放跨公司調閱權證。
+
+### Rule 9.2：版本堆疊與時空永凍防禦 (Version Stacking & Locking)
+* **[合約圖紙版本堆疊]**：Vault 中的 PDF 檔案支援版本堆疊。上傳新版時，利用 `parentFileId` 關聯舊檔。系統自動將舊檔打上 `isObsolete = true` (作廢/過期標記)，畫面上永遠只顯示最新版，但保留抽屜式歷史回溯能力。
+* **[財務憑證鐵腕鎖死]**：涉及財務之發票與憑證附件，一旦過帳（`POSTED`），嚴禁實施物理刪除，若有更新只能以追加清晰版並標記舊檔作廢處理。
+
+### Rule 9.3：大批量 ZIP 匯出之效能防線 (Async ZIP Export)
+* **[排程分水嶺]**：當會計師查帳要求「打包下載全案場年度附件」時，若檔案數量 > 50 或總大小 > 100MB，API 強制阻斷即時下載。必須轉交背景 Worker (Redis Queue) 執行非同步打包。打包完成後，發放具備 24 小時時效的 URL 鈴鐺通知，確保前線 OLTP 效能絕對不被拖垮。
+
+### Rule 9.4：72 小時大屠殺與 WebP 強制瘦身 (Storage Optimization)
+* **[大屠殺排程]**：前端上傳之檔案先入 NAS `_temp` 暫存區，表單送出過帳後才移入 `_vault` 建立關聯。背景排程每晚巡邏，針對停留在 `_temp` 超過 72 小時之廢棄孤兒檔案，實施無差別物理抹除。
+* **[WebP 壓縮]**：除 PDF 憑證外，所有工地現場照片 (JPEG/PNG) 上傳瞬間，API 強制實施 75% 畫質壓縮並轉換為次世代 WebP 格式，大幅縮減 80% 體積。
+
+---
+
+## 參、 核心功能要求與 Prisma Schema 契約
+
+~~~prisma
+// ==========================================
+// Module: Phase 9 - Universal Vault & Paperless Archiving (旗艦定版)
+// ⚠️ 嚴守 RULE-0.1(旗艦UUID), RULE-0.2(軟刪除), RULE-0.4(樂觀鎖), RULE-2.2(PBAC)
+// ==========================================
+
+enum FileStatus { NORMAL, MISSING }
+
+/// 實體檔案主表 (保險箱 Vault 核心 - 存放財務憑證與 PDF，支援版本堆疊)
+model SystemFile {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String      @db.Uuid // RULE-0.7 法人隔離
+  
+  originalName    String      // 原始檔名
+  savedName       String      @unique // 實體儲存檔名 (UUID化，防檔名衝突)
+  fileHash        String      @unique // SHA-256 指紋 (去重核心)
+  mimeType        String      // 二進位校驗之真實 MIME 類型
+  sizeBytes       BigInt      // 檔案大小
+  storagePath     String      // 實體相對路徑
+  
+  // 💥 RULE-9.2: 版本堆疊基因
+  parentFileId    String?     @db.Uuid 
+  parentFile      SystemFile? @relation("FileVersioning", fields: [parentFileId], references: [id])
+  childFiles      SystemFile[] @relation("FileVersioning")
+  
+  isObsolete      Boolean     @default(false) // 舊版圖紙/模糊發票作廢標記
+  status          FileStatus  @default(NORMAL) // 實體健康檢查狀態
+  
+  fileLinks       FileLink[]
+  
+  // 憲法標配防禦三件套
+  isDeleted       Boolean     @default(false) // RULE-0.2
+  version         Int         @default(1)     // RULE-0.4
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([companyId, fileHash])
+  @@map("sys_files")
+}
+
+/// 外部路徑綁定表 (工作桌 Workspace 核心 - 資料夾本位管理巨型 CAD/DWG)
+model ExternalFolderLink {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String      @db.Uuid
+  
+  // 💥 RULE-2.2 & 3.1: 多維度授權錨點
+  projectId       String?     @db.Uuid // 綁定案場 CAD 圖庫
+  partnerId       String?     @db.Uuid // 綁定特定廠商共用區
+  
+  targetTable     String      // 關聯模組 (如 "Project")
+  targetId        String      @db.Uuid // 關聯單據 ID
+  
+  nasFolderPath   String      // 實體 NAS 共用資料夾路徑 (如 "\\192.168.1.10\Drawings\Project-A")
+  description     String?     @db.Text
+  
+  isDeleted       Boolean     @default(false)
+  version         Int         @default(1)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([companyId, projectId, partnerId])
+  @@map("sys_external_folder_links")
+}
+
+/// 多型關聯綁定表中介表 (Polymorphic PBAC Relation)
+model FileLink {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId          String      @db.Uuid
+  systemFile      SystemFile  @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  
+  // 💥 RULE-2.2 & 3.1: 跨法人/模組之 PBAC 多維授權錨點 (解決權限孤兒與代付調閱)
+  projectId       String?     @db.Uuid // 允許 B 公司 PM 穿透調閱 A 公司代付憑證
+  partnerId       String?     @db.Uuid // 允許擁有該廠商權限者調閱保密協定 (NDA)
+  userId          String?     @db.Uuid // 人資模組預留：身分證影本調閱權限
+
+  targetTable     String      // 關聯主單據模組 (如 "AR_Invoice", "BusinessPartner")
+  targetId        String      @db.Uuid // 關聯主單據 ID
+
+  isDeleted       Boolean     @default(false)
+  version         Int         @default(1)
+
+  @@index([targetTable, targetId, isDeleted])
+  @@index([projectId, partnerId, userId]) // 專為權限穿透優化的複合索引
+  @@map("sys_file_links")
+}
+~~~
+
+---
+
+## 肆、 Zod 核心驗證邏輯與防呆 (Zod Schema)
+
+~~~typescript
+import { z } from "zod";
+
+export const FileUploadMetaSchema = z.object({
+  companyId: z.string().uuid(),
+  originalName: z.string().trim().min(1, "原始檔名不可為空"),
+  sizeBytes: z.number().max(52428800, "實體上傳限制最大 50MB。巨型 CAD 圖檔請改用 Workspace 資料夾路徑連結。"),
+  
+  // PBAC 授權錨點傳入
+  projectId: z.string().uuid().optional(),
+  partnerId: z.string().uuid().optional(),
+}).superRefine((data, ctx) => {
+  // WebP 強制壓縮判定 (排除 PDF 憑證)
+  const isImage = data.originalName.match(/\.(jpg|jpeg|png)$/i);
+  if (isImage) {
+    // 註解：此標記將通知底層 Multer/Sharp 引擎強制執行 WebP 轉換
+    (data as any).requiresWebpCompression = true; 
+  }
+});
+
+export const ZipExportRequestSchema = z.object({
+  targetTable: z.string(),
+  targetId: z.string().uuid(), // 例如專案 ID
+  fileCountEstimate: z.number().min(1),
+  totalSizeEstimateBytes: z.number().min(1)
+}).superRefine((data, ctx) => {
+  // 💥 RULE-9.3: 效能分水嶺與 OOM 核彈防禦
+  const sizeMB = data.totalSizeEstimateBytes / (1024 * 1024);
+  if (data.fileCountEstimate > 50 || sizeMB > 100) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "QUEUE_REQUIRED: 下載檔案數量大於 50 或總容量超過 100MB。為保護系統效能，已自動轉入背景打包，完成後將透過系統鈴鐺發送下載連結。",
+      path: ["fileCountEstimate"]
+    });
+  }
+});
+~~~
+
+---
+
+## 伍、 UI/UX 大師級操作體驗規範 (輸入簡化與防呆)
+
+1. **待歸檔收件匣 (Triage Inbox) 雙欄打單介面**：
+   * 會計處理廠商大宗月結發票時，UI 提供「左側 PDF 即時預覽、右側計價單輸入框」。右側明細工項會根據廠商 ID 自動撈取前端「工地已簽收之收料單」。會計看著發票對總額即可，極速打單。
+2. **作廢與取代視覺化防呆 (Version Stacking UI)**：
+   * 在已過帳的單據附件區，舊版設計圖或模糊重傳的發票，會自動壓上醒目的 `[⚠️ 已作廢/舊版]` 紅色浮水印，並收納進 `[歷史版本]` 摺疊選單中。主畫面永遠只展示最新、最清晰的 V_FINAL 憑證。
+3. **CAD 圖紙資料夾一鍵開啟 (Workspace Hub)**：
+   * 針對 Workspace 綁定的巨型圖紙 NAS 資料夾，UI 提供 `[📋 複製 NAS 路徑]` 與 `[📂 開啟圖紙資料夾]` 按鈕。工程人員點擊後，直接連動本地電腦的檔案總管 (File Explorer) 開啟該網芳資料夾，徹底告別在瀏覽器下載數百 MB CAD 檔的卡頓地獄。
+4. **異常指標紅燈與一鍵急救 (Ghost File UI)**：
+   * 當系統半夜健康檢查發現 NAS 硬碟檔案損毀/遺失時，UI 附件區將顯示醒目的紅色 `[⚠️ 檔案實體遺失]` 標籤並阻斷下載按鈕，防止瀏覽器當機。提供管理者 `[🔄 重新同步校驗]` 按鈕，一鍵進行例外修復。

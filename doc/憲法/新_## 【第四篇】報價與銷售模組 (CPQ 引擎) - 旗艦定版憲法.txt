@@ -1,0 +1,221 @@
+# 🏛️ ERP 系統全端重構專案：【第四篇】報價與銷售模組 (CPQ 引擎) 旗艦定版憲法
+
+> **【架構師最高聲明】**
+> 本篇為營業端、工程端與財務端之生死交界，承載企業接單預估、合約條款控制與專案利潤保護之核心防線。所有開發者與 AI Agent 在產出本模組之代碼時，必須 100% 嚴格執行本章定義之「藏工於料」、「絕對凍結」與「全域零負數」鐵律。系統必須保持彈性，嚴禁過度設計（如：強迫料件級微觀對帳、強行鎖死戰敗原因），全面配合現場之 AI 批次工作流。
+
+---
+
+## 壹、 報價與 sales 核心業務鐵律
+
+### 🛡️ RULE-4.1：報價版次演進與決選歷史軌跡 (Deep Copy & V_FINAL)
+1. **深拷貝版次機制**：因應業主反覆變更需求之實務，嚴禁在已送出或已印製之報價單上直接執行 `UPDATE` 修改。系統必須實作「整單深拷貝 (Deep Copy)」功能。當複製產生 V2 時，舊版 (V1) 狀態必須強制變更為 `SUPERSEDED` (已取代) 並實體防寫鎖死，以完好還原歷史長相。
+2. **決選版防線 (V_FINAL)**：當遭遇業主「部分得標（砍掉部分工項）」時，系統禁止直接刪除原單明細。必須透過「部分得標」按鈕自動衍生出一張獨立的 `V_FINAL` (決選版) 報價單，並在此決選版進行明細剔除。未來進入 Phase 8 之正式合約，100% 以 `V_FINAL` 為基底拋轉，完美保留「當初報了什麼 vs 最後中了什麼」的商務足跡。
+
+### 🛡️ RULE-4.2：藏工於料雙軌制與選配方案排除 (Dual Pricing & Optional Items)
+1. **藏工於料雙軌計價**：為完美適應台灣工程與製造業「將變動工資與利潤隱藏於料件單價」之靈活常態，明細表在物理 Schema 上必須強制拆分為雙軌欄位：
+   * `estimatedUnitCost` (預估底價/純料錢)：由標準工法庫拉取之歷史成本，對業主隱藏。
+   * `quotedUnitPrice` (合約報價/含工資利潤)：業務手動自由覆寫之欄位，用於印製報價單。
+2. **選配項排除機制**：支持同一份報價單內提供方案 A、B 供客戶選擇。明細表必須配置 `isOptional Boolean` 基因。CPQ 估價引擎在聚合計算報價單總額（`totalAmount`）時，底層 SQL 或應用層邏輯**強制過濾並排除 `isOptional === true` 的項目**，防範多重方案導致合約總價虛胖污染。
+
+### 🛡️ RULE-4.3：效期硬性防護與漸進式展延 UX 閘門 (Validity & Extension UI)
+1. **效期硬性校驗**：報價主檔強制必填 `validUntil` (有效期限)。一旦系統時間大於該日期，前端核心【確認簽約/轉合約】按鈕必須**強制反灰 (Disabled)**，後端 API 入口同步實施阻斷檢查，徹底封死業務手滑轉出「原物料暴漲前舊價格單」之虧損災難。
+2. **漸進式展延按鈕**：當按鈕因過期反灰時，旁側必須動態渲染一個【申請展延】按鈕。系統根據當前 Session 權限實施分流：
+   * 具備管理員/廠長權限者：點擊可直接於彈窗內更新 `validUntil` 展延日期，按鈕瞬間亮起。
+   * 一般業務權限者：點擊觸發非同步審批流（Pending Approval Matrix），審批通過方可解鎖。
+
+### 🛡️ RULE-4.4：全域非負數與減項表單顏色防防呆 (RULE-0.8 實體落地)
+1. **全面拔除負數驗證**：作廢本模組原本包含負數之 Zod 驗證（如舊版 `NegativeChangeOrderItemSchema` 格式）。所有涉及數量、單價、小計之 Zod Schema 全面強制綁定 `.min(0)`，從根源消滅實體負數寫入。
+2. **單據類型隔離與粉紅防呆**：合約成立後之所有追減工程、客戶折讓等扣減行為，在資料庫中一律以**正數（Positive Value）**儲存，並強制綁定 `itemType: DEDUCTION`（減項）。前端 UI 凡偵測到該單據或明細屬於 `DEDUCTION` 時，**頁面背景、輸入框與按鈕必須強制渲染為「粉紅色/警示紅」**，以極致的視覺直覺導正操作員填寫正數。
+
+### 🛡️ RULE-4.5：動態積木條款庫引擎 (Dynamic Clause Engine)
+1. **積木化合約條款**：捨棄傳統整頁死板的 Word 樣板，於底層建立 `ClauseTemplate` (條款積木庫)。將「有效期限說明」、「訂金%數」、「依實作長度請款聲明」切碎為標準積木。
+2. **條件觸發與手動勾選雙軌**：
+   * **自動觸發**：當 CPQ 引擎偵測到明細中包含特定條件（如：計價單位為「式」、或標記為不確定尺寸之工項），系統底層自動將 `T-02: 依實際放樣施作長度請款` 之積木打勾掛載。
+   * **手動勾選**：單據送出前，UI 展現條款清單供業務挑選點菜（例：勾選付 30% 訂金）。
+   * 報價單過帳（Posted）當下，所有勾選之條款文字實體執行 **Snapshot 鎖死**，嚴禁日後修改樣板時影響舊單據。
+
+### 🛡️ RULE-4.6：簽約當下之價格絕對凍結與期程前置 (Time Capsule & Milestone Plan)
+1. **底價時空永凍**：當業務點下【確認簽約】的瞬間，決選版報價單內所有明細之 `estimatedUnitCost` (預估底價) 實體寫死。自此微秒起，縱使外部原物料市場大震盪，此單據成本基期永久封印，作為日後專案專案總損益與預算超支 (BvA) 之絕對會計查帳基準線。
+2. **財務期程前置阻斷**：在按下簽約前，系統必須強硬執行前置海關檢查。操作員必須在介面上結構化填妥「預計開工日」、「預計完工日」、「請款里程碑期數與比例（總和必須為 100%）」、以及「保留款%數與保固月數」。未填妥結構化數據者，系統直接拋出阻斷異常，確保後續財務應收帳款與保固提醒排程具備完好之計時基因。
+
+### 🛡️ RULE-4.7：輕量化專案級對帳防線與戰敗免卡死 (Project-Level Optimization)
+1. **徹底宣判「料件級 WBS 對帳」死刑**：為防止實務上報價名稱（如：五金大項）與廠商月底進貨細項（如：螺絲、鉸鏈）因「粒度斷層 (Granularity Mismatch)」以及「跨案場共用料分攤」導致系統全面崩潰，**系統絕對禁止執行跨單據之料件級微觀對齊。**
+2. **案場級 (Project-Level) 預算控網**：月底配合 AI 批次掃描請款單 PDF 工作流時，ERP 底層僅需比對並洗滌請款資料至 `projectId` (案場專案級別)。只要該專案當月之累計請款金額，未超過決選版報價單轉合約之專案預算總天花板，系統即予放行，徹底解放現場除錯人力。
+3. **戰敗紀錄柔性控管**：報價單切換為 `LOST` (未中標) 時，系統改採「柔性下拉選單 + 自由備註」。下拉選單必須包含 `UNKNOWN` (未明/其他/業主內定) 選項。業務選取未明即可過關，嚴禁強卡硬性欄位導致基層造假髒數據。
+4. **佣金/獎金制度全面剔除**：本模組剔除任何佣金試算、自動違約金產生器等過度設計，維持底層之絕對輕量。
+
+---
+
+## 貳、 第四章 Prisma & Zod 標準實作代碼
+
+### 1. Zod 全域防呆與非負數隔離明細驗證範本
+
+```typescript
+import { z } from "zod";
+
+/**
+ * RULE-4.4: 徹底消滅負數，改以明細單據型別進行業務隔離
+ */
+export const QuotationItemSchema = z.object({
+  itemName: z.string().min(1, "工項名稱不可為空"),
+  
+  // 核心基因：STANDARD (常規加項), DEDUCTION (追減/折讓減項，但金額存正數)
+  itemType: z.enum(["STANDARD", "DEDUCTION"]), 
+  
+  // RULE-4.2: 選配方案標記
+  isOptional: z.boolean().default(false),
+  
+  // 強制非負數防線
+  quantity: z.number().min(0, "數量不可為負數"),
+  quotedUnitPrice: z.number().min(0, "合約報價單價不可為負數"),
+  
+  // 輔助洗滌
+  remarks: z.string().trim().nullable()
+});
+```
+
+### 2. Prisma 實體資料庫 Schema 旗艦模型
+
+```prisma
+// ========================================================================
+// 💡 Quotation Master Table (報價單主檔)
+// ========================================================================
+enum PricingMode {
+  HEADER_DISCOUNT
+  UNIT_PRICE_ADJUSTMENT
+  SHADOW_ALLOCATION
+}
+
+enum QuotationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SUPERSEDED
+  CONVERTED
+  LOST
+}
+
+model Quotation {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid // 未來升級 UUIDv7
+  quotationNumber String
+  projectId       String   @db.Uuid // RULE-4.7: 輕量化控管核心案場 ID
+  companyId       String   @db.Uuid // RULE-0.5: 多公司聯集權限鎖
+  customerId      String   @db.Uuid
+  versionNumber   Int      @default(1)
+  parentQuotationId String? @unique @db.Uuid // 上一版報價 ID
+  parentQuotation Quotation? @relation("QuotationHistory", fields: [parentQuotationId], references: [id], onDelete: Restrict)
+  childQuotation  Quotation? @relation("QuotationHistory")
+  
+  // 狀態機與模組 QuotationStatus 共用
+  status          QuotationStatus @default(DRAFT)
+  
+  // RULE-4.3: 效期硬性防護
+  validUntil      DateTime 
+  
+  // 聚合核心金額 (CPQ 引擎運算時，必須在代碼中強制 WHERE isOptional = false)
+  pricingMode     PricingMode @default(HEADER_DISCOUNT)
+  customDiscountText String? @db.VarChar(255)
+  agreedTotalAmount Decimal? @db.Decimal(15, 2)
+  netAmount       Decimal  @db.Decimal(15, 2)
+  discountAmount  Decimal  @default(0) @db.Decimal(15, 2)
+  taxAmount       Decimal  @default(0) @db.Decimal(15, 2)
+  totalAmount     Decimal  @db.Decimal(15, 2)
+  
+  // RULE-4.7: 戰敗柔性欄位
+  lossReasonCode  String?  // 'PRICING', 'LEAD_TIME', 'UNKNOWN'
+  lossRemarks     String?  @db.Text
+
+  // 關聯子表
+  items           QuotationItem[]
+  clauses         QuotationClause[]
+  billingMilestones QuotationBillingMilestone[]
+
+  // 標配基礎防禦
+  isDeleted       Boolean  @default(false) // RULE-0.2: 全面軟刪除
+  lockVersion     Int      @default(1)     // RULE-0.4: 樂觀鎖控制
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([quotationNumber, versionNumber])
+  @@unique([quotationNumber, versionNumber])
+  @@index([companyId, projectId, status])
+  @@map("sales_quotations")
+}
+
+// ========================================================================
+// 💡 Quotation Item Table (報價單明細表 - 支援藏工於料與底價永凍)
+// ========================================================================
+model QuotationItem {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quotationId       String    @db.Uuid
+  itemName          String    @db.VarChar(255)
+  quantity          Decimal   @db.Decimal(10, 2)
+  lineAmount        Decimal   @db.Decimal(15, 2)
+  
+  itemType          String    @default("STANDARD") // 'STANDARD' | 'DEDUCTION' (RULE-4.4)
+  isOptional        Boolean   @default(false)      // 'true' 則排除於總價之外 (RULE-4.2)
+  
+  // RULE-4.2 & RULE-4.6: 雙軌計價與簽約瞬間時空永凍防線
+  estimatedUnitCost Decimal   @db.Decimal(15, 2)   // 預估底價/純料錢 (簽約當下物理鎖死，不隨庫存浮動)
+  quotedUnitPrice   Decimal   @db.Decimal(15, 2)   // 合約報價單價 (隱藏工資與利潤之實體外顯單價)
+  effectiveUnitPrice Decimal  @db.Decimal(15, 4) @default(0)
+  isAwarded         Boolean   @default(true)
+  lostReason        String?   @db.VarChar(255)
+  
+  quotation         Quotation @relation(fields: [quotationId], references: [id])
+
+  @@map("sales_quotation_items")
+}
+
+// ========================================================================
+// 💡 Clause Template Table (動態積木條款母庫)
+// ========================================================================
+model ClauseTemplate {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clauseCode       String   @unique // 例如: 'TC-VALIDITY', 'TC-ACTUAL-MEASURE'
+  title            String
+  content          String   @db.Text
+  triggerTag       String?  // 用於自動掛載的觸發標籤，例如 'UNIT_SHI' (以式計價時觸發)
+  
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  @@map("clause_templates")
+}
+
+// ==========================================
+// 💡 Quotation Clause Snapshot Table (報價單勾選條款快照表 - RULE-4.5)
+// ==========================================
+model QuotationClause {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quotationId String    @db.Uuid
+  clauseCode  String
+  title       String
+  frozenContent String  @db.Text // 過帳當下鎖死的文字內容，斷開與母庫的血緣
+
+  quotation   Quotation @relation(fields: [quotationId], references: [id])
+
+  @@map("quotation_clauses")
+}
+
+// ==========================================
+// 💡 Quotation Billing Milestone Table (結構化請款期程表 - RULE-4.6)
+// ==========================================
+model QuotationBillingMilestone {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quotationId  String    @db.Uuid
+  
+  stageIndex   Int       // 期數順序, 如 1, 2, 3
+  stageName    String    // 里程碑名稱, 如 '簽約訂金', '進場點收', '完工驗收'
+  percentage   Decimal   @db.Decimal(5, 2)  // 請款比例, 如 30.00, 40.00, 30.00 (總和必為100)
+  
+  // 預計關鍵日期 (前置期程基因)
+  estimatedDate DateTime? 
+
+  quotation    Quotation @relation(fields: [quotationId], references: [id])
+
+  @@map("quotation_billing_milestones")
+}
+```

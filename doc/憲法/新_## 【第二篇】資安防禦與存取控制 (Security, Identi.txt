@@ -1,0 +1,98 @@
+## 【第二篇】資安防禦與存取控制 (Security, Identity & Access Management)
+
+> **【架構師聲明】**
+> 本篇章定義系統的「邊界防禦與權限矩陣」。所有涉及使用者驗證、多公司切換與特權操作的 API，必須嚴格遵守本篇章之規範。嚴禁前端傳遞權限標記讓後端盲目信任，所有越權防禦與資料隔離必須在伺服器端 (Server-Side) 與資料庫層級強制完成，不留任何技術後門。
+
+### 🛡️ RULE-2.1：JWT 會話、全域登入互斥鎖與實體連線防線 (Session & Device Fencing)
+1. **無狀態會話與 HTTP-Only**：
+   系統採用 JWT 進行驗證，Token 必須封裝於 `HTTP-Only` Cookie 中，防範 XSS 攻擊。
+2. **全域登入模式切換**：
+   系統支援「單一裝置互斥」與「多裝置共存」模式，由最高權限於全域參數控制。當全域登入模式發生切換時，底層觸發更新全域或使用者的 `tokenVersion`。現存所有 JWT 將因版本號不符而瞬間失效，強制所有使用者重新登入，確保資安政策無縫切換。
+3. **並行會話控制與固定 IP 鎖定（新增）**：
+   依據使用者角色或現場公用設備需求，於 `User` 主檔精準設定 `maxConcurrentSessions` (最大允許同時登入設備數)。辦公室財務會計嚴格設定為 1（標準互斥模式）；特定主管或現場平板可放寬數量。公用或現場特定帳號支援設定 `allowedIpRanges` (固定 IP/網段綁定)，強制該帳號僅能透過現場特定 Wi-Fi 或固定 IP 登入，徹底防堵帳密外流至非授權網域。
+4. **帳號即時停權狙擊 (Kill Switch)（新增）**：
+   針對違規或緊急開除之員工，一旦管理員標記為停權 (`isSuspended = true`)，底層立刻更新 `tokenVersion`，並透過 WebSocket/SSE 向該帳號關聯之「所有實體設備」瞬間發送強制登出指令，當場切斷連線，連一秒鐘都不給其留。
+5. **現場主管一鍵救援 (Field Password Reset)（新增）**：
+   針對工地現場人員忘記密碼或狂試錯誤導致帳號死鎖，系統下放救援權限。直屬主管（如廠長/專案經理）可於前端介面一鍵解除旗下人員之死鎖狀態，並重設為預設密碼，免除傳統 IT 報修之等待成本，保障現場營運不停擺。
+
+### 🛡️ RULE-2.2：多公司單據級聯、多分頁防污染與專案級隔離 (Multi-Entity & PBAC Guard)
+1. **單據表頭切換制**：
+   允許單一帳號擁有多公司操作權限。使用者在建立交易單據（如報價單、採購單）時，透過表頭下拉選單選擇所屬公司 (`companyId`)。
+2. **底層隔離鐵律**：
+   後端 API 接收資料時，強制校驗傳入的 `companyId` 是否在該使用者的授權清單內。同時，單據內選擇的銀行帳號、專案，必須與單據表頭的 `companyId` 具備強關聯，嚴防 A 公司的單據配對到 B 公司的銀行帳戶。
+3. **多分頁防污染鐵律（新增）**：
+   後端 API 絕對不信任瀏覽器端 Cookie 紀錄之簡化「當前公司」狀態。送出交易單據時，API 強制校驗並隔離各瀏覽器分頁 Payload 封裝之 `companyId`，確保會計於多個分頁同時操作不同獨立法人公司時，帳務絕對不交叉污染。
+4. **3D 專案級隔離防禦 (Project-Based Access Control, PBAC)（新增）**：
+   針對專案經理 (PM) 或現場監工等角色，系統底層強制實作 PBAC。即使具備特定讀取權限，API 查詢請款、計價、採購單據時，強制進行專案歸屬檢核，僅允許撈出單據上 `projectId` 屬於該員負責範圍內之資料，徹底阻斷越權窺探其他案場機密毛利與預算之漏洞。
+
+### 🛡️ RULE-2.3：二維權限矩陣、動態防洩密引擎與上帝觀警台 (RBAC & DLP)
+1. **二維權限驗證**：
+   不再僅以「角色」判斷。必須針對各模組實作 `canReadOwn` (僅看自己建立或負責的單據) 與 `canReadAll` (看全公司單據)。
+2. **動態防洩密引擎 (Role-Based Quota DLP)（新增）**：
+   針對大批次資料匯出，實作「依角色設定每日匯出筆數閥值 (dailyExportLimit)」。一般業務/工務設為 100（日常印單足夠），會計/財務因月底做帳設為 5000，最高主管設為無上限。超越專屬閥值即認定為異常，系統當場阻斷下載並發送推播警報給最高主管。
+3. **上帝觀景台 (External Auditor View)（新增）**：
+   針對外部會計師或投資人查帳需求，設立專屬 `EXTERNAL_AUDITOR` 唯讀角色。此角色具備全公司財務與進銷存之 `canReadAll` 權限，但後端 API 路由針對此角色全面封殺 `POST`, `PUT`, `PATCH`, `DELETE` 等任何寫入操作，確保歷史憑證與帳務絕對無法被誤觸或竄改。
+
+### 🛡️ RULE-2.4：幽靈員工物理隔離與狀態分離 (Ghost Isolation)
+1. **幽靈員工物理隔離**：
+   員工離職時，系統設定 `isActive = false` 並標記 `isGhost = true`。所有下拉選單與指派清單強制過濾幽靈員工，但已簽核的歷史單據必須保留其名稱與軌跡，禁止物理刪除。
+2. **狀態分離 (和平離職 vs 停權狙擊)（新增）**：
+   * **和平離職 (幽靈員工)**：標記 `isGhost = true`，不影響目前登入，但未來選單隱藏，且允許主管一鍵批次移交其名下所有未結單據之負責人。
+   * **停權狙擊 (緊急狀態)**：標記 `isSuspended = true`，即刻觸發 RULE-2.1 之全設備登出，凍結一切行為。
+
+### 🛡️ RULE-2.5：代理人機制與機敏阻斷隔離 (Delegation Boundary)
+1. **代理人機制**：
+   支援設定 `delegateToId` (代理人) 與有效起訖時間。代理期間，代理人合法繼承被代理人之權限，審計日誌 (Audit Log) 必須清楚記錄「A 代理 B 執行操作」。
+2. **代理人機敏阻斷 (Scoped Delegation)（新增）**：
+   代理期間僅能繼承日常營運與「單據簽核」等權限；所有涉及薪資、全域參數、Audit Log 等最高機敏模組，底層強制寫死「禁止代理存取 (Non-delegable)」，嚴防權限毒藥溢位。
+
+---
+
+### 💻 附錄：第二篇核心契約範本
+
+    // ==========================================
+    // Prisma Schema: 員工實體防線、狀態與代理機制 (RULE-2.1, 2.4, 2.5)
+    // ==========================================
+    model User {
+      id                    String    @id @default(uuid()) @db.Uuid
+      username              String    @unique
+      passwordHash          String
+      tokenVersion          Int       @default(1)
+      
+      // 老闆指定的實體與連線防禦
+      maxConcurrentSessions Int       @default(1)      // 允許最大同時登入設備數
+      allowedIpRanges       String?   @db.Text         // 固定 IP 綁定 (例如: "192.168.1.0/24")
+      dailyExportLimit      Int       @default(100)    // 動態防洩密匯出水位線
+      
+      // 帳號狀態分離
+      isActive              Boolean   @default(true)   // 正常狀態
+      isGhost               Boolean   @default(false)  // 和平離職：隱藏名單，保留歷史
+      isSuspended           Boolean   @default(false)  // 緊急停權：觸發即時登出
+      
+      // 代理人機制 (Delegation)
+      delegateToId          String?   @db.Uuid         // 代理人 ID
+      delegateFrom          DateTime?                  // 代理生效起
+      delegateUntil         DateTime?                  // 代理生效迄
+      
+      createdAt             DateTime  @default(now())
+      updatedAt             DateTime  @updatedAt
+      
+      @@map("users")
+    }
+
+    // ==========================================
+    // Zod Schema: 多公司單據防錯亂與 PBAC 驗證 (RULE-2.2)
+    // ==========================================
+    import { z } from "zod";
+
+    export const CreateDocumentSchema = z.object({
+      companyId: z.string().uuid("請選擇所屬公司"),
+      projectId: z.string().uuid("請選擇專案"),
+      bankAccountId: z.string().uuid("請選擇銀行帳號"),
+      totalAmount: z.number().min(0),
+    }).superRefine(async (data, ctx) => {
+      // ⚠️ 架構師鐵律：以下邏輯必須在 Backend Service 層實作中介層驗證
+      // 1. 確認 currentUser.allowedCompanies 包含 data.companyId
+      // 2. 確認 selectedBankAccount.companyId === data.companyId
+      // 3. PBAC 驗證：若使用者角色為專案經理(PM)，強制確認 data.projectId 屬於該員授權之專案負責清單
+    });
