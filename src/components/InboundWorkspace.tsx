@@ -41,8 +41,10 @@ import {
   HelpCircle,
   Lock,
   UserCheck,
-  Image as ImageIcon
+  Image as ImageIcon,
+  FileSpreadsheet
 } from 'lucide-react';
+import { ExcelInboundGridModal } from './inbound/ExcelInboundGridModal';
 import {
   InboundReceipt,
   InboundReceiptItem,
@@ -59,8 +61,6 @@ import {
   postInboundReceipt,
   voidInboundReceipt,
   deleteInboundReceipt,
-  getVendorLedgerPoolSummary,
-  VendorPoolSummary,
   getAllProjects,
   getAllBusinessPartners,
   getNextDocumentNumber,
@@ -101,7 +101,6 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
 
   // 資料狀態
   const [receipts, setReceipts] = useState<InboundReceipt[]>([]);
-  const [poolSummaries, setPoolSummaries] = useState<VendorPoolSummary[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [vendors, setVendors] = useState<BusinessPartner[]>([]);
 
@@ -109,9 +108,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
   const [selectedProjectId, setSelectedProjectId] = useState<string>('ALL');
   const [selectedVendorId, setSelectedVendorId] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [billingFilter, setBillingFilter] = useState<string>('ALL');
   const [searchKeyword, setSearchKeyword] = useState<string>('');
-  const [activeVendorPoolTab, setActiveVendorPoolTab] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
 
   // 檢視與編輯 Modal 控制
@@ -122,6 +119,9 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
 
   // 月底批次快速打單 Modal (Rapid Batch Mode)
   const [isBatchModeOpen, setIsBatchModeOpen] = useState<boolean>(false);
+
+  // 📊 Excel 試算表極速打單工作台 Modal (支援 Ctrl+V 批量貼上)
+  const [isExcelGridModalOpen, setIsExcelGridModalOpen] = useState<boolean>(false);
 
   // 自訂 React 防呆確認 Modal 狀態 (全面取代原生 prompt / confirm)
   const [voidModalTarget, setVoidModalTarget] = useState<InboundReceipt | null>(null);
@@ -189,7 +189,6 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
     try {
       const allReceipts = getAllInboundReceipts();
       setReceipts(allReceipts);
-      setPoolSummaries(getVendorLedgerPoolSummary());
       const prjs = getAllProjects();
       setProjects(prjs);
       const vends = getAllBusinessPartners().filter(b => b.isVendor);
@@ -214,26 +213,20 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // 統計數值
+  // 統計數值 (純粹現場進貨單據計數，去除會計累積金額與大水池)
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const stats = useMemo(() => {
     const validReceipts = receipts.filter(r => !r.isDeleted);
     const totalReceiptsCount = validReceipts.length;
-    const pendingReceipts = validReceipts.filter(r => r.status === 'POSTED' && r.billingStatus === 'PENDING_BILLING');
-    const pendingPoolTotalAmount = pendingReceipts.reduce((acc, r) => acc + r.totalAmount, 0);
+    const todayCount = validReceipts.filter(r => r.receivedDate === todayStr).length;
     const draftCount = validReceipts.filter(r => r.status === 'DRAFT').length;
-    const billedReceipts = validReceipts.filter(r => r.billingStatus === 'BILLED');
-    const billedCount = billedReceipts.length;
-    const billedTotalAmount = billedReceipts.reduce((acc, r) => acc + r.totalAmount, 0);
 
     return {
       totalReceiptsCount,
-      pendingCount: pendingReceipts.length,
-      pendingPoolTotalAmount,
+      todayCount,
       draftCount,
-      billedCount,
-      billedTotalAmount,
     };
-  }, [receipts]);
+  }, [receipts, todayStr]);
 
   // 可選月份清單
   const availableMonths = useMemo(() => {
@@ -252,9 +245,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       if (r.isDeleted) return false;
       if (selectedProjectId !== 'ALL' && r.projectId !== selectedProjectId) return false;
       if (selectedVendorId !== 'ALL' && r.vendorId !== selectedVendorId) return false;
-      if (activeVendorPoolTab && r.vendorId !== activeVendorPoolTab) return false;
       if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
-      if (billingFilter !== 'ALL' && r.billingStatus !== billingFilter) return false;
       if (selectedMonth !== 'ALL' && (!r.receivedDate || !r.receivedDate.startsWith(selectedMonth))) return false;
 
       if (searchKeyword.trim()) {
@@ -270,7 +261,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       }
       return true;
     });
-  }, [receipts, selectedProjectId, selectedVendorId, activeVendorPoolTab, statusFilter, billingFilter, selectedMonth, searchKeyword]);
+  }, [receipts, selectedProjectId, selectedVendorId, statusFilter, selectedMonth, searchKeyword]);
 
   // 開啟新增進貨單
   const handleOpenCreateModal = () => {
@@ -584,25 +575,42 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
     setIsPrintViewOpen(true);
   };
 
-  // 匯出 CSV 報表
+  // 匯出 CSV 報表 (純粹現場進貨欄位，與 Excel 極速打單 100% 格式統一)
   const handleExportCsv = () => {
     try {
-      const headers = ['系統單號', '送貨單號', '簽收日期', '合作廠商', '統編', '歸屬案場', '未稅總金額', '單據狀態', '對帳水池狀態', '點收人', '物料明細'];
-      const rows = filteredReceipts.map(r => {
-        const itemText = (r.items || []).map(it => `${it.itemName}*${it.quantity}${it.unit}`).join('; ');
-        return [
-          r.receiptNumber,
-          r.deliveryNoteNumber,
-          r.receivedDate,
-          r.vendorNameSnapshot || '',
-          r.vendorTaxIdSnapshot || '',
-          r.projectNameSnapshot || '',
-          r.totalAmount,
-          r.status,
-          r.billingStatus,
-          r.receivedBy,
-          `"${itemText}"`
-        ];
+      const headers = [
+        '序號', '進貨日', '廠商名稱', '個案用料(案場)', '專案代碼',
+        '品名', '規格', '單位', '數量', '單價', '金額', '送貨單號', '備註'
+      ];
+      let seq = 1;
+      const rows: string[][] = [];
+      filteredReceipts.forEach(r => {
+        const prj = projects.find(p => p.id === r.projectId);
+        const code = prj?.projectCode || '';
+        const receiptItems = (r.items && r.items.length > 0) 
+          ? r.items 
+          : [{ id: 'temp', receiptId: r.id, itemName: '現場建材', spec: '', unit: '式', quantity: 1, unitPrice: r.totalAmount, lineTotal: r.totalAmount, notes: '' }];
+        
+        receiptItems.forEach(it => {
+          const qty = Number(it.quantity) || 0;
+          const price = Number(it.unitPrice) || 0;
+          const total = Number(it.lineTotal) || (qty * price);
+          rows.push([
+            String(seq++),
+            `"${r.receivedDate}"`,
+            `"${(r.vendorNameSnapshot || '').replace(/"/g, '""')}"`,
+            `"${(r.projectNameSnapshot || '').replace(/"/g, '""')}"`,
+            `"${code}"`,
+            `"${(it.itemName || '').replace(/"/g, '""')}"`,
+            `"${(it.spec || '').replace(/"/g, '""')}"`,
+            `"${it.unit || '包'}"`,
+            String(qty),
+            String(price),
+            String(total),
+            `"${(r.deliveryNoteNumber || '').replace(/"/g, '""')}"`,
+            `"${(it.notes || r.notes || '').replace(/"/g, '""')}"`
+          ]);
+        });
       });
 
       const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
@@ -610,10 +618,10 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `進貨簽收單清冊_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.download = `現場進貨簽收單報表_${new Date().toISOString().slice(0, 10)}.csv`;
       link.click();
       URL.revokeObjectURL(url);
-      triggerToast('🖨️ 已成功匯出進貨簽收單 CSV 報表！', 'success');
+      triggerToast('🖨️ 已成功匯出現場進貨標準 CSV 試算表（Excel 直接開不亂碼）！', 'success');
     } catch (err: any) {
       triggerToast('匯出失敗: ' + err.message, 'error');
     }
@@ -721,36 +729,37 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
               </span>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-xl font-bold text-slate-900 tracking-tight">進貨管理工作台</h2>
+                  <h2 className="text-xl font-bold text-slate-900 tracking-tight">現場進貨簽收管理</h2>
                   <span className="bg-emerald-50 text-emerald-700 font-mono text-xs px-2 py-0.5 rounded border border-emerald-200 font-semibold">
                     A 模式直入案場成本
                   </span>
-                  <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded border border-blue-200 font-medium">
-                    職責分離 · 大水池對接
-                  </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  現場簽收點收計量 · 直入案場成本 · 月底沉澱至廠商大水池無縫對接會計請款
+                  現場物料簽收點收 · 直入案場成本 · 單據查詢與過帳管理
                 </p>
               </div>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* 📊 Excel 試算表極速打單模式 */}
+            <button
+              onClick={() => setIsExcelGridModalOpen(true)}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="仿 Excel 試算表鍵盤操作，支援 CSV 匯出匯入與案場廠商智慧檢驗"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>📊 Excel 極速打單</span>
+            </button>
+
             {/* 月底連續批次打單模式按鈕 */}
             <button
-              onClick={() => {
-                if (!canWrite) {
-                  triggerToast('⛔ 權限攔截：當前角色無寫入權限', 'warn');
-                  return;
-                }
-                setIsBatchModeOpen(true);
-              }}
+              onClick={() => setIsBatchModeOpen(true)}
               className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-              title="專為月底收到整疊簽收單對帳前連續鍵入設計"
+              title="專為現場連續鍵入整疊簽收單設計"
             >
               <Zap className="w-4 h-4" />
-              <span>⚡ 月底批次快速打單</span>
+              <span>⚡ 批次快速打單</span>
             </button>
 
             {/* 新增單筆進貨單 */}
@@ -769,198 +778,60 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
               title="匯出 CSV 試算表"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>匯出</span>
+              <span>匯出 CSV</span>
             </button>
           </div>
         </div>
 
-        {/* 雙重確認與職責分離 PBAC 實測切換列 */}
-        <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
-            <span className="font-bold text-slate-800">
-              【PBAC 雙重確認與職責分離實測沙盒】
-            </span>
-            <span className="text-slate-500 hidden sm:inline">
-              現場打單 (A) ⇄ 主任覆核 (B) ⇄ 會計對帳 (C) ⇄ 財務放款 (D)
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 text-[11px]">模擬角色：</span>
-            <select
-              value={demoRole}
-              onChange={e => {
-                const r = e.target.value as DemoRole;
-                setDemoRole(r);
-                triggerToast(`已切換至「${e.target.options[e.target.selectedIndex].text}」身份進行權限驗證！`, 'success');
-              }}
-              className="px-2.5 py-1 bg-white border border-slate-300 rounded font-medium text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-            >
-              <option value="ALL_PERMS">全功能管理員 (打單 + 覆核 + 查帳)</option>
-              <option value="SITE_CLERK">現場打單同仁 (僅限新增草稿，禁過帳)</option>
-              <option value="SITE_CHIEF">工務所長 / 主任 (打單 + 覆核過帳入水池)</option>
-              <option value="ACCOUNTANT">會計對帳專員 (僅查水池與出帳，禁改現場單)</option>
-              <option value="FINANCE_DIRECTOR">財務長 / 出納 (放款與簽發票據)</option>
-            </select>
-
-            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-              canWrite ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-            }`}>
-              {canWrite ? '✓ 可打單' : '🔒 禁打單'}
-            </span>
-
-            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-              canApprove ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-200 text-slate-600'
-            }`}>
-              {canApprove ? '✓ 可覆核' : '🔒 禁覆核'}
-            </span>
-          </div>
-        </div>
-
-        {/* 職責分離憲法提醒橫幅 */}
-        <div className="mt-3 p-3 bg-blue-50/70 border border-blue-200 rounded-lg flex items-start gap-3 text-xs text-blue-900">
-          <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-          <div className="leading-relaxed">
-            <span className="font-bold text-blue-950">【營造 ERP 內控憲法 · 職責分離鐵律】</span>：
-            本進貨模組專責記錄「工區物料送達之簽收事實與品名數量單價」。
-            <span className="text-blue-700 font-semibold ml-1">
-              發票號碼補登、營業稅外加/內含計算、現領折讓扣款與付款排程，交由會計於「月底對帳大水池」處理
-            </span>
-            ，確保現場打單最快速純粹、財務結算與金流精準無漏！
-          </div>
-        </div>
-
-        {/* 四大 KPI 核心統計指標 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 pt-5 border-t border-slate-100">
+        {/* 現場進貨單據狀態指標 (純現場維度，無會計累積金額與水池水位) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5 pt-5 border-t border-slate-100">
           <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200/80">
             <div className="text-xs text-slate-500 font-medium flex items-center justify-between">
-              <span>進貨總單數</span>
+              <span>現場全部進貨單據</span>
               <Boxes className="w-4 h-4 text-slate-400" />
             </div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="font-mono text-2xl font-bold text-slate-800">
                 {stats.totalReceiptsCount}
               </span>
-              <span className="text-xs text-slate-400">筆</span>
+              <span className="text-xs text-slate-400">筆簽收單</span>
             </div>
             <div className="text-[11px] text-slate-400 mt-1">
-              現場全部簽單紀錄
+              現場全部送達點收歷史
+            </div>
+          </div>
+
+          <div className="p-3.5 bg-blue-50/60 rounded-lg border border-blue-200/80">
+            <div className="text-xs text-blue-800 font-medium flex items-center justify-between">
+              <span>今日簽收進貨</span>
+              <Truck className="w-4 h-4 text-blue-600" />
+            </div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="font-mono text-2xl font-bold text-blue-900">
+                {stats.todayCount}
+              </span>
+              <span className="text-xs text-blue-600 font-medium">筆今日送達</span>
+            </div>
+            <div className="text-[11px] text-blue-600 mt-1">
+              今日現場物料點收入庫
             </div>
           </div>
 
           <div className="p-3.5 bg-amber-50/70 rounded-lg border border-amber-200">
             <div className="text-xs text-amber-800 font-medium flex items-center justify-between">
-              <span>待對帳水池水位 (未結貨款)</span>
-              <Clock className="w-4 h-4 text-amber-600" />
-            </div>
-            <div className="mt-1 flex items-baseline gap-1">
-              <span className="text-xs font-bold text-amber-800">NT$</span>
-              <span className="font-mono text-2xl font-bold text-amber-900 tabular-nums">
-                {stats.pendingPoolTotalAmount.toLocaleString()}
-              </span>
-              <span className="text-xs text-amber-700 font-medium ml-1">({stats.pendingCount} 筆待對)</span>
-            </div>
-            <div className="text-[11px] text-amber-700 mt-1">
-              🌊 沉澱大水池 · 等待會計月底對帳
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-emerald-50/70 rounded-lg border border-emerald-200">
-            <div className="text-xs text-emerald-800 font-medium flex items-center justify-between">
-              <span>已會計對帳請款</span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            </div>
-            <div className="mt-1 flex items-baseline gap-1">
-              <span className="text-xs font-bold text-emerald-800">NT$</span>
-              <span className="font-mono text-2xl font-bold text-emerald-900 tabular-nums">
-                {stats.billedTotalAmount.toLocaleString()}
-              </span>
-              <span className="text-xs text-emerald-700 font-medium ml-1">({stats.billedCount} 筆放水結算)</span>
-            </div>
-            <div className="text-[11px] text-emerald-700 mt-1">
-              已出具對帳請款單 · 排定付款放款
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200/80">
-            <div className="text-xs text-slate-500 font-medium flex items-center justify-between">
-              <span>現場草稿暫存單</span>
-              <Edit className="w-4 h-4 text-slate-400" />
+              <span>現場草稿待審單</span>
+              <Edit className="w-4 h-4 text-amber-600" />
             </div>
             <div className="mt-1 flex items-baseline gap-2">
-              <span className="font-mono text-2xl font-bold text-slate-700">
+              <span className="font-mono text-2xl font-bold text-amber-900">
                 {stats.draftCount}
               </span>
-              <span className="text-xs text-slate-400">筆待過帳</span>
+              <span className="text-xs text-amber-700 font-medium">筆待確認過帳</span>
             </div>
-            <div className="text-[11px] text-slate-500 mt-1">
-              打單人員隨時可修訂
+            <div className="text-[11px] text-amber-700 mt-1">
+              點收人員隨時可補全修改
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* 🌊 廠商往來大水池水位看板 (Vendor Ledger Pool) */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3.5">
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 bg-blue-50 text-blue-700 rounded border border-blue-200">
-              <Layers className="w-4 h-4" />
-            </span>
-            <h3 className="text-sm font-bold text-slate-900">
-              廠商往來大水池水位總覽 (Vendor Pool Balance)
-            </h3>
-            <span className="text-xs text-slate-500">
-              點選廠商可一鍵聚焦過濾該公司待對帳簽收單
-            </span>
-          </div>
-
-          {activeVendorPoolTab && (
-            <button
-              onClick={() => setActiveVendorPoolTab(null)}
-              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>清除廠商聚焦 (查看全廠商)</span>
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-          {poolSummaries.map(p => {
-            const isSelected = activeVendorPoolTab === p.vendorId;
-            return (
-              <div
-                key={p.vendorId}
-                onClick={() => setActiveVendorPoolTab(isSelected ? null : p.vendorId)}
-                className={`p-3.5 rounded-lg border transition-all cursor-pointer ${
-                  isSelected
-                    ? 'border-indigo-600 bg-indigo-50/70 shadow-xs ring-2 ring-indigo-200'
-                    : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                  <span className="truncate" title={p.vendorName}>{p.vendorName}</span>
-                  {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
-                </div>
-                <div className="mt-2 flex items-baseline justify-between text-xs">
-                  <span className="text-slate-500 text-[11px]">未結水池水位：</span>
-                  <span className="font-mono font-bold text-amber-700 tabular-nums">
-                    ${p.pendingTotalAmount.toLocaleString()}
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
-                  <span>待對帳單數</span>
-                  <span className="font-mono font-semibold text-slate-700">{p.pendingCount} 筆</span>
-                </div>
-                <div className="mt-1 pt-1.5 border-t border-slate-200/60 flex items-center justify-between text-[10px] text-slate-400">
-                  <span>進貨區間</span>
-                  <span>{p.earliestDate} ~ {p.latestDate}</span>
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
 
@@ -1027,16 +898,17 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
             </select>
           </div>
 
-          {/* 請款對帳狀態篩選 */}
+          {/* 進貨簽收狀態篩選 */}
           <div>
             <select
-              value={billingFilter}
-              onChange={e => setBillingFilter(e.target.value)}
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
               className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-700"
             >
-              <option value="ALL">全部水池狀態</option>
-              <option value="PENDING_BILLING">待對帳請款 (沉澱水池中)</option>
-              <option value="BILLED">已會計對帳請款</option>
+              <option value="ALL">全部簽收狀態</option>
+              <option value="POSTED">已點收入帳 (已過帳)</option>
+              <option value="DRAFT">現場草稿 (待審核)</option>
+              <option value="VOIDED">已作廢</option>
             </select>
           </div>
         </div>
@@ -1052,10 +924,10 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
 
           <div className="flex items-center gap-3 text-xs text-slate-500">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span> 已過帳入水池
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span> 已驗收入帳
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-amber-500"></span> 草稿中
+              <span className="w-2 h-2 rounded-full bg-amber-500"></span> 草稿待核
             </span>
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-slate-400"></span> 已作廢
@@ -1075,14 +947,13 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                 <th className="py-3 px-4 whitespace-nowrap">物料明細摘要</th>
                 <th className="py-3 px-4 text-right whitespace-nowrap">未稅金額 (NT$)</th>
                 <th className="py-3 px-4 text-center whitespace-nowrap">單據狀態</th>
-                <th className="py-3 px-4 text-center whitespace-nowrap">會計對帳水池狀態</th>
                 <th className="py-3 px-4 text-right whitespace-nowrap">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredReceipts.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
+                  <td colSpan={9} className="py-12 text-center text-slate-400">
                     <Truck className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     <p className="text-sm font-medium">查無符合條件的進貨簽收單據</p>
                     <p className="text-xs text-slate-400 mt-1">
@@ -1137,7 +1008,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         {r.status === 'POSTED' && (
                           <span className="bg-emerald-50 text-emerald-700 font-medium px-2 py-0.5 rounded border border-emerald-200">
-                            已過帳
+                            已入帳
                           </span>
                         )}
                         {r.status === 'DRAFT' && (
@@ -1149,24 +1020,6 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                           <span className="bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded border border-slate-300">
                             已作廢
                           </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-center whitespace-nowrap">
-                        {r.billingStatus === 'PENDING_BILLING' && r.status === 'POSTED' && (
-                          <span className="bg-blue-50 text-blue-700 font-medium px-2 py-0.5 rounded border border-blue-200" title="沉澱於廠商未結水池中，等待會計月底對帳請款">
-                            🌊 待對帳請款
-                          </span>
-                        )}
-                        {r.billingStatus === 'BILLED' && (
-                          <span className="bg-purple-50 text-purple-700 font-medium px-2 py-0.5 rounded border border-purple-200" title={`會計已請款: ${r.reconciliationNumber || '已結算'}`}>
-                            ✅ 會計已請款
-                          </span>
-                        )}
-                        {r.status === 'DRAFT' && (
-                          <span className="text-slate-400">待過帳</span>
-                        )}
-                        {r.status === 'VOIDED' && (
-                          <span className="text-slate-400">—</span>
                         )}
                       </td>
                       <td
@@ -2337,6 +2190,19 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
           </div>
         </div>
       )}
+
+      {/* 📊 Excel 試算表極速進貨打單工作台 (Ctrl+V 支援) */}
+      <ExcelInboundGridModal
+        isOpen={isExcelGridModalOpen}
+        onClose={() => setIsExcelGridModalOpen(false)}
+        onSaved={() => {
+          loadData();
+          if (onDataChanged) onDataChanged();
+        }}
+        triggerToast={triggerToast}
+        currentUserFullName={currentUser?.fullName || '現場工程師'}
+        canApprove={canApprove}
+      />
     </div>
   );
 };

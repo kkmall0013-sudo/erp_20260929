@@ -2345,12 +2345,27 @@ export function deleteExternalFolderLink(id: string, operatorName: string = '系
 // 讀取所有集團、公司與個人實體
 export function getAllCompanies(): Company[] {
   if (!dbInstance) return [];
-  const res = dbInstance.exec(`
+  let res = dbInstance.exec(`
     SELECT id, companyCode, name, shortName, entityType, parentId, taxId, nationalId, representative, keyPersonnel, documentPrefix, phones, email, registeredAddress, contactAddress, capitalAmount, baseCurrency, isDeleted, version, createdAt, updatedAt 
     FROM companies 
     WHERE isDeleted = 0 
     ORDER BY CASE WHEN entityType = 'GROUP' THEN 0 WHEN entityType = 'CORPORATION' THEN 1 ELSE 2 END, companyCode;
   `);
+
+  if (res.length > 0 && !res[0].values.some(v => String(v[0]) === 'COMP-03')) {
+    dbInstance.run(`
+      INSERT INTO companies (id, companyCode, name, shortName, entityType, parentId, taxId, nationalId, representative, keyPersonnel, documentPrefix, phones, email, registeredAddress, contactAddress, capitalAmount, baseCurrency, isDeleted, version, createdAt, updatedAt)
+      VALUES ('COMP-03', 'CMP-TW03', '立勝工程實業股份有限公司', '立勝實業', 'CORPORATION', 'GRP-01', '13572468', NULL, '黃協理', '[]', 'LS', '[]', 'service@lisheng.tw', '台中市西屯區台灣大道三段99號', '台中市西屯區台灣大道三段99號', 30000000, 'TWD', 0, 1, '2026-01-01', '2026-01-01')
+      ON CONFLICT(id) DO NOTHING;
+    `);
+    res = dbInstance.exec(`
+      SELECT id, companyCode, name, shortName, entityType, parentId, taxId, nationalId, representative, keyPersonnel, documentPrefix, phones, email, registeredAddress, contactAddress, capitalAmount, baseCurrency, isDeleted, version, createdAt, updatedAt 
+      FROM companies 
+      WHERE isDeleted = 0 
+      ORDER BY CASE WHEN entityType = 'GROUP' THEN 0 WHEN entityType = 'CORPORATION' THEN 1 ELSE 2 END, companyCode;
+    `);
+  }
+
   if (!res.length) return [];
   return res[0].values.map(v => {
     let keyPersonnelList: KeyPerson[] = [];
@@ -2649,6 +2664,176 @@ export function getAllProjects(companyId?: string): Project[] {
     createdAt: String(v[16]),
     updatedAt: String(v[17]),
   }));
+}
+
+// ⚡ 一鍵極速建立專案案場 (支援進貨模糊比對就地建檔與未來案場模組共用)
+export function quickCreateProject(
+  name: string,
+  siteName?: string,
+  ownerName?: string,
+  companyId: string = 'COMP-01',
+  address?: string,
+  ownerTaxId?: string
+): Project {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const id = `PRJ-${Date.now().toString().slice(-6)}`;
+  const projectCode = getNextDocumentNumber('PRJ');
+  const cleanName = name.trim();
+  const cleanSite = siteName ? siteName.trim() : cleanName;
+  const cleanOwner = ownerName ? ownerName.trim() : '自建案場業主';
+  const cleanTaxId = ownerTaxId ? ownerTaxId.trim() : '';
+  const cleanAddress = address ? address.trim() : '現場工地';
+
+  dbInstance.run(`
+    INSERT INTO projects (
+      id, projectCode, name, ownerName, ownerTaxId, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt
+    ) VALUES (
+      '${id}', '${projectCode}', '${cleanName.replace(/'/g, "''")}', '${cleanOwner.replace(/'/g, "''")}', '${cleanTaxId.replace(/'/g, "''")}', 0, 0, 0, 0, '${now.slice(0, 10)}', '', 'ACTIVE', 0, '${companyId}', 0, 1, '${now}', '${now}'
+    );
+  `);
+
+  if (cleanSite) {
+    const siteId = `SITE-${Date.now().toString().slice(-6)}`;
+    dbInstance.run(`
+      INSERT INTO project_sites (id, projectId, siteName, address, contactPerson, contactPhone, permitNumber)
+      VALUES ('${siteId}', '${id}', '${cleanSite.replace(/'/g, "''")}', '${cleanAddress.replace(/'/g, "''")}', '', '', '');
+    `);
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return getAllProjects().find(p => p.id === id)!;
+}
+
+// ⚡ 一鍵極速建立合作廠商 (直接同步寫入商業夥伴模組，杜絕 SQL 欄位報錯)
+export function quickCreateVendor(
+  name: string,
+  companyId: string = 'COMP-01',
+  phone?: string,
+  taxId?: string,
+  contactPerson?: string,
+  address?: string,
+  category?: string
+): BusinessPartner {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const id = `BP-VEND-${Date.now().toString().slice(-6)}`;
+  const bpCode = `VEND-${Date.now().toString().slice(-4)}`;
+  const cleanName = name.trim();
+  const cleanTaxId = (taxId || '').trim();
+  const cleanPhone = (phone || '').trim();
+  const cleanContact = (contactPerson || '').trim();
+  const cleanAddress = (address || '').trim();
+  const cleanCategory = (category || '現場材料供料商').trim();
+
+  dbInstance.run(`
+    INSERT INTO business_partners (
+      id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, convertedFromVendorId,
+      serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson,
+      phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
+      hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
+      isDeleted, version, createdAt, updatedAt
+    ) VALUES (
+      '${id}',
+      '${bpCode}',
+      '${cleanName.replace(/'/g, "''")}',
+      '${cleanTaxId.replace(/'/g, "''")}',
+      'CORPORATION',
+      'VENDOR',
+      0,
+      1,
+      NULL,
+      '${cleanCategory.replace(/'/g, "''")}',
+      '材料建材',
+      '',
+      '${cleanName.replace(/'/g, "''")}',
+      '${cleanContact.replace(/'/g, "''")}',
+      '${cleanPhone.replace(/'/g, "''")}',
+      '',
+      '${cleanAddress.replace(/'/g, "''")}',
+      '',
+      '',
+      '',
+      '',
+      'COMPANY',
+      1,
+      30,
+      0,
+      NULL,
+      90,
+      'ACTIVE',
+      '${companyId}',
+      0,
+      1,
+      '${now}',
+      '${now}'
+    );
+  `);
+
+  // 若有地址或聯絡人，同步建立子集合關聯
+  if (cleanAddress) {
+    dbInstance.run(`
+      INSERT INTO partner_addresses (id, partnerId, addressType, label, fullAddress, isDeleted)
+      VALUES ('PADDR-${Date.now()}', '${id}', 'COMMUNICATION', '主要通訊地址', '${cleanAddress.replace(/'/g, "''")}', 0);
+    `);
+  }
+  if (cleanContact || cleanPhone) {
+    dbInstance.run(`
+      INSERT INTO partner_contacts (id, partnerId, contactType, name, title, phone, mobile, extension, email, notes, isDeleted)
+      VALUES ('PCON-${Date.now()}', '${id}', 'PRIMARY', '${(cleanContact || '業務聯絡人').replace(/'/g, "''")}', '業務窗口', '', '${cleanPhone.replace(/'/g, "''")}', '', '', '自現場進貨登記建立', 0);
+    `);
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return getAllBusinessPartners().find(b => b.id === id)!;
+}
+
+// ⚡ 讀取物料主檔與一鍵建立新物料用料
+export function getAllItems(): Item[] {
+  if (!dbInstance) return [];
+  const res = dbInstance.exec(`
+    SELECT id, itemCode, name, category, unit, unitPrice, standardCost, isDeleted
+    FROM items
+    WHERE isDeleted = 0
+    ORDER BY itemCode;
+  `);
+  if (!res.length || !res[0].values) return [];
+  return res[0].values.map(v => ({
+    id: String(v[0]),
+    itemCode: String(v[1]),
+    name: String(v[2]),
+    category: String(v[3] || '一般材料'),
+    unit: String(v[4] || '式'),
+    unitPrice: Number(v[5]) || 0,
+    standardCost: Number(v[6]) || 0,
+    isDeleted: Boolean(v[7]),
+  }));
+}
+
+export function quickCreateItem(
+  name: string,
+  unit: string = '式',
+  unitPrice: number = 0,
+  category: string = '工程材料'
+): Item {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const cleanName = name.trim();
+  const id = `ITEM-${Date.now().toString().slice(-6)}`;
+  const itemCode = `MAT-${Date.now().toString().slice(-4)}`;
+  const cleanUnit = (unit || '式').trim();
+  const cleanCategory = (category || '工程材料').trim();
+  const price = Number(unitPrice) || 0;
+
+  dbInstance.run(`
+    INSERT INTO items (id, itemCode, name, category, unit, unitPrice, standardCost, isDeleted)
+    VALUES ('${id}', '${itemCode}', '${cleanName.replace(/'/g, "''")}', '${cleanCategory.replace(/'/g, "''")}', '${cleanUnit.replace(/'/g, "''")}', ${price}, ${price}, 0);
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return getAllItems().find(i => i.id === id)!;
 }
 
 // ============================================================================
@@ -7216,6 +7401,16 @@ export function createInboundReceipt(
     `);
   }
 
+  // A 模式直入案場成本：若直接過帳 (POSTED) 且關聯專案，同步累加專案 actualCost
+  if (status === 'POSTED' && data.projectId && totalAmount > 0) {
+    dbInstance.run(`
+      UPDATE projects 
+      SET actualCost = actualCost + ${totalAmount},
+          updatedAt = '${now}'
+      WHERE id = '${data.projectId}';
+    `);
+  }
+
   saveDatabaseSnapshot();
   notifyListeners();
 
@@ -7337,6 +7532,16 @@ export function postInboundReceipt(id: string): InboundReceipt {
     WHERE id = '${id}';
   `);
 
+  // A 模式直入案場成本：過帳時同步累加專案 actualCost
+  if (existing.projectId && existing.totalAmount > 0) {
+    dbInstance.run(`
+      UPDATE projects 
+      SET actualCost = actualCost + ${existing.totalAmount},
+          updatedAt = '${now}'
+      WHERE id = '${existing.projectId}';
+    `);
+  }
+
   saveDatabaseSnapshot();
   notifyListeners();
 
@@ -7362,6 +7567,16 @@ export function voidInboundReceipt(id: string, notes?: string): InboundReceipt {
         updatedAt = '${now}'
     WHERE id = '${id}';
   `);
+
+  // A 模式：若原單為 POSTED 狀態，作廢時自專案 actualCost 回沖扣除
+  if (existing.status === 'POSTED' && existing.projectId && existing.totalAmount > 0) {
+    dbInstance.run(`
+      UPDATE projects 
+      SET actualCost = MAX(0, actualCost - ${existing.totalAmount}),
+          updatedAt = '${now}'
+      WHERE id = '${existing.projectId}';
+    `);
+  }
 
   saveDatabaseSnapshot();
   notifyListeners();
