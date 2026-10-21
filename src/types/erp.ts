@@ -518,6 +518,7 @@ export interface InboundReceipt {
   companyId: string;
   projectId: string; // A 模式：直入案場成本
   projectNameSnapshot?: string;
+  projectCodeSnapshot?: string;
   vendorId: string; // 供應商夥伴 ID
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;

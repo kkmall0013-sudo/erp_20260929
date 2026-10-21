@@ -2639,6 +2639,24 @@ export function deleteCompany(companyId: string, operatorName: string = '系統�
 // 讀取所有專案
 export function getAllProjects(companyId?: string): Project[] {
   if (!dbInstance) return [];
+
+  try {
+    const check3310 = dbInstance.exec(`SELECT count(*) FROM projects WHERE name LIKE '%3310%' OR projectCode = 'PRJ-2026-004';`);
+    if (check3310.length && Number(check3310[0].values[0][0]) === 0) {
+      dbInstance.run(`
+        INSERT INTO projects (id, projectCode, name, ownerName, ownerTaxId, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt)
+        VALUES ('PRJ-04', 'PRJ-2026-004', '3310新建工程', '大城建設開發股份有限公司', '88991234', 35000000, 30000000, 18000000, 6500000, '2026-03-01', '2027-05-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-03-01', '2026-03-01');
+      `);
+      dbInstance.run(`
+        INSERT INTO project_sites (id, projectId, siteName, address, contactPerson, contactPhone, permitNumber)
+        VALUES ('SITE-04', 'PRJ-04', '3310新建工程工區', '彰化縣大城鄉大城段3310號工地', '蕭主任', '0912-331-000', '115建字第3310號');
+      `);
+      saveDatabaseSnapshot();
+    }
+  } catch (err) {
+    // ignore
+  }
+
   const sql = companyId 
     ? `SELECT * FROM projects WHERE isDeleted = 0 AND companyId = '${companyId}' ORDER BY projectCode;`
     : `SELECT * FROM projects WHERE isDeleted = 0 ORDER BY projectCode;`;
@@ -7501,6 +7519,22 @@ export function updateInboundReceipt(
   if (data.receivedBy !== undefined) updates.push(`receivedBy = '${data.receivedBy.replace(/'/g, "''")}'`);
   if (data.notes !== undefined) updates.push(`notes = '${(data.notes || '').replace(/'/g, "''")}'`);
   if (data.status !== undefined) updates.push(`status = '${data.status}'`);
+  if (data.projectId !== undefined) {
+    updates.push(`projectId = '${data.projectId}'`);
+    const prj = getAllProjects().find(p => p.id === data.projectId);
+    if (prj) {
+      updates.push(`projectNameSnapshot = '${prj.name.replace(/'/g, "''")}'`);
+      updates.push(`projectCodeSnapshot = '${prj.projectCode.replace(/'/g, "''")}'`);
+    }
+  }
+  if (data.vendorId !== undefined) {
+    updates.push(`vendorId = '${data.vendorId}'`);
+    const ven = getAllBusinessPartners().find(v => v.id === data.vendorId);
+    if (ven) {
+      updates.push(`vendorNameSnapshot = '${ven.name.replace(/'/g, "''")}'`);
+      updates.push(`vendorTaxIdSnapshot = '${(ven.taxId || '').replace(/'/g, "''")}'`);
+    }
+  }
   if (data.attachmentFileId !== undefined) updates.push(`attachmentFileId = ${data.attachmentFileId ? `'${data.attachmentFileId}'` : 'NULL'}`);
   if (data.attachmentFileName !== undefined) updates.push(`attachmentFileName = ${data.attachmentFileName ? `'${data.attachmentFileName.replace(/'/g, "''")}'` : 'NULL'}`);
 

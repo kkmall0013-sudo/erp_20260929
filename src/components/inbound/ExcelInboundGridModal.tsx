@@ -18,7 +18,8 @@ import {
   X,
   Info,
   Layers,
-  ArrowRight
+  ArrowRight,
+  ChevronDown
 } from 'lucide-react';
 import { Project, BusinessPartner, Item } from '../../types/erp';
 import {
@@ -275,6 +276,110 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
 
       return updated;
     }));
+  };
+
+  // ⚡ 當前儲存格快速推薦下拉狀態 (含屏幕坐標定位，使用 fixed 全局懸浮層徹底避免被表格邊界/第5列裁切)
+  const [activeDropdown, setActiveDropdown] = useState<{
+    rowId: string;
+    field: 'site' | 'vendor' | 'item';
+    rect: {
+      top: number;
+      bottom: number;
+      left: number;
+      width: number;
+      openUpward: boolean;
+    };
+  } | null>(null);
+
+  const openDropdown = (target: HTMLElement, rowId: string, field: 'site' | 'vendor' | 'item') => {
+    const td = target.closest('td') || target;
+    const rect = td.getBoundingClientRect();
+    const dropdownHeight = 280;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+
+    setActiveDropdown({
+      rowId,
+      field,
+      rect: {
+        top: rect.top,
+        bottom: rect.bottom,
+        left: rect.left,
+        width: rect.width,
+        openUpward,
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (!activeDropdown) return;
+    const handleDocumentClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-dropdown-container]') && !target.closest('[data-dropdown-trigger]')) {
+        setActiveDropdown(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveDropdown(null);
+      }
+    };
+    const handleScroll = (e: Event) => {
+      // 若滾動發生在下拉選單內部，不關閉
+      const target = e.target as HTMLElement;
+      if (target && target.closest && target.closest('[data-dropdown-container]')) {
+        return;
+      }
+      setActiveDropdown(null);
+    };
+    window.addEventListener('mousedown', handleDocumentClick);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleScroll, true);
+    return () => {
+      window.removeEventListener('mousedown', handleDocumentClick);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [activeDropdown]);
+
+  const handleSelectProject = (rowId: string, prj: Project) => {
+    setGridRows(prev => prev.map(r => {
+      if (r.id !== rowId) return r;
+      return {
+        ...r,
+        siteInputName: prj.name,
+        matchedProjectId: prj.id,
+        projectCodeSnapshot: prj.projectCode,
+        projectStatus: 'MATCHED'
+      };
+    }));
+    setActiveDropdown(null);
+  };
+
+  const handleSelectVendor = (rowId: string, ven: BusinessPartner) => {
+    setGridRows(prev => prev.map(r => {
+      if (r.id !== rowId) return r;
+      return {
+        ...r,
+        vendorInputName: ven.name,
+        matchedVendorId: ven.id,
+        vendorStatus: 'MATCHED'
+      };
+    }));
+    setActiveDropdown(null);
+  };
+
+  const handleSelectItem = (rowId: string, itm: Item) => {
+    setGridRows(prev => prev.map(r => {
+      if (r.id !== rowId) return r;
+      return {
+        ...r,
+        itemName: itm.name,
+        unit: itm.unit || r.unit,
+        unitPrice: itm.unitPrice > 0 ? itm.unitPrice : r.unitPrice
+      };
+    }));
+    setActiveDropdown(null);
   };
 
   // 快速新增單列或多列
@@ -897,20 +1002,41 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
                       />
                     </td>
 
-                    {/* 廠商名稱與檢驗 */}
-                    <td className="p-1 relative">
+                    {/* 廠商名稱與檢驗 (支援快速輸入即時推薦與點選回填全名，提供下拉箭頭) */}
+                    <td className="p-1 relative" data-dropdown-trigger>
                       <div className="flex items-center gap-1">
                         <input
                           type="text"
-                          placeholder="輸入或貼上廠商名稱"
+                          placeholder="輸入廠商或拉選"
                           value={row.vendorInputName}
-                          onChange={e => handleCellChange(row.id, 'vendorInputName', e.target.value)}
+                          onFocus={e => openDropdown(e.currentTarget, row.id, 'vendor')}
+                          onClick={e => openDropdown(e.currentTarget, row.id, 'vendor')}
+                          onChange={e => {
+                            handleCellChange(row.id, 'vendorInputName', e.target.value);
+                            openDropdown(e.currentTarget, row.id, 'vendor');
+                          }}
                           className="flex-1 px-2 py-1 bg-transparent hover:bg-white focus:bg-white border border-transparent focus:border-indigo-500 rounded text-xs font-semibold text-slate-900 outline-none transition-colors"
                         />
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (activeDropdown?.rowId === row.id && activeDropdown?.field === 'vendor') {
+                              setActiveDropdown(null);
+                            } else {
+                              openDropdown(e.currentTarget, row.id, 'vendor');
+                            }
+                          }}
+                          className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                          title="下拉查看所有合作廠商清單"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
                         {row.vendorStatus === 'MATCHED' && (
                           <span 
                             className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold shrink-0 flex items-center gap-0.5"
-                            title="已匹配現有廠商主檔"
+                            title="已鎖定合作廠商主檔"
                           >
                             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                             <span>既有</span>
@@ -930,28 +1056,44 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
                       </div>
                     </td>
 
-                    {/* 個案用料 / 案場名稱與專案代碼 */}
-                    <td className="p-1 relative">
+                    {/* 個案用料 / 案場名稱與專案代碼 (支援輸入 3 即刻推薦 3310新建工程 並回填全名，亦可直接拉選單查看進行中案場) */}
+                    <td className="p-1 relative" data-dropdown-trigger>
                       <div className="flex items-center gap-1">
-                        <div className="flex-1">
+                        <div className="flex-1 flex items-center">
                           <input
                             type="text"
-                            placeholder="輸入或貼上案場俗稱/個案用料"
+                            placeholder="輸入案場或代碼 (如 3310)"
                             value={row.siteInputName}
-                            onChange={e => handleCellChange(row.id, 'siteInputName', e.target.value)}
+                            onFocus={e => openDropdown(e.currentTarget, row.id, 'site')}
+                            onClick={e => openDropdown(e.currentTarget, row.id, 'site')}
+                            onChange={e => {
+                              handleCellChange(row.id, 'siteInputName', e.target.value);
+                              openDropdown(e.currentTarget, row.id, 'site');
+                            }}
                             className="w-full px-2 py-1 bg-transparent hover:bg-white focus:bg-white border border-transparent focus:border-indigo-500 rounded text-xs font-semibold text-slate-900 outline-none transition-colors"
                           />
-                          {row.projectCodeSnapshot && (
-                            <div className="text-[10px] font-mono font-bold text-indigo-600 px-2">
-                              專案代碼: {row.projectCodeSnapshot}
-                            </div>
-                          )}
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (activeDropdown?.rowId === row.id && activeDropdown?.field === 'site') {
+                                setActiveDropdown(null);
+                              } else {
+                                openDropdown(e.currentTarget, row.id, 'site');
+                              }
+                            }}
+                            className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                            title="下拉查看所有進行中工程案場"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
                         </div>
 
                         {row.projectStatus === 'MATCHED' && (
                           <span 
                             className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold shrink-0 flex items-center gap-0.5"
-                            title="已匹配現有專案案場"
+                            title="已匹配並鎖定現有專案案場"
                           >
                             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                             <span>已鎖定</span>
@@ -969,18 +1111,45 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
                           </button>
                         )}
                       </div>
+
+                      {row.projectCodeSnapshot && (
+                        <div className="text-[10px] font-mono font-bold text-indigo-600 px-2 mt-0.5">
+                          專案代碼: {row.projectCodeSnapshot}
+                        </div>
+                      )}
                     </td>
 
-                    {/* 品名 */}
-                    <td className="p-1 relative">
+                    {/* 品名 (支援點選常用標準料件帶入單位單價，各欄位徹底分離獨立) */}
+                    <td className="p-1 relative" data-dropdown-trigger>
                       <div className="flex items-center gap-1">
                         <input
                           type="text"
                           placeholder="例如 4000psi 混凝土 / 竹節鋼筋"
                           value={row.itemName}
-                          onChange={e => handleCellChange(row.id, 'itemName', e.target.value)}
+                          onFocus={e => openDropdown(e.currentTarget, row.id, 'item')}
+                          onClick={e => openDropdown(e.currentTarget, row.id, 'item')}
+                          onChange={e => {
+                            handleCellChange(row.id, 'itemName', e.target.value);
+                            openDropdown(e.currentTarget, row.id, 'item');
+                          }}
                           className="flex-1 px-2 py-1 bg-transparent hover:bg-white focus:bg-white border border-transparent focus:border-indigo-500 rounded text-xs font-bold text-slate-800 outline-none transition-colors"
                         />
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (activeDropdown?.rowId === row.id && activeDropdown?.field === 'item') {
+                              setActiveDropdown(null);
+                            } else {
+                              openDropdown(e.currentTarget, row.id, 'item');
+                            }
+                          }}
+                          className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                          title="下拉查看標準物料清單"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
                         {row.itemName.trim() && (
                           <button
                             type="button"
@@ -1131,6 +1300,240 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* ---------------------------------------------------------------------- */}
+      {/* ⚡ 全局浮動推薦下拉選單 (使用 fixed 徹底脫離表格容器，絕不被第5列或邊界切割) */}
+      {/* ---------------------------------------------------------------------- */}
+      {activeDropdown && (() => {
+        const activeRow = gridRows.find(r => r.id === activeDropdown.rowId);
+        if (!activeRow) return null;
+
+        const { rect, field, rowId } = activeDropdown;
+        const dropdownWidth = Math.max(rect.width, 360);
+        const maxLeft = typeof window !== 'undefined' ? window.innerWidth - dropdownWidth - 16 : 400;
+        const left = Math.max(12, Math.min(rect.left, maxLeft));
+
+        return (
+          <div
+            data-dropdown-container
+            style={{
+              position: 'fixed',
+              top: rect.openUpward ? undefined : rect.bottom + 4,
+              bottom: rect.openUpward ? (window.innerHeight - rect.top + 4) : undefined,
+              left,
+              width: dropdownWidth,
+              zIndex: 9999,
+            }}
+            className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[320px] animate-in fade-in zoom-in-95 duration-100"
+          >
+            {/* 廠商下拉選單 */}
+            {field === 'vendor' && (() => {
+              const query = activeRow.vendorInputName.trim().toLowerCase();
+              const filtered = vendors.filter(v => {
+                if (!query) return true;
+                return (
+                  (v.name && v.name.toLowerCase().includes(query)) ||
+                  (v.bpCode && v.bpCode.toLowerCase().includes(query)) ||
+                  (v.taxId && v.taxId.includes(query)) ||
+                  (v.contactPerson && v.contactPerson.toLowerCase().includes(query))
+                );
+              });
+
+              return (
+                <div className="flex flex-col h-full overflow-hidden">
+                  <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs shrink-0">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5 text-purple-600" />
+                      <span>🏢 合作廠商主檔清冊</span>
+                    </span>
+                    <span className="text-[11px] font-mono font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                      共 {filtered.length} 家
+                    </span>
+                  </div>
+
+                  <div className="overflow-y-auto flex-1 divide-y divide-slate-100 p-1">
+                    {filtered.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400">
+                        查無「{activeRow.vendorInputName}」之合作廠商
+                      </div>
+                    ) : (
+                      filtered.map(v => (
+                        <div
+                          key={v.id}
+                          onClick={() => handleSelectVendor(rowId, v)}
+                          className="px-3 py-2 hover:bg-purple-50/70 rounded-lg cursor-pointer transition-colors group flex items-start justify-between gap-2"
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 group-hover:text-purple-700">
+                              {v.name}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-slate-500 font-mono">
+                              {v.taxId && <span>統編: {v.taxId}</span>}
+                              {v.contactPerson && <span>聯絡人: {v.contactPerson}</span>}
+                              {v.phone && <span>電話: {v.phone}</span>}
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-purple-600 opacity-0 group-hover:opacity-100 font-bold shrink-0 self-center">
+                            點選帶入 ↵
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="p-2 border-t border-slate-200 bg-slate-50 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenQuickCreateVendor(rowId, activeRow.vendorInputName)}
+                      className="w-full py-1.5 px-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>登記「{activeRow.vendorInputName || '新廠商'}」至合作廠商主檔</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 案場下拉選單 */}
+            {field === 'site' && (() => {
+              const query = activeRow.siteInputName.trim().toLowerCase();
+              const filtered = projects.filter(p => {
+                if (!query) return true;
+                return (
+                  (p.name && p.name.toLowerCase().includes(query)) ||
+                  (p.projectCode && p.projectCode.toLowerCase().includes(query)) ||
+                  (p.ownerName && p.ownerName.toLowerCase().includes(query))
+                );
+              });
+
+              return (
+                <div className="flex flex-col h-full overflow-hidden">
+                  <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs shrink-0">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5 text-amber-600" />
+                      <span>🏗️ 進行中工程案場清冊</span>
+                    </span>
+                    <span className="text-[11px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                      共 {filtered.length} 個案場
+                    </span>
+                  </div>
+
+                  <div className="overflow-y-auto flex-1 divide-y divide-slate-100 p-1">
+                    {filtered.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400">
+                        查無「{activeRow.siteInputName}」之案場，可直接點擊下方登記新案場
+                      </div>
+                    ) : (
+                      filtered.map(p => (
+                        <div
+                          key={p.id}
+                          onClick={() => handleSelectProject(rowId, p)}
+                          className="px-3 py-2 hover:bg-amber-50/70 rounded-lg cursor-pointer transition-colors group flex items-start justify-between gap-2"
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 group-hover:text-amber-800 flex items-center gap-1.5">
+                              <span>{p.name}</span>
+                              <span className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200">
+                                {p.projectCode}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-slate-500">
+                              {p.ownerName && <span>業主: {p.ownerName}</span>}
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-amber-700 opacity-0 group-hover:opacity-100 font-bold shrink-0 self-center">
+                            帶入全名 ↵
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="p-2 border-t border-slate-200 bg-slate-50 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenQuickCreateProject(rowId, activeRow.siteInputName)}
+                      className="w-full py-1.5 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>登記「{activeRow.siteInputName || '新案場'}」專案代碼</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 物料品名下拉選單 */}
+            {field === 'item' && (() => {
+              const query = activeRow.itemName.trim().toLowerCase();
+              const filtered = items.filter(it => {
+                if (!query) return true;
+                return (
+                  (it.name && it.name.toLowerCase().includes(query)) ||
+                  (it.itemCode && it.itemCode.toLowerCase().includes(query)) ||
+                  (it.category && it.category.toLowerCase().includes(query))
+                );
+              });
+
+              return (
+                <div className="flex flex-col h-full overflow-hidden">
+                  <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs shrink-0">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Package className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>⚡ 常用標準物料庫</span>
+                    </span>
+                    <span className="text-[11px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                      共 {filtered.length} 項
+                    </span>
+                  </div>
+
+                  <div className="overflow-y-auto flex-1 divide-y divide-slate-100 p-1">
+                    {filtered.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400">
+                        查無標準物料，可直接輸入或登記至品項主庫
+                      </div>
+                    ) : (
+                      filtered.map(it => (
+                        <div
+                          key={it.id}
+                          onClick={() => handleSelectItem(rowId, it)}
+                          className="px-3 py-2 hover:bg-indigo-50/70 rounded-lg cursor-pointer transition-colors group flex items-center justify-between gap-2"
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 group-hover:text-indigo-700">
+                              {it.name}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500 font-mono">
+                              <span>單位: {it.unit || '批'}</span>
+                              {it.unitPrice > 0 && <span>參考單價: ${it.unitPrice}</span>}
+                              {it.category && <span>分類: {it.category}</span>}
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-indigo-600 opacity-0 group-hover:opacity-100 font-bold shrink-0">
+                            帶入 ↵
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="p-2 border-t border-slate-200 bg-slate-50 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenQuickCreateItem(rowId, activeRow.itemName, activeRow.unit, activeRow.unitPrice)}
+                      className="w-full py-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Package className="w-3.5 h-3.5" />
+                      <span>登記「{activeRow.itemName || '新料件'}」至標準物料庫</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        );
+      })()}
 
       {/* ---------------------------------------------------------------------- */}
       {/* ⚡ 彈窗：就地完整建檔 (Quick Create Vendor / Project / Item Modal)       */}
