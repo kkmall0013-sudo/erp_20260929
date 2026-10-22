@@ -289,11 +289,11 @@
 | `email` | 登入或公務聯絡 Email。 |
 | `passwordHash` | 密碼雜湊或加密字串。 |
 | `isPasswordReset` | 是否為管理員重設後之初始預設密碼標記（`0` 或 `1`）。 |
-| `role` | 三層式身分架構：`SUPERADMIN`（唯一最高管理者）、`ADMIN`（系統管理員）、`USER`（業務群組同仁）。 |
-| `canManageUsers` | **【Superadmin 特許帳號管理專人授權】** 是否開放此特定 Admin 進入帳號管理模組，並具備同仁帳號維護與重設他人密碼之專人權限（預設 `0`；未獲授權者選單完全隱藏）。 |
-| `canManageSystemConfigs` | **【Superadmin 特許核心授權】** 是否開放此特定 Admin 帳號修改全域核心參數（預設 `0`）。 |
-| `canManageAdmins` | **【Superadmin 特許同階管理授權】** 是否開放此特定 Admin 帳號新增、編輯、重設密碼與停用/刪除同階 Admin 帳號（預設 `0`）。 |
-| `canManageAllCompanies` | **【Superadmin 特許全集團跨法人管理授權】** 是否開放此特定 Admin 帳號具備跨所有法人管理與存取之權力（預設 `0`；未獲授權之 Admin 僅能存取 `allowedCompanies` 內之法人）。 |
+| `role` | 四層式企業治理身分架構：`SUPERADMIN`（系統最高架構師 / 程式設計者，極致隱身）、`BOSS`（企業最高統裁 / 集團董事長，金身護體）、`ADMIN`（系統管理員 / 各部門主管）、`USER`（業務群組同仁）。 |
+| `canManageUsers` | **【Superadmin 與 BOSS 特許帳號管理專人授權】** 是否開放此特定 Admin 進入帳號管理模組，並具備同仁帳號維護與重設他人密碼之專人權限（預設 `0`；未獲授權者選單完全隱藏）。 |
+| `canManageSystemConfigs` | **【Superadmin 與 BOSS 特許核心授權】** 是否開放此特定 Admin 帳號修改全域核心參數（預設 `0`）。 |
+| `canManageAdmins` | **【Superadmin 與 BOSS 特許同階管理授權】** 是否開放此特定 Admin 帳號新增、編輯、重設密碼與停用/刪除同階 Admin 帳號（預設 `0`）。 |
+| `canManageAllCompanies` | **【Superadmin 與 BOSS 特許全集團跨法人管理授權】** 是否開放此特定 Admin 帳號具備跨所有法人管理與存取之權力（預設 `0`；未獲授權之 Admin 僅能存取 `allowedCompanies` 內之法人）。 |
 | `groupId` | 主要業務權限群組代碼（對應 `user_groups.id`，自動同步為 `groupIds[0]` 供快速索引與向下相容）。 |
 | `groupIds` | **【多重群組主欄位】** 多重業務權限群組矩陣 JSON（例如 `["GRP-ENG","GRP-PROC"]`，採 PBAC 權限聯集計算）。 |
 | `companyGroupAssignments` | **【跨法人業務授權矩陣】** 跨法人獨立分權指派 JSON 陣列（`CompanyGroupAssignment[]`，格式為 `[{"companyId":"COMP-01","groupIds":["GRP-ACC"]},{"companyId":"COMP-02","groupIds":["GRP-PROC"]}]`）。支援依據不同法人公司獨立指派業務模組群組（例如：員工 A 在大巨管財務、在宏達管採購），徹底打破傳統跨公司權限統包限制。 |
@@ -311,24 +311,27 @@
 
 > **規格預留擴充欄位（目前由前端 Session 與群組權限承載，不重複建欄）：** `employeeId`（員工編號，目前與 `id`/`username` 共用）、`tokenVersion`、`maxConcurrentSessions`、`allowedIpRanges`、`dailyExportLimit`（由群組與模組 `canExport` 控管）、`resignedAt`/`reinstatedAt`（由 `stageDeletedAt` 與審計日誌承載）、`delegateToId`/`delegateScope`/`delegateFrom`/`delegateUntil`。
 
-> **三層式權限與特許核心設定規則（憲法補充）：**
-> 1. **Superadmin 金身防護**：全系統僅此 1 位，具備絕對最高權限，不可刪除、不可停用、不可被一般 Admin 修改；欲更換最高管理者必須走「最高權限交接程序」。
-> 2. **Admin 全域參數特許 (`canManageSystemConfigs`)**：一般 Admin 帳號預設無權修改全域系統核心參數（`SYSTEM_CONFIGS`）；但 **Superadmin 可在帳號管理中個別點擊開放特許權限給特定 Admin**。擁有此特許之 Admin 即可協同維護全域參數，兼顧分權與安全。
-> 3. **Admin 帳號管理專人特許 (`canManageUsers`)**：帳號管理非所有 Admin 固有權限，而是**由唯一最高 Superadmin 指定專人 Admin 負責**。未獲指定之 Admin 在左側導航選單中**完全隱藏「帳號管理」入口**，且無權重設他人密碼；他人密碼僅具備此權限之專人能重設。
-> 4. **Admin 同階管理特許 (`canManageAdmins`)**：依階層原則，獲指定管理帳號之專人 Admin 預設只能管理下一階層（User），無法新增、修改、重設密碼或刪除同階（Admin）。唯有進一步經 Superadmin 授權開啟 `canManageAdmins` 之專人 Admin，始具備管理同階 Admin 帳號之特許權力（但依然嚴禁異動或刪除唯一最高 Superadmin）。
-> 5. **同仁自主密碼維護**：所有同仁（包含一般 User）皆可於頂部個人帳號區自主變更個人密碼，變更時需驗證目前原始密碼，並由系統強制輸入兩次新密碼以資確認。
-> 6. **User 業務多重矩陣**：User 身分必須指派至少一個群組，多群組時權限為聯集生效。
-> 7. **Admin 降級 User 自動收回特許**：Admin 帳號被調整/降級為 User 時，後端資料庫層級自動執行原子交易收回並歸零所有進階特許項目（`canManageUsers=0, canManageSystemConfigs=0, canManageAdmins=0`），並自動預指派業務群組（如工務組），確保符合「一般同仁必須至少隸屬一個業務群組」之業務檢核。
-> 8. **置中防呆刪除確認與 10 秒一鍵復原**：刪除同仁帳號採用系統內建置中防呆確認視窗（Centered Modal），徹底排除沙盒環境攔截阻斷問題；刪除後系統提供 10 秒倒數一鍵復原（Undo Restore）Toast，防止誤刪並即時還原同仁完整資料與權限設定。
-> 9. **特許項目預設關閉與非 Superadmin 畫面隱藏**：不論新增或修改帳號，特許項目預設一律為關閉（false／0）。非 Superadmin 操作者之表單中**完全隱藏特許授權區塊**（不可見不可選），且後端強制歸零防竄改，唯有唯一最高 Superadmin 具備檢視並開啟進階特許之專屬權力。
+> **四層企業治理架構與特許核心設定規則（憲法補充）：**
+> 1. **Superadmin 極致隱身防護 (Stealth Mode)**：系統最高架構師（程式設計者）帳號具備極致隱身防護。**除非 Superadmin 本人登入，否則在所有同仁清單、身分切換器選單、總人數統計卡片與 KPI 看板中 100% 完全隱形隱身**（就當沒有這個人）。架構師切換為其他身分時，可點擊頂部版本標籤 (`v2.5.0-PRO`) 輸入驗證碼安全回歸。
+> 2. **企業最高統裁 (BOSS) 金身護體與行政授權下放**：
+>    - **公開透明與金身防禦**：企業最高統裁（集團董事長 `林大巨 董事長`）位於帳號主檔最頂端，標配 `👑 企業最高統裁 (BOSS)` 金色徽章。具備金身防護，一般 Admin 嚴禁編輯、停用、刪除或重設其密碼。
+>    - **自主下放 4 大特許**：BOSS 擁有完整人事特許任命權，可直接在介面中勾選指派或收回 Admin 的 4 大特許（`canManageUsers` 帳號專人、`canManageSystemConfigs` 核心參數、`canManageAdmins` 同階管理、`canManageAllCompanies` 全集團法人）。**當人事異動、主任換人時，BOSS 可自主建立新帳號並下放權限，完全無需尋求程式設計師介入**。
+>    - **無限額審批與全模組穿透**：無限額審核（`Infinity`），跨全集團所有法人，業務功能全開。
+> 3. **Admin 帳號管理專人特許 (`canManageUsers`)**：由 Superadmin 或 BOSS 指定專人 Admin 負責。未獲指定之 Admin 在左側導航選單中**完全隱藏「帳號管理」入口**，且無權重設他人密碼。
+> 4. **Admin 全域參數特許 (`canManageSystemConfigs`)**：由 Superadmin 或 BOSS 開放特許之 Admin 帳號始可協同維護全域系統核心參數。
+> 5. **Admin 同階管理特許 (`canManageAdmins`)**：依階層原則，獲指定管理帳號之專人 Admin 預設只能管理下一階層（User）。唯有經 Superadmin 或 BOSS 授權開啟 `canManageAdmins` 之專人 Admin，始具備管理同階 Admin 帳號之特許權力（但依然嚴禁異動或刪除 BOSS 與 Superadmin）。
+> 6. **同仁自主密碼維護**：所有同仁皆可於頂部個人帳號區自主變更個人密碼，需驗證目前原始密碼並二次確認。
+> 7. **User 業務多重矩陣**：User 身分必須指派至少一個業務群組，多群組時權限為聯集生效。
+> 8. **Admin 降級 User 自動收回特許**：Admin 帳號被調整/降級為 User 時，後端資料庫層級自動執行原子交易收回並歸零所有進階特許項目（`canManageUsers=0, canManageSystemConfigs=0, canManageAdmins=0, canManageAllCompanies=0`），並自動預指派業務群組（如工務組）。
+> 9. **置中防呆刪除確認與 10 秒一鍵復原**：刪除同仁帳號採用系統內建置中防呆確認視窗（Centered Modal），徹底排除沙盒環境攔截阻斷問題；刪除後系統提供 10 秒倒數一鍵復原（Undo Restore）Toast。
 > 10. **階梯式三態刪除與純淨單據血緣保護**：
 >     - **第一階段（待刪除回收站，7日冷卻）**：點選刪除後，同仁自主檔移除並停用登入，移入「待刪除回收站」享有 7 天冷卻保護期。管理員可於冷卻期內隨時一鍵復原，或提前手動二次刪除送往封存區。
->     - **第二階段（Superadmin 深度封存區）**：滿 7 天未復原或經提前二次刪除者，自動移交 Superadmin 深度封存區，一般 Admin 視角徹底隱藏。唯有 Superadmin 擁有「終極救回復原」與輸入安全驗證詞（「確認永久物理清除」）進行資料庫實體不可逆抹除之權限。
+>     - **第二階段（Superadmin 深度封存區）**：滿 7 天未復原或經提前二次刪除者，自動移交 Superadmin 深度封存區，一般 Admin 視角徹底隱藏。唯有 Superadmin 擁有「終極救回復原」與輸入安全驗證詞進行物理抹除之權限。
 >     - **純淨單據血緣原則**：歷史專案、合約、發包、計價與審計日誌中，**一律不添加「[已刪除]」或離職等干擾性標籤**，純淨保留當時經辦人姓名純文字快照，即便帳號物理清除亦永不留白、不破壞外鍵血緣。
-> 11. **Superadmin 看板隱私與高可讀性操作稽核日誌 (Audit Log)**：
->     - **身分卡片隱私控制**：帳號管理看板三大身分卡片（唯一最高管理者、系統管理員組、業務群組同仁）嚴格限縮為僅 Superadmin 登入時可見；一般 Admin 登入時自動隱藏，守護最高管理權限與組織架構隱私。
+> 11. **看板隱私與高可讀性操作稽核日誌 (Audit Log)**：
+>     - **身分卡片隱私控制**：Superadmin 架構師卡片僅 Superadmin 本人可見；其餘身分登入時 Overview 看板僅呈現「企業最高統裁 (BOSS)」、「系統管理員」與「一般業務同仁」三大卡片，Superadmin 100% 隱蔽。
 >     - **全域操作與登入日誌查詢**：Superadmin 專屬擁有「系統操作與登入稽核日誌」獨立檢視分頁。底層 SQLite 資料庫自動記錄所有帳號之登入、身分切換、帳號增刪改查、階梯式刪除與單據過帳歷程。
->     - **純中文無代號與僅記錄修改差異原則**：審計日誌全面採用「純中文、不顯示英文或系統代號（如不顯示 USR-001、COMP-01、GRP-ENG、UPDATE 等代碼，一律轉譯為中文名稱）」之高可讀性格式；且在修改資料時，系統會自動比對修改前後狀態，**僅記錄有實際發生變更的欄位（修改前 ➔ 修改後）**，未變動的欄位一概不冗餘寫入，讓管理階層一眼掌握關鍵異動。
+>     - **純中文無代號與僅記錄修改差異原則**：審計日誌全面採用「純中文、不顯示英文或系統代號」之高可讀性格式；且在修改資料時，系統**僅記錄有實際發生變更的欄位（修改前 ➔ 修改後）**，未變動的欄位一概不冗餘寫入。
 > 12. **禁止停用自身帳號與停權身分防提權保護**：
 >     - **禁止自殺式停權**：無論 Superadmin 或具備帳號維護權限之專人 Admin，系統全面禁止將當前正在登入操作中之自身帳號設為停用（DISABLED）。介面點擊時觸發置頂防呆警示視窗，後端資料庫亦具備不可逾越之操作者身分阻擋檢核。
 >     - **停權狀態不可竄升提權**：當同仁帳號遭其他管理員停權時，前端驗證核心嚴禁靜默降級或回退至唯一最高 Superadmin；該帳號將如實維持停權狀態並全面封鎖所有 12 大模組的操作與審批權限，杜絕藉由停權換取最高管理者特權之資安漏洞。

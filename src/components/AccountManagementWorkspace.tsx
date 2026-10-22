@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { User, Company, AuditLog, ModuleKey, CompanyGroupAssignment } from '../types/erp';
+import { User, UserRole, Company, AuditLog, ModuleKey, CompanyGroupAssignment } from '../types/erp';
 import {
   Users,
   Shield,
@@ -80,12 +80,15 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   } = useAuth();
 
   // 操作者權限狀態 (專人與同階特許)
-  const operatorCanManageUsers = isSuperadmin || Boolean(currentUser?.canManageUsers);
-  const operatorCanManageAdmins = isSuperadmin || Boolean(currentUser?.canManageAdmins);
+  const isOperatorBoss = currentUser?.role === 'BOSS';
+  const operatorCanManageUsers = isSuperadmin || isOperatorBoss || Boolean(currentUser?.canManageUsers);
+  const operatorCanManageAdmins = isSuperadmin || isOperatorBoss || Boolean(currentUser?.canManageAdmins);
+  const operatorCanGrantPrivileges = isSuperadmin || isOperatorBoss;
+  const operatorRole = isSuperadmin ? 'SUPERADMIN' : isOperatorBoss ? 'BOSS' : 'ADMIN';
 
   // 搜尋與篩選狀態
   const [searchTerm, setSearchTerm] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'ALL' | 'SUPERADMIN' | 'ADMIN' | 'USER'>('ALL');
+  const [roleFilter, setRoleFilter] = useState<'ALL' | 'SUPERADMIN' | 'BOSS' | 'ADMIN' | 'USER'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'DISABLED'>('ALL');
   const [privilegeFilter, setPrivilegeFilter] = useState<'ALL' | 'USER_MGR' | 'SYS_CONFIG' | 'PEER_ADMIN' | 'NONE'>('ALL');
 
@@ -195,7 +198,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     fullName: string;
     email: string;
     title: string;
-    role: 'ADMIN' | 'USER';
+    role: UserRole;
     canManageUsers: boolean;
     canManageSystemConfigs: boolean;
     canManageAdmins: boolean;
@@ -289,29 +292,40 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     // 憲法金身防線：Superadmin 永遠不可被任何其他人員操作
     if (target.role === 'SUPERADMIN' && !isSuperadmin) {
       setAlertModal({
-        title: `【憲法金身防護】無法${actionName}最高管理員`,
-        message: '系統唯一最高管理員 (Superadmin) 具備不可撼動之金身保護，嚴禁由一般管理員進行編輯、重設密碼、停用或刪除！',
+        title: `【憲法金身防護】無法${actionName}最高架構師`,
+        message: '系統唯一最高架構師 (Superadmin) 具備不可撼動之金身保護，嚴禁由其他人員進行編輯、重設密碼、停用或刪除！',
         details: '如需更換最高管理員，必須由現任 Superadmin 發起「最高權限交接程序」。',
       });
       return false;
     }
 
-    // 帳號專人防線：未獲 Superadmin 指定帳號管理權限者，禁止維護同仁或重設他人密碼
-    if (!isSuperadmin && !operatorCanManageUsers) {
+    // 👑 企業最高統裁 (集團董事長 BOSS) 金身護體防線：
+    // 僅 Superadmin 或 BOSS 本人可修改 BOSS 資料，其他 Admin 絕對嚴禁操作
+    if (target.role === 'BOSS' && !isSuperadmin && !isOperatorBoss) {
       setAlertModal({
-        title: `【權限不足】無帳號管理專人權限`,
-        message: `他人帳號與密碼只能由 Superadmin 特別指定之帳號管理專人 Admin 進行維護！`,
-        details: `您目前未具備帳號管理專人授權，無權執行「${actionName}」操作。若有管理需要，請洽詢 Superadmin。`,
+        title: `【金身護體防護】無法${actionName}企業最高統裁 (BOSS)`,
+        message: '集團董事長 (BOSS) 為全企業最高統裁決策者，享有不可撼動的金身護體保護，任何系統管理員均無權對其進行編輯、停權、刪除或重設密碼！',
+        details: '集團董事長帳號由董事長本人自主維護，或由系統架構師於底層支援。',
       });
       return false;
     }
 
-    // 階層原則：一般 Admin 只能管理下一階 User，除非經 Superadmin 授權同階管理特許 (canManageAdmins)
-    if (target.role === 'ADMIN' && target.id !== currentUser?.id && !isSuperadmin && !operatorCanManageAdmins) {
+    // 帳號專人防線：未獲指定帳號管理權限者，禁止維護同仁或重設他人密碼
+    if (!isSuperadmin && !isOperatorBoss && !operatorCanManageUsers) {
+      setAlertModal({
+        title: `【權限不足】無帳號管理專人權限`,
+        message: `他人帳號與密碼只能由最高統裁 (BOSS) 或指定之帳號管理專人 Admin 進行維護！`,
+        details: `您目前未具備帳號管理專人授權，無權執行「${actionName}」操作。若有管理需要，請洽詢董事長或 Superadmin。`,
+      });
+      return false;
+    }
+
+    // 階層原則：一般 Admin 只能管理下一階 User，除非經 BOSS 或 Superadmin 授權同階管理特許 (canManageAdmins)
+    if (target.role === 'ADMIN' && target.id !== currentUser?.id && !isSuperadmin && !isOperatorBoss && !operatorCanManageAdmins) {
       setAlertModal({
         title: `【階層原則受限】無法${actionName}其他同階管理員`,
-        message: `您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】！`,
-        details: `依系統階層防護憲法，一般帳號管理專人 Admin 預設只能管理下一階層（一般同仁 User）。除非由唯一最高 Superadmin 為您開啟「同階管理特許」，否則無法${actionName}其他同階 Admin 帳號。`,
+        message: `您尚未取得授予之【同階管理特許 (canManageAdmins)】！`,
+        details: `依系統階層防護憲法，一般帳號管理專人 Admin 預設只能管理下一階層（一般同仁 User）。除非由企業最高統裁 (BOSS) 或 Superadmin 為您開啟「同階管理特許」，否則無法${actionName}其他同階 Admin 帳號。`,
       });
       return false;
     }
@@ -419,10 +433,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           email: formData.email.trim(),
           title: formData.title.trim(),
           role: formData.role,
-          canManageUsers: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageUsers) : false,
-          canManageSystemConfigs: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageSystemConfigs) : false,
-          canManageAdmins: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageAdmins) : false,
-          canManageAllCompanies: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageAllCompanies) : false,
+          canManageUsers: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? Boolean(formData.canManageUsers) : false,
+          canManageSystemConfigs: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? Boolean(formData.canManageSystemConfigs) : false,
+          canManageAdmins: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? Boolean(formData.canManageAdmins) : false,
+          canManageAllCompanies: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? Boolean(formData.canManageAllCompanies) : false,
           groupIds: formData.role === 'USER' ? (formData.groupIds.length > 0 ? formData.groupIds : ['GRP-ENG']) : [],
           companyGroupAssignments: formData.role === 'USER' && formData.permissionMode === 'MATRIX' ? formData.companyGroupAssignments : [],
           allowedCompanies: formData.allowedCompanies,
@@ -470,7 +484,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       });
     }
 
-    if (editingUser.role !== 'SUPERADMIN' && formData.role !== editingUser.role) {
+    if (editingUser.role !== 'SUPERADMIN' && editingUser.role !== 'BOSS' && formData.role !== editingUser.role) {
       diffs.push({
         fieldName: '身分層級角色',
         oldValue: editingUser.role === 'ADMIN' ? '系統管理員 (ADMIN)' : '業務同仁 (USER)',
@@ -479,7 +493,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
       // 當從 ADMIN 降級為 USER 時，清楚標示所有特許歸零
       if (editingUser.role === 'ADMIN' && formData.role === 'USER') {
-        if (editingUser.canManageUsers || editingUser.canManageSystemConfigs || editingUser.canManageAdmins) {
+        if (editingUser.canManageUsers || editingUser.canManageSystemConfigs || editingUser.canManageAdmins || editingUser.canManageAllCompanies) {
           diffs.push({
             fieldName: '管理員進階特許權限',
             oldValue: '原已具備特定管理特許',
@@ -489,8 +503,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       }
     }
 
-    // 只有 Superadmin 且角色維持 ADMIN 時，才進行特許異動比對
-    if (isSuperadmin && formData.role === 'ADMIN') {
+    // 當具備特許下放權限 (Superadmin 或 BOSS) 且角色維持 ADMIN 時，進行特許異動比對
+    if (operatorCanGrantPrivileges && formData.role === 'ADMIN') {
       if (Boolean(formData.canManageUsers) !== Boolean(editingUser.canManageUsers)) {
         diffs.push({
           fieldName: '帳號管理專人特許 (canManageUsers)',
@@ -586,17 +600,17 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       ? (formData.groupIds.length > 0 ? formData.groupIds : ['GRP-ENG'])
       : [];
 
-    // 有變更：開啟二次確認視窗，列出明確異動對照表 (非 Superadmin 不帶特許欄位)
+    // 有變更：開啟二次確認視窗，列出明確異動對照表 (非授權者不帶特許欄位)
     const payload = {
       id: editingUser.id,
       fullName: formData.fullName.trim(),
       email: formData.email.trim(),
       title: formData.title.trim(),
-      role: editingUser.role === 'SUPERADMIN' ? undefined : formData.role,
-      canManageUsers: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageUsers : undefined,
-      canManageSystemConfigs: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageSystemConfigs : undefined,
-      canManageAdmins: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageAdmins : undefined,
-      canManageAllCompanies: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageAllCompanies : undefined,
+      role: (editingUser.role === 'SUPERADMIN' || editingUser.role === 'BOSS') ? undefined : formData.role,
+      canManageUsers: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? formData.canManageUsers : undefined,
+      canManageSystemConfigs: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? formData.canManageSystemConfigs : undefined,
+      canManageAdmins: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? formData.canManageAdmins : undefined,
+      canManageAllCompanies: operatorCanGrantPrivileges && formData.role === 'ADMIN' ? formData.canManageAllCompanies : undefined,
       groupIds: finalGroupIds,
       companyGroupAssignments: formData.role === 'USER' && formData.permissionMode === 'MATRIX' ? formData.companyGroupAssignments : [],
       allowedCompanies: formData.allowedCompanies,
@@ -614,7 +628,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   const handleExecuteConfirmedUpdate = () => {
     if (!diffConfirmInfo) return;
 
-    const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
+    const operatorRole = isSuperadmin ? 'SUPERADMIN' : isOperatorBoss ? 'BOSS' : 'ADMIN';
     const operatorName = currentUser?.fullName || '系統管理員';
 
     try {
@@ -633,12 +647,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     }
   };
 
-  // 快速切換特定 Admin 之帳號管理專人特許 (Superadmin 專用)
+  // 快速切換特定 Admin 之帳號管理專人特許 (Superadmin 與 BOSS 均可操作)
   const handleToggleUserManagerPrivilege = (user: User) => {
-    if (!isSuperadmin) {
+    if (!operatorCanGrantPrivileges) {
       setAlertModal({
-        title: '【憲法金身防護】權限不足',
-        message: '唯獨系統最高 Superadmin 才有權限指定或撤銷【帳號管理專人特許】！',
+        title: '【權限不足】',
+        message: '唯獨系統 Superadmin 或最高統裁 (BOSS) 才有權限指定或撤銷【帳號管理專人特許】！',
       });
       return;
     }
@@ -646,7 +660,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
     const newPrivilege = !user.canManageUsers;
     try {
-      toggleAdminUserManagerPrivilege(user.id, newPrivilege, 'SUPERADMIN', currentUser?.fullName || 'Superadmin');
+      toggleAdminUserManagerPrivilege(user.id, newPrivilege, operatorRole, currentUser?.fullName || '企業最高統裁 (BOSS)');
       showToast(newPrivilege
         ? `🔑 已特許指定【${user.fullName}】為帳號管理專人（開放帳號模組與重設他人密碼）！`
         : `🔒 已收回【${user.fullName}】之帳號管理專人權限（選單完全隱藏）！`
@@ -658,12 +672,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     }
   };
 
-  // 快速切換特定 Admin 之全域參數特許 (Superadmin 專用)
+  // 快速切換特定 Admin 之全域參數特許 (Superadmin 與 BOSS 均可操作)
   const handleToggleSysConfigPrivilege = (user: User) => {
-    if (!isSuperadmin) {
+    if (!operatorCanGrantPrivileges) {
       setAlertModal({
-        title: '【憲法金身防護】權限不足',
-        message: '唯獨系統最高 Superadmin 才有權限授予或撤回【全域核心參數特許】！',
+        title: '【權限不足】',
+        message: '唯獨系統 Superadmin 或最高統裁 (BOSS) 才有權限授予或撤回【全域核心參數特許】！',
       });
       return;
     }
@@ -671,7 +685,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
     const newPrivilege = !user.canManageSystemConfigs;
     try {
-      toggleAdminConfigPrivilege(user.id, newPrivilege, 'SUPERADMIN', currentUser?.fullName || 'Superadmin');
+      toggleAdminConfigPrivilege(user.id, newPrivilege, operatorRole, currentUser?.fullName || '企業最高統裁 (BOSS)');
       showToast(newPrivilege
         ? `🛡️ 已特許開放【${user.fullName}】修改全域核心參數！`
         : `🔒 已收回【${user.fullName}】之全域核心參數特許權限！`
@@ -683,12 +697,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     }
   };
 
-  // 快速切換特定 Admin 之同階管理特許 (Superadmin 專用)
+  // 快速切換特定 Admin 之同階管理特許 (Superadmin 與 BOSS 均可操作)
   const handleTogglePeerAdminPrivilege = (user: User) => {
-    if (!isSuperadmin) {
+    if (!operatorCanGrantPrivileges) {
       setAlertModal({
-        title: '【憲法金身防護】權限不足',
-        message: '唯獨系統最高 Superadmin 才有權限授予或撤回【同階 Admin 管理特許】！',
+        title: '【權限不足】',
+        message: '唯獨系統 Superadmin 或最高統裁 (BOSS) 才有權限授予或撤回【同階 Admin 管理特許】！',
       });
       return;
     }
@@ -696,7 +710,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
     const newPrivilege = !user.canManageAdmins;
     try {
-      toggleAdminPeerPrivilege(user.id, newPrivilege, 'SUPERADMIN', currentUser?.fullName || 'Superadmin');
+      toggleAdminPeerPrivilege(user.id, newPrivilege, operatorRole, currentUser?.fullName || '企業最高統裁 (BOSS)');
       showToast(newPrivilege
         ? `👑 已特許授權【${user.fullName}】可管理同階 Admin 帳號！`
         : `🔒 已收回【${user.fullName}】之同階 Admin 管理特許！`
@@ -721,12 +735,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
     if (!checkCanManageTarget(user, user.status === 'ACTIVE' ? '停用' : '啟用')) return;
 
-    const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
+    const currentOpRole = isSuperadmin ? 'SUPERADMIN' : isOperatorBoss ? 'BOSS' : 'ADMIN';
     const operatorName = currentUser?.fullName || '管理員';
     const nextStatus = user.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
 
     try {
-      toggleUserStatus(user.id, nextStatus, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins, currentUser?.id);
+      toggleUserStatus(user.id, nextStatus, currentOpRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins, currentUser?.id);
       showToast(nextStatus === 'ACTIVE'
         ? `✅ 已重新啟用同仁【${user.fullName}】帳號！`
         : `⏸️ 已停用同仁【${user.fullName}】帳號！`
@@ -753,11 +767,11 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       return;
     }
 
-    const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
+    const currentOpRole = isSuperadmin ? 'SUPERADMIN' : isOperatorBoss ? 'BOSS' : 'ADMIN';
     const operatorName = currentUser?.fullName || '管理員';
 
     try {
-      resetUserPassword(resetModalUser.id, newPasswordInput.trim(), operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
+      resetUserPassword(resetModalUser.id, newPasswordInput.trim(), currentOpRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
       showToast(`🔑 已成功重設【${resetModalUser.fullName}】密碼為：${newPasswordInput.trim()}！`);
       setResetModalUser(null);
       reloadAuth();
@@ -788,11 +802,11 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     if (!deleteConfirmUser) return;
 
     const userToDelete = deleteConfirmUser;
-    const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
+    const currentOpRole = isSuperadmin ? 'SUPERADMIN' : isOperatorBoss ? 'BOSS' : 'ADMIN';
     const operatorName = currentUser?.fullName || '管理員';
 
     try {
-      markUserPendingDelete(userToDelete.id, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
+      markUserPendingDelete(userToDelete.id, currentOpRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
       setDeleteConfirmUser(null);
 
       // 啟動 10 秒倒數一鍵復原機制
@@ -828,12 +842,11 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   const handleAdvanceArchive = () => {
     if (!advanceArchiveConfirmUser) return;
     const userToAdvance = advanceArchiveConfirmUser;
-    const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
+    const currentOpRole = isSuperadmin ? 'SUPERADMIN' : isOperatorBoss ? 'BOSS' : 'ADMIN';
     const operatorName = currentUser?.fullName || '管理員';
 
     try {
-      advanceUserToArchive(userToAdvance.id, operatorRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
-      setAdvanceArchiveConfirmUser(null);
+      advanceUserToArchive(userToAdvance.id, currentOpRole, operatorName, operatorCanManageUsers, operatorCanManageAdmins);
       showToast(`📦 同仁【${userToAdvance.fullName}】已提前移交 Superadmin 深度封存區！一般管理員視角已隱藏。`);
       reloadAuth();
       onDataChanged();
@@ -943,6 +956,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
   // 資料統計 (以在職主檔同仁為基準)
   const superadminUser = activeUsers.find(u => u.role === 'SUPERADMIN');
+  const bossUser = activeUsers.find(u => u.role === 'BOSS');
   const adminUsers = activeUsers.filter(u => u.role === 'ADMIN');
   const userManagerAdmins = adminUsers.filter(u => u.canManageUsers);
   const configAdmins = adminUsers.filter(u => u.canManageSystemConfigs);
@@ -1299,127 +1313,158 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       {activeTab === 'ACTIVE' && (
         <>
           {/* ======================================================== */}
-          {/* 1. 三層式帳號狀態看板 (Overview KPI Cards - 僅 Superadmin 可見) */}
+          {/* 1. 四層式帳號狀態看板 (Overview KPI Cards)                 */}
+          {/*    若非 Superadmin 登入，Superadmin 卡片 100% 隱蔽          */}
           {/* ======================================================== */}
-          {isSuperadmin && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* 卡片 1: Superadmin 最高管理員 */}
-              <div className="bg-white rounded-xl border border-amber-200 p-4.5 shadow-2xs relative overflow-hidden flex flex-col justify-between">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center font-bold shadow-2xs">
-                <Crown className="w-5 h-5 text-amber-600" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-800">唯一最高管理者</span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
-                    SUPERADMIN (1 位)
-                  </span>
-                </div>
-                <div className="text-sm font-extrabold text-slate-900 mt-0.5">
-                  {superadminUser ? superadminUser.fullName : '尚未指定'}
-                </div>
-              </div>
-            </div>
-
+          <div className={`grid grid-cols-1 ${isSuperadmin ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-3.5`}>
+            {/* 卡片 1: Superadmin 最高架構師 (僅 Superadmin 本人可見) */}
             {isSuperadmin && (
-              <button
-                onClick={() => {
-                  setTransferTargetId('');
-                  setTransferConfirmText('');
-                  setIsTransferModalOpen(true);
-                }}
-                className="px-2.5 py-1 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 transition-colors flex items-center gap-1 shadow-2xs"
-                title="現任 Superadmin 發起最高權限安全讓渡"
-              >
-                <ArrowRightLeft className="w-3.5 h-3.5" />
-                <span>權限交接</span>
-              </button>
+              <div className="bg-white rounded-xl border border-amber-300 p-4 shadow-2xs relative overflow-hidden flex flex-col justify-between">
+                <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-lg bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center font-bold shadow-2xs">
+                      <Crown className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-800">系統架構師</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-200">
+                          SUPERADMIN
+                        </span>
+                      </div>
+                      <div className="text-xs font-extrabold text-slate-900 mt-0.5 truncate max-w-[120px]">
+                        {superadminUser ? superadminUser.fullName : '尚未指定'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setTransferTargetId('');
+                      setTransferConfirmText('');
+                      setIsTransferModalOpen(true);
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 transition-colors flex items-center gap-1 shadow-2xs cursor-pointer"
+                    title="現任 Superadmin 發起最高權限安全讓渡"
+                  >
+                    <ArrowRightLeft className="w-3 h-3" />
+                    <span>交接</span>
+                  </button>
+                </div>
+
+                <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500">
+                  <span>隱密底層維護</span>
+                  <span className="font-mono text-amber-700 font-semibold">底層架構</span>
+                </div>
+              </div>
             )}
-          </div>
 
-          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>憲法金身防護：不可停用、不可刪除</span>
-            <span className="font-mono text-amber-700 font-semibold">擁有全域授權權力</span>
-          </div>
-        </div>
+            {/* 卡片 2: 👑 企業最高統裁 (集團董事長 BOSS) */}
+            <div className="bg-white rounded-xl border-2 border-amber-300 p-4 shadow-2xs relative overflow-hidden flex flex-col justify-between bg-gradient-to-br from-amber-50/40 to-yellow-50/20">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600" />
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-amber-500 to-yellow-500 text-white flex items-center justify-center font-bold shadow-xs">
+                    <Crown className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-900">企業最高統裁</span>
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-200/80 text-amber-950 border border-amber-300">
+                        👑 BOSS
+                      </span>
+                    </div>
+                    <div className="text-xs font-black text-amber-950 mt-0.5">
+                      {bossUser ? bossUser.fullName : '林大巨 董事長'}
+                    </div>
+                  </div>
+                </div>
 
-        {/* 卡片 2: Admin 系統管理員組 */}
-        <div className="bg-white rounded-xl border border-indigo-200 p-4.5 shadow-2xs relative overflow-hidden flex flex-col justify-between">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-indigo-600" />
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center font-bold shadow-2xs">
-                <Shield className="w-5 h-5 text-indigo-600" />
+                <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-1.5 py-0.5 rounded border border-amber-300">
+                  金身護體
+                </span>
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-800">系統管理員組</span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
-                    ADMIN ({adminUsers.length} 位)
-                  </span>
+
+              <div className="mt-2.5 pt-2 border-t border-amber-200/50 flex items-center justify-between text-[10px] text-slate-600">
+                <span>最高決策 · 不可停權/刪除</span>
+                <span className="font-bold text-amber-800">全模組穿透 · 無限額</span>
+              </div>
+            </div>
+
+            {/* 卡片 3: Admin 系統管理員組 */}
+            <div className="bg-white rounded-xl border border-indigo-200 p-4 shadow-2xs relative overflow-hidden flex flex-col justify-between">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-indigo-600" />
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center font-bold shadow-2xs">
+                    <Shield className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-800">系統管理員組</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                        ADMIN ({adminUsers.length} 位)
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-medium text-slate-600 mt-1 flex flex-wrap gap-1">
+                      <span className="bg-amber-50 text-amber-700 px-1 py-0.2 rounded border border-amber-200 text-[9px]">
+                        帳號專人: {userManagerAdmins.length}
+                      </span>
+                      <span className="bg-emerald-50 text-emerald-700 px-1 py-0.2 rounded border border-emerald-200 text-[9px]">
+                        核心特許: {configAdmins.length}
+                      </span>
+                      <span className="bg-purple-50 text-purple-700 px-1 py-0.2 rounded border border-purple-200 text-[9px]">
+                        同階特許: {peerAdmins.length}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-xs font-medium text-slate-600 mt-1 flex flex-wrap gap-1.5">
-                  <span className="bg-amber-50 text-amber-700 px-1.5 py-0.2 rounded border border-amber-200">
-                    帳號專人: {userManagerAdmins.length} 位
-                  </span>
-                  <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200">
-                    全域核心特許: {configAdmins.length} 位
-                  </span>
-                  <span className="bg-purple-50 text-purple-700 px-1.5 py-0.2 rounded border border-purple-200">
-                    同階管理特許: {peerAdmins.length} 位
-                  </span>
+              </div>
+
+              <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500">
+                <span>階層原則：預設管 User</span>
+                <span className="text-indigo-600 font-medium">特許 Admin 可管同階</span>
+              </div>
+            </div>
+
+            {/* 卡片 4: User 業務群組同仁 */}
+            <div className="bg-white rounded-xl border border-emerald-200 p-4 shadow-2xs relative overflow-hidden flex flex-col justify-between">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center font-bold shadow-2xs">
+                    <Users className="w-5 h-5 text-emerald-600" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-800">業務群組同仁</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        USER ({regularUsers.length} 位)
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1 font-medium flex flex-wrap gap-1">
+                      <span className="bg-slate-100 px-1 py-0.2 rounded text-[9px]">工務:{allUsers.filter(u => u.groupIds?.includes('GRP-ENG') || u.groupId === 'GRP-ENG').length}</span>
+                      <span className="bg-slate-100 px-1 py-0.2 rounded text-[9px]">財務:{allUsers.filter(u => u.groupIds?.includes('GRP-ACC') || u.groupId === 'GRP-ACC').length}</span>
+                      <span className="bg-slate-100 px-1 py-0.2 rounded text-[9px]">採購:{allUsers.filter(u => u.groupIds?.includes('GRP-PROC') || u.groupId === 'GRP-PROC').length}</span>
+                      <span className="bg-slate-100 px-1 py-0.2 rounded text-[9px]">業務:{allUsers.filter(u => u.groupIds?.includes('GRP-SALES') || u.groupId === 'GRP-SALES').length}</span>
+                    </div>
+                  </div>
                 </div>
+              </div>
+
+              <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500">
+                <span>PBAC 矩陣授權</span>
+                <button
+                  onClick={() => setIsMatrixModalOpen(true)}
+                  className="text-emerald-700 font-semibold hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  <span>12大模組矩陣</span>
+                  <FileSpreadsheet className="w-3 h-3" />
+                </button>
               </div>
             </div>
           </div>
-
-          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>階層原則：預設僅能管理下一階 User</span>
-            <span className="text-indigo-600 font-medium">特許 Admin 可管同階</span>
-          </div>
-        </div>
-
-        {/* 卡片 3: User 業務群組同仁 */}
-        <div className="bg-white rounded-xl border border-emerald-200 p-4.5 shadow-2xs relative overflow-hidden flex flex-col justify-between">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center font-bold shadow-2xs">
-                <Users className="w-5 h-5 text-emerald-600" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-800">業務群組同仁</span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    USER ({regularUsers.length} 位)
-                  </span>
-                </div>
-                <div className="text-xs text-slate-600 mt-1 font-medium flex flex-wrap gap-1">
-                  <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">工務: {allUsers.filter(u => u.groupIds?.includes('GRP-ENG') || u.groupId === 'GRP-ENG').length}</span>
-                  <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">財務: {allUsers.filter(u => u.groupIds?.includes('GRP-ACC') || u.groupId === 'GRP-ACC').length}</span>
-                  <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">採購: {allUsers.filter(u => u.groupIds?.includes('GRP-PROC') || u.groupId === 'GRP-PROC').length}</span>
-                  <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">業務: {allUsers.filter(u => u.groupIds?.includes('GRP-SALES') || u.groupId === 'GRP-SALES').length}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>依所屬業務群組 PBAC 矩陣授權</span>
-            <button
-              onClick={() => setIsMatrixModalOpen(true)}
-              className="text-emerald-700 font-semibold hover:underline flex items-center gap-0.5"
-            >
-              <span>查看 12 大模組矩陣</span>
-              <FileSpreadsheet className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
 
       {/* ======================================================== */}
       {/* 2. 搜尋、篩選與快速工具列                                  */}
@@ -1442,7 +1487,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           <div className="flex items-center gap-2 self-end lg:self-auto">
             <button
               onClick={() => setIsMatrixModalOpen(true)}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-slate-600" />
               <span>群組權限矩陣</span>
@@ -1450,7 +1495,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
             <button
               onClick={handleOpenCreate}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 transition-colors shadow-2xs"
+              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>新增同仁帳號</span>
@@ -1464,17 +1509,20 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
             <Filter className="w-3 h-3" />
             身分篩選：
           </span>
-          {(['ALL', 'SUPERADMIN', 'ADMIN', 'USER'] as const).map(role => (
+          {(isSuperadmin
+            ? (['ALL', 'SUPERADMIN', 'BOSS', 'ADMIN', 'USER'] as const)
+            : (['ALL', 'BOSS', 'ADMIN', 'USER'] as const)
+          ).map(role => (
             <button
               key={role}
-              onClick={() => setRoleFilter(role)}
-              className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+              onClick={() => setRoleFilter(role as any)}
+              className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
                 roleFilter === role
                   ? 'bg-indigo-600 text-white shadow-2xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {role === 'ALL' ? '全部身分' : role}
+              {role === 'ALL' ? '全部身分' : role === 'SUPERADMIN' ? '架構師 (SUPERADMIN)' : role === 'BOSS' ? '👑 BOSS (董事長)' : role}
             </button>
           ))}
 
@@ -1560,13 +1608,14 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                 filteredUsers.map((user) => {
                   const isCurrent = user.id === currentUser?.id;
                   const isUserSuperadmin = user.role === 'SUPERADMIN';
+                  const isUserBoss = user.role === 'BOSS';
                   const isUserAdmin = user.role === 'ADMIN';
 
                   return (
                     <tr
                       key={user.id}
                       className={`hover:bg-slate-50/80 transition-colors ${
-                        isCurrent ? 'bg-indigo-50/30 font-medium' : ''
+                        isCurrent ? 'bg-indigo-50/30 font-medium' : isUserBoss ? 'bg-amber-50/20' : ''
                       }`}
                     >
                       {/* 帳號與姓名 */}
@@ -1576,16 +1625,23 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                             className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
                               isUserSuperadmin
                                 ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-300'
+                                : isUserBoss
+                                ? 'bg-gradient-to-br from-amber-400 via-yellow-500 to-amber-600 text-white ring-2 ring-yellow-400 shadow-xs'
                                 : isUserAdmin
                                 ? 'bg-indigo-100 text-indigo-800 ring-1 ring-indigo-300'
                                 : 'bg-slate-100 text-slate-700'
                             }`}
                           >
-                            {user.fullName ? user.fullName.slice(0, 1) : '帳'}
+                            {isUserBoss ? '👑' : (user.fullName ? user.fullName.slice(0, 1) : '帳')}
                           </div>
                           <div>
                             <div className="font-bold text-slate-800 flex items-center gap-1.5">
                               <span>{user.fullName}</span>
+                              {isUserBoss && (
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-gradient-to-r from-amber-500 to-yellow-600 text-white font-bold shadow-2xs">
+                                  集團最高統裁
+                                </span>
+                              )}
                               {isCurrent && (
                                 <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 font-normal">
                                   目前登入者
@@ -1611,6 +1667,11 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                             <Crown className="w-3 h-3 text-amber-600" />
                             <span>SUPERADMIN</span>
                           </span>
+                        ) : isUserBoss ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 text-white border border-amber-600 shadow-2xs">
+                            <Crown className="w-3 h-3 text-yellow-100 fill-yellow-200" />
+                            <span>👑 企業最高統裁 (BOSS)</span>
+                          </span>
                         ) : isUserAdmin ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-300">
                             <Shield className="w-3 h-3 text-indigo-600" />
@@ -1624,20 +1685,25 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                         )}
                       </td>
 
-                      {/* 特許授權項目 (帳號專人 + 全域核心參數 + 同階管理) */}
+                      {/* 特許授權項目 (帳號專人 + 全域核心參數 + 同階管理 + 全集團法人) */}
                       <td className="py-2.5 px-3 text-center">
                         {isUserSuperadmin ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                             <ShieldCheck className="w-3 h-3 text-amber-600" />
                             <span>全域最高權杖</span>
                           </span>
+                        ) : isUserBoss ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-gradient-to-r from-amber-100 to-yellow-100 px-2 py-0.5 rounded border border-amber-300 shadow-2xs">
+                            <Crown className="w-3 h-3 text-amber-600" />
+                            <span>最高統裁 · 全模組無上限</span>
+                          </span>
                         ) : isUserAdmin ? (
                           <div className="flex flex-col items-center gap-1">
                             {/* 帳號管理專人特許按鈕/標籤 */}
-                            {isSuperadmin ? (
+                            {operatorCanGrantPrivileges ? (
                               <button
                                 onClick={() => handleToggleUserManagerPrivilege(user)}
-                                title="Superadmin 點選指定/收回帳號管理專人權限 (指定後左側選單可見帳號模組)"
+                                title="點選指定/收回帳號管理專人權限 (指定後左側選單可見帳號模組)"
                                 className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded transition-all border cursor-pointer ${
                                   user.canManageUsers
                                     ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200'
@@ -1667,10 +1733,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                             )}
 
                             {/* 全域參數特許按鈕/標籤 */}
-                            {isSuperadmin ? (
+                            {operatorCanGrantPrivileges ? (
                               <button
                                 onClick={() => handleToggleSysConfigPrivilege(user)}
-                                title="Superadmin 點選切換全域核心參數特許"
+                                title="點選切換全域核心參數特許"
                                 className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded transition-all border cursor-pointer ${
                                   user.canManageSystemConfigs
                                     ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
@@ -1700,10 +1766,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                             )}
 
                             {/* 同階管理特許按鈕/標籤 */}
-                            {isSuperadmin ? (
+                            {operatorCanGrantPrivileges ? (
                               <button
                                 onClick={() => handleTogglePeerAdminPrivilege(user)}
-                                title="Superadmin 點選切換同階 Admin 管理特許"
+                                title="點選切換同階 Admin 管理特許"
                                 className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded transition-all border cursor-pointer ${
                                   user.canManageAdmins
                                     ? 'bg-purple-100 text-purple-800 border-purple-300 hover:bg-purple-200'
@@ -1745,7 +1811,11 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
                       {/* 所屬業務群組 */}
                       <td className="py-2.5 px-3">
-                        {user.role === 'USER' ? (
+                        {user.role === 'BOSS' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded shadow-2xs">
+                            👑 全模組穿透 · 無限額審批
+                          </span>
+                        ) : user.role === 'USER' ? (
                           user.companyGroupAssignments && user.companyGroupAssignments.length > 0 ? (
                             <div className="space-y-1">
                               <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200">
@@ -1807,17 +1877,27 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       <td className="py-2.5 px-3 text-center">
                         <button
                           onClick={() => handleToggleStatus(user)}
-                          title={user.id === currentUser?.id ? '當前登入之帳號，系統禁止將自己停用' : '點選切換啟用/停用'}
+                          disabled={(isUserBoss && !isSuperadmin) || user.id === currentUser?.id}
+                          title={
+                            isUserBoss && !isSuperadmin
+                              ? '【金身護體】企業最高統裁 (BOSS) 具備金身防護，一般管理員嚴禁停用'
+                              : user.id === currentUser?.id
+                              ? '當前登入之帳號，系統禁止將自己停用'
+                              : '點選切換啟用/停用'
+                          }
                           className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded transition-colors ${
                             user.status === 'ACTIVE'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
                               : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
-                          } ${user.id === currentUser?.id ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}
+                          } ${(isUserBoss && !isSuperadmin) || user.id === currentUser?.id ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}
                         >
                           <span className={`w-1.5 h-1.5 rounded-full ${user.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                           <span>{user.status === 'ACTIVE' ? '啟用中' : '已停用'}</span>
                           {user.id === currentUser?.id && (
                             <span className="text-[9px] text-slate-400 font-normal ml-0.5">(本人)</span>
+                          )}
+                          {isUserBoss && (
+                            <span className="text-[9px] text-amber-600 font-bold ml-0.5">👑金身</span>
                           )}
                         </button>
                       </td>
@@ -1857,17 +1937,19 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                             <Edit className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* 重設密碼 */}
-                          <button
-                            onClick={() => handleOpenResetPassword(user)}
-                            title="重設密碼"
-                            className="p-1 rounded text-slate-600 hover:text-amber-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" />
-                          </button>
+                          {/* 重設密碼 (BOSS 金身防護，一般管理員無權重設) */}
+                          {(!isUserBoss || isSuperadmin || isCurrent) && (
+                            <button
+                              onClick={() => handleOpenResetPassword(user)}
+                              title="重設密碼"
+                              className="p-1 rounded text-slate-600 hover:text-amber-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                            >
+                              <KeyRound className="w-3.5 h-3.5" />
+                            </button>
+                          )}
 
-                          {/* 刪除 (Superadmin 免受刪除) */}
-                          {!isUserSuperadmin && (
+                          {/* 刪除 (Superadmin 與 BOSS 金身防護，永久免受刪除) */}
+                          {!isUserSuperadmin && !isUserBoss && (
                             <button
                               onClick={() => handleDeleteUser(user)}
                               title="刪除帳號"
@@ -2508,17 +2590,17 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
 
                     <label
                       className={`p-3 rounded-lg border flex items-center gap-2 transition-all ${
-                        !isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN'
+                        !isSuperadmin && !isOperatorBoss && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN'
                           ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400'
                           : formData.role === 'ADMIN'
                           ? 'bg-indigo-50 border-indigo-400 text-indigo-900 font-bold cursor-pointer'
                           : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 cursor-pointer'
                       }`}
                       onClick={() => {
-                        if (!isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN') {
+                        if (!isSuperadmin && !isOperatorBoss && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN') {
                           setAlertModal({
                             title: '【階層原則受限】無法指派同階管理員角色',
-                            message: '您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】，依規定只能建立或指派下一階層 (一般業務同仁 User)！',
+                            message: '您尚未取得授予之【同階管理特許 (canManageAdmins)】，依規定只能建立或指派下一階層 (一般業務同仁 User)！',
                           });
                         }
                       }}
@@ -2527,10 +2609,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                         type="radio"
                         name="role"
                         value="ADMIN"
-                        disabled={!isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN'}
+                        disabled={!isSuperadmin && !isOperatorBoss && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN'}
                         checked={formData.role === 'ADMIN'}
                         onChange={() => {
-                          if (isSuperadmin || operatorCanManageAdmins || editingUser?.role === 'ADMIN') {
+                          if (isSuperadmin || isOperatorBoss || operatorCanManageAdmins || editingUser?.role === 'ADMIN') {
                             setFormData({ ...formData, role: 'ADMIN' });
                           }
                         }}
@@ -2540,10 +2622,10 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       <div>
                         <div className="flex items-center gap-1">
                           <span>系統管理員 (ADMIN)</span>
-                          {!isSuperadmin && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN' && <Lock className="w-3 h-3 text-slate-400" />}
+                          {!isSuperadmin && !isOperatorBoss && !operatorCanManageAdmins && editingUser?.role !== 'ADMIN' && <Lock className="w-3 h-3 text-slate-400" />}
                         </div>
                         <div className="text-[10px] font-normal text-slate-500">
-                          {isSuperadmin || operatorCanManageAdmins ? '全系統檢視與授權管理' : '需 Superadmin 授予同階管理特許'}
+                          {isSuperadmin || isOperatorBoss || operatorCanManageAdmins ? '全系統檢視與授權管理' : '需取得同階管理特許'}
                         </div>
                       </div>
                     </label>
@@ -2551,12 +2633,12 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                 )}
               </div>
 
-              {/* Superadmin 專屬特許授權區 (僅限 Superadmin 呈現；非 Superadmin 人員畫面完全隱藏特許區塊) */}
-              {isSuperadmin && formData.role === 'ADMIN' && (
+              {/* 特許授權區 (僅限 Superadmin 或 BOSS 呈現；其餘人員畫面完全隱藏特許區塊) */}
+              {operatorCanGrantPrivileges && formData.role === 'ADMIN' && (
                 <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg space-y-3">
                   <div className="font-bold text-slate-800 flex items-center gap-1.5 border-b border-amber-200/60 pb-1.5">
                     <ShieldCheck className="w-4 h-4 text-amber-600" />
-                    <span>Superadmin 管理員進階特許授權</span>
+                    <span>{isOperatorBoss ? '👑 企業最高統裁 (BOSS) 行政授權下放' : 'Superadmin 管理員進階特許授權'}</span>
                   </div>
 
                   {/* 特許 0: 帳號管理專人 */}
@@ -2566,23 +2648,17 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                         <span>1. 帳號管理專人授權 (canManageUsers)</span>
                         <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-semibold">專人管理</span>
                       </div>
-                      <div className="text-[10px] text-slate-500">由 Superadmin 指定專人；左側選單可見帳號模組並可維護同仁與重設他人密碼（未獲指定者選單完全隱藏）</div>
+                      <div className="text-[10px] text-slate-500">由最高層級指定專人：左側選單可見帳號模組並可維護同仁與重設他人密碼（未獲指定者選單完全隱藏）</div>
                     </div>
-                    {isSuperadmin ? (
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formData.canManageUsers}
-                          onChange={(e) => setFormData({ ...formData, canManageUsers: e.target.checked })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
-                      </label>
-                    ) : (
-                      <span className="text-[10px] font-bold text-slate-400">
-                        {formData.canManageUsers ? '已指定' : '未授權'}
-                      </span>
-                    )}
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.canManageUsers}
+                        onChange={(e) => setFormData({ ...formData, canManageUsers: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                    </label>
                   </div>
 
                   {/* 特許 1: 全域核心參數 */}
@@ -2591,44 +2667,32 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       <div className="font-semibold text-slate-800">2. 全域核心參數維護特許 (canManageSystemConfigs)</div>
                       <div className="text-[10px] text-slate-500">可協同修改營業稅率、保留款率、鎖定模式等系統核心參數</div>
                     </div>
-                    {isSuperadmin ? (
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formData.canManageSystemConfigs}
-                          onChange={(e) => setFormData({ ...formData, canManageSystemConfigs: e.target.checked })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
-                      </label>
-                    ) : (
-                      <span className="text-[10px] font-bold text-slate-400">
-                        {formData.canManageSystemConfigs ? '已特許' : '未授權'}
-                      </span>
-                    )}
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.canManageSystemConfigs}
+                        onChange={(e) => setFormData({ ...formData, canManageSystemConfigs: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                    </label>
                   </div>
 
-                    {/* 特許 3: 同階 Admin 管理特許 */}
+                  {/* 特許 3: 同階 Admin 管理特許 */}
                   <div className="flex items-center justify-between border-t border-amber-200/40 pt-2">
                     <div>
                       <div className="font-semibold text-slate-800">3. 同階 Admin 帳號管理特許 (canManageAdmins)</div>
-                      <div className="text-[10px] text-slate-500">可新增、編輯、重設密碼與刪除同階 Admin（仍禁止動 Superadmin）</div>
+                      <div className="text-[10px] text-slate-500">可新增、編輯、重設密碼與刪除同階 Admin（仍禁止動 Superadmin 與 BOSS）</div>
                     </div>
-                    {isSuperadmin ? (
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formData.canManageAdmins}
-                          onChange={(e) => setFormData({ ...formData, canManageAdmins: e.target.checked })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
-                      </label>
-                    ) : (
-                      <span className="text-[10px] font-bold text-slate-400">
-                        {formData.canManageAdmins ? '已特許' : '未授權'}
-                      </span>
-                    )}
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.canManageAdmins}
+                        onChange={(e) => setFormData({ ...formData, canManageAdmins: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                    </label>
                   </div>
 
                   {/* 特許 4: 全集團跨法人管理特許 */}
@@ -2637,21 +2701,15 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       <div className="font-semibold text-slate-800">4. 全集團跨法人管理特許 (canManageAllCompanies)</div>
                       <div className="text-[10px] text-slate-500">【老闆/總經理常務管理特許】可管理全集團所有公司法人、組織與營運法規中樞（不受限於單一子公司）</div>
                     </div>
-                    {isSuperadmin ? (
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formData.canManageAllCompanies}
-                          onChange={(e) => setFormData({ ...formData, canManageAllCompanies: e.target.checked })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-                      </label>
-                    ) : (
-                      <span className="text-[10px] font-bold text-slate-400">
-                        {formData.canManageAllCompanies ? '已特許' : '未授權'}
-                      </span>
-                    )}
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.canManageAllCompanies}
+                        onChange={(e) => setFormData({ ...formData, canManageAllCompanies: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
                   </div>
                 </div>
               )}

@@ -5586,17 +5586,18 @@ export function seedUserPermissionData(db: Database) {
     }
   }
 
-  // 3. 建立三層式身分種子使用者 (唯一 Superadmin、Admin、四大業務 User、跨法人矩陣調度專員)
+  // 3. 建立四層式身分種子使用者 (唯一 Superadmin、BOSS 董事長、Admin、四大業務 User、跨法人矩陣調度專員)
   db.run(`
-    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, companyGroupAssignments, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
+    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, canManageAllCompanies, groupId, groupIds, companyGroupAssignments, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
     VALUES
-      ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', 1, 1, 1, NULL, '[]', '[]', 'ACTIVE', '副總經理兼營運長 (唯一最高管理者)', '["COMP-01","COMP-02"]', 'COMP-01', 'admin888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-002', 'admin_chen', '陳資訊主任', 'chen.it@mega-build.com.tw', 'ADMIN', 0, 0, 0, NULL, '[]', '[]', 'ACTIVE', '資訊系統處主任 (一般管理員)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-003', 'eng_lin', '林工務主任', 'lin.site@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ENG', '["GRP-ENG"]', '[]', 'ACTIVE', '土木結構主任工程師', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-004', 'acc_chang', '張會計長', 'chang.acc@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ACC', '["GRP-ACC"]', '[]', 'ACTIVE', '財務會計處副理', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-005', 'proc_wang', '王採購專員', 'wang.proc@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-PROC', '["GRP-PROC"]', '[]', 'ACTIVE', '發包採購部資深專員', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-006', 'sales_liu', '劉業務副理', 'liu.sales@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-SALES', '["GRP-SALES"]', '[]', 'ACTIVE', '專案開發業務副理', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-007', 'matrix_zhao', '趙專員', 'zhao.matrix@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ACC', '["GRP-ACC","GRP-PROC"]', '[{"companyId":"COMP-01","groupIds":["GRP-ACC"]},{"companyId":"COMP-02","groupIds":["GRP-PROC"]}]', 'ACTIVE', '跨法人調度專員 (大巨財務 / 宏達採購)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01');
+      ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', 1, 1, 1, 1, NULL, '[]', '[]', 'ACTIVE', '系統架構師兼營運長 (SUPERADMIN)', '["COMP-01","COMP-02"]', 'COMP-01', 'admin888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-BOSS', 'boss', '林大巨 董事長', 'lin.boss@mega-build.com.tw', 'BOSS', 1, 1, 1, 1, NULL, '[]', '[]', 'ACTIVE', '集團創辦人暨董事長 (企業最高統裁)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-002', 'admin_chen', '陳資訊主任', 'chen.it@mega-build.com.tw', 'ADMIN', 1, 0, 1, 0, NULL, '[]', '[]', 'ACTIVE', '資訊系統處主任 (一般管理員)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-003', 'eng_lin', '林工務主任', 'lin.site@mega-build.com.tw', 'USER', 0, 0, 0, 0, 'GRP-ENG', '["GRP-ENG"]', '[]', 'ACTIVE', '土木結構主任工程師', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-004', 'acc_chang', '張會計長', 'chang.acc@mega-build.com.tw', 'USER', 0, 0, 0, 0, 'GRP-ACC', '["GRP-ACC"]', '[]', 'ACTIVE', '財務會計處副理', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-005', 'proc_wang', '王採購專員', 'wang.proc@mega-build.com.tw', 'USER', 0, 0, 0, 0, 'GRP-PROC', '["GRP-PROC"]', '[]', 'ACTIVE', '發包採購部資深專員', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-006', 'sales_liu', '劉業務副理', 'liu.sales@mega-build.com.tw', 'USER', 0, 0, 0, 0, 'GRP-SALES', '["GRP-SALES"]', '[]', 'ACTIVE', '專案開發業務副理', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-007', 'matrix_zhao', '趙專員', 'zhao.matrix@mega-build.com.tw', 'USER', 0, 0, 0, 0, 'GRP-ACC', '["GRP-ACC","GRP-PROC"]', '[{"companyId":"COMP-01","groupIds":["GRP-ACC"]},{"companyId":"COMP-02","groupIds":["GRP-PROC"]}]', 'ACTIVE', '跨法人調度專員 (大巨財務 / 宏達採購)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01');
   `);
 }
 
@@ -6031,24 +6032,40 @@ export function ensureDatabaseIntegrity(db: Database) {
     const superCount = Number(superCheck[0]?.values[0]?.[0] || 0);
     if (superCount === 0) {
       db.run(`
-        INSERT OR REPLACE INTO users (id, username, fullName, email, role, canManageSystemConfigs, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
-        VALUES ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', 1, NULL, '[]', 'ACTIVE', '副總經理兼營運長 (唯一最高管理者)', '["COMP-01","COMP-02"]', 'COMP-01', 'admin888', 0, '2026-01-01', '2026-01-01');
+        INSERT OR REPLACE INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, canManageAllCompanies, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
+        VALUES ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', 1, 1, 1, 1, NULL, '[]', 'ACTIVE', '系統架構師兼營運長 (SUPERADMIN)', '["COMP-01","COMP-02"]', 'COMP-01', 'admin888', 0, '2026-01-01', '2026-01-01');
       `);
     }
   } catch (e) {
     console.error('Superadmin integrity check failed', e);
   }
 
-  // 升級檢測：為最高管理者賦予全集團法人管理特許，為資訊主任確保帳號管理特許與當前法人授權
+  // 確保企業最高統裁 (集團董事長 BOSS) 帳號存在與全特許齊備
   try {
-    db.run(`UPDATE users SET canManageAllCompanies = 1 WHERE role = 'SUPERADMIN' OR id = 'USR-001';`);
+    const bossCheck = db.exec(`SELECT count(*) FROM users WHERE role = 'BOSS' OR id = 'USR-BOSS';`);
+    const bossCount = Number(bossCheck[0]?.values[0]?.[0] || 0);
+    if (bossCount === 0) {
+      db.run(`
+        INSERT OR REPLACE INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, canManageAllCompanies, groupId, groupIds, companyGroupAssignments, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
+        VALUES ('USR-BOSS', 'boss', '林大巨 董事長', 'lin.boss@mega-build.com.tw', 'BOSS', 1, 1, 1, 1, NULL, '[]', '[]', 'ACTIVE', '集團創辦人暨董事長 (企業最高統裁)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01');
+      `);
+    } else {
+      db.run(`UPDATE users SET canManageUsers = 1, canManageSystemConfigs = 1, canManageAdmins = 1, canManageAllCompanies = 1 WHERE role = 'BOSS';`);
+    }
+  } catch (e) {
+    console.error('Boss integrity check failed', e);
+  }
+
+  // 升級檢測：為最高管理者與董事長賦予全集團法人管理特許，為資訊主任確保帳號管理特許與當前法人授權
+  try {
+    db.run(`UPDATE users SET canManageAllCompanies = 1 WHERE role IN ('SUPERADMIN', 'BOSS') OR id IN ('USR-001', 'USR-BOSS');`);
     db.run(`UPDATE users SET canManageUsers = 1, canManageAdmins = 1 WHERE id = 'USR-002';`);
     
-    // 確保現存所有未刪除法人，同步授權給 USR-001 與 USR-002 (陳資訊主任)，避免管理員在基本資料剛新增之法人無法管理或刪除
+    // 確保現存所有未刪除法人，同步授權給 USR-001、USR-BOSS 與 USR-002 (陳資訊主任)
     const compRows = db.exec(`SELECT id FROM companies WHERE isDeleted = 0;`);
     if (compRows.length && compRows[0].values.length) {
       const activeCompIds = compRows[0].values.map(v => String(v[0]));
-      for (const targetUid of ['USR-001', 'USR-002']) {
+      for (const targetUid of ['USR-001', 'USR-BOSS', 'USR-002']) {
         const uRes = db.exec(`SELECT allowedCompanies FROM users WHERE id = '${targetUid}';`);
         if (uRes.length && uRes[0].values.length) {
           let comps: string[] = uRes[0].values[0][0] ? JSON.parse(String(uRes[0].values[0][0])) : ['COMP-01'];
@@ -6113,7 +6130,8 @@ export function ensureDatabaseIntegrity(db: Database) {
 
 // 中文名稱轉換輔助函式 (避免在審計日誌中出現英文代號)
 function formatRoleCn(role?: string): string {
-  if (role === 'SUPERADMIN') return '最高管理者';
+  if (role === 'SUPERADMIN') return '系統架構師 (Superadmin)';
+  if (role === 'BOSS') return '企業最高統裁 (集團董事長)';
   if (role === 'ADMIN') return '系統管理員';
   return '一般同仁';
 }
@@ -6218,7 +6236,7 @@ export function getAllUsers(): User[] {
   const res = dbInstance.exec(`
     SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, lastLoginAt, createdAt, updatedAt, deleteStage, stageDeletedAt, purgeDueAt, deletedBy, stageNotes, canManageAllCompanies, companyGroupAssignments 
     FROM users 
-    ORDER BY CASE role WHEN 'SUPERADMIN' THEN 1 WHEN 'ADMIN' THEN 2 ELSE 3 END, id ASC;
+    ORDER BY CASE role WHEN 'SUPERADMIN' THEN 1 WHEN 'BOSS' THEN 2 WHEN 'ADMIN' THEN 3 ELSE 4 END, id ASC;
   `);
   if (!res.length) return [];
   return res[0].values.map(v => {
@@ -6368,7 +6386,7 @@ export function createUser(
     username: string;
     fullName: string;
     email: string;
-    role: 'ADMIN' | 'USER';
+    role: UserRole;
     canManageUsers?: boolean;
     canManageSystemConfigs?: boolean;
     canManageAdmins?: boolean;
@@ -6381,25 +6399,31 @@ export function createUser(
     defaultCompanyId?: string;
     password?: string;
   },
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
   operatorCanManageAdmins?: boolean
 ): User {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
 
+  const isPrivilegedOperator = operatorRole === 'SUPERADMIN' || operatorRole === 'BOSS';
+
   // 帳號管理專人權限檢核
-  if (operatorRole !== 'SUPERADMIN' && !operatorCanManageUsers) {
-    throw new Error('無帳號管理專人權限：系統帳號維護需由 Superadmin 特別指定之專人 Admin 始得操作！');
+  if (!isPrivilegedOperator && !operatorCanManageUsers) {
+    throw new Error('無帳號管理專人權限：系統帳號維護需由最高統裁 (BOSS) 或指定專人 Admin 始得操作！');
   }
   
   if ((newUser.role as string) === 'SUPERADMIN') {
     throw new Error('憲法防呆：系統僅允許一位 Superadmin，禁止直接建立第二位 Superadmin！若需移交請使用「最高權限交接」流程。');
   }
 
-  // 階層原則：一般 Admin 只能建立下一階 User，除非經 Superadmin 授權同階管理特許
-  if (newUser.role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許 (canManageAdmins)】，依規定只能建立下一階層 (User) 業務同仁，無法新增同階 Admin 帳號！');
+  if ((newUser.role as string) === 'BOSS' && operatorRole !== 'SUPERADMIN') {
+    throw new Error('企業防禦防呆：企業最高統裁 (集團董事長 BOSS) 具備唯一性，不得重複建立！');
+  }
+
+  // 階層原則：一般 Admin 只能建立下一階 User，除非經 BOSS 或 Superadmin 授權同階管理特許
+  if (newUser.role === 'ADMIN' && !isPrivilegedOperator && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得授予之【同階管理特許 (canManageAdmins)】，依規定只能建立下一階層 (User) 業務同仁，無法新增同階 Admin 帳號！');
   }
 
   const selectedGroupIds = newUser.groupIds && newUser.groupIds.length > 0
@@ -6416,11 +6440,11 @@ export function createUser(
     throw new Error(`帳號 ${newUser.username} 已存在，請使用其他帳號！`);
   }
 
-  // 檢查特許授權權限 (只有 Superadmin 可開啟特許)
-  const canManageUserMgr = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageUsers)) ? 1 : 0;
-  const canManageConfigs = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageSystemConfigs)) ? 1 : 0;
-  const canManagePeers = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageAdmins)) ? 1 : 0;
-  const canManageAllComps = (operatorRole === 'SUPERADMIN' && newUser.role === 'ADMIN' && Boolean(newUser.canManageAllCompanies)) ? 1 : 0;
+  // 檢查特許授權權限 (只有 Superadmin 或 BOSS 可開啟特許)
+  const canManageUserMgr = (isPrivilegedOperator && newUser.role === 'ADMIN' && Boolean(newUser.canManageUsers)) ? 1 : 0;
+  const canManageConfigs = (isPrivilegedOperator && newUser.role === 'ADMIN' && Boolean(newUser.canManageSystemConfigs)) ? 1 : 0;
+  const canManagePeers = (isPrivilegedOperator && newUser.role === 'ADMIN' && Boolean(newUser.canManageAdmins)) ? 1 : 0;
+  const canManageAllComps = (isPrivilegedOperator && newUser.role === 'ADMIN' && Boolean(newUser.canManageAllCompanies)) ? 1 : 0;
 
   const id = `USR-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
   const now = new Date().toISOString().substring(0, 10);
@@ -6491,7 +6515,7 @@ export function updateUser(
     id: string;
     fullName?: string;
     email?: string;
-    role?: 'ADMIN' | 'USER';
+    role?: UserRole;
     canManageUsers?: boolean;
     canManageSystemConfigs?: boolean;
     canManageAdmins?: boolean;
@@ -6504,7 +6528,7 @@ export function updateUser(
     status?: 'ACTIVE' | 'DISABLED';
     title?: string;
   },
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
   operatorCanManageAdmins?: boolean,
@@ -6517,9 +6541,11 @@ export function updateUser(
     throw new Error('【安全防呆防護】系統嚴禁將當前正在登入操作中之自身帳號設為停用！');
   }
 
+  const isPrivilegedOperator = operatorRole === 'SUPERADMIN' || operatorRole === 'BOSS';
+
   // 帳號管理專人權限檢核
-  if (operatorRole !== 'SUPERADMIN' && !operatorCanManageUsers) {
-    throw new Error('無帳號管理專人權限：系統帳號維護需由 Superadmin 特別指定之專人 Admin 始得操作！');
+  if (!isPrivilegedOperator && !operatorCanManageUsers) {
+    throw new Error('無帳號管理專人權限：系統帳號維護需由最高統裁 (BOSS) 或指定專人 Admin 始得操作！');
   }
 
   // 取得原目標帳號完整資料以便精準比對修改差異
@@ -6556,19 +6582,24 @@ export function updateUser(
   } catch (e) {}
   const oldDefaultComp = String(oldRow[13] || 'COMP-01');
 
-  // 憲法防呆：一般 Admin 不得變更 Superadmin 帳號
+  // 憲法防呆：一般 Admin / BOSS 不得變更 Superadmin 帳號
   if (targetRole === 'SUPERADMIN' && operatorRole !== 'SUPERADMIN') {
-    throw new Error('憲法保護防禦：一般 Admin 無權修改系統最高 Superadmin 帳號！');
+    throw new Error('憲法保護防禦：除架構師本人外，其他人無權修改 Superadmin 帳號！');
   }
 
-  // 階層防呆：若目標帳號為其他同階 ADMIN，且操作者非 SUPERADMIN 且無同階管理特許 (canManageAdmins)
-  if (targetRole === 'ADMIN' && updateData.id !== currentOperatorId && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，依規定只能管理一般同仁 (User)，無法修改其他同階系統管理員 (Admin) 帳號！');
+  // 👑 BOSS 金身護體防護：除 Superadmin 或 BOSS 本人外，一般 Admin 絕對無權修改 BOSS 帳號
+  if (targetRole === 'BOSS' && operatorRole !== 'SUPERADMIN' && operatorRole !== 'BOSS') {
+    throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 帳號具備最高決策金身護體，一般管理員無權修改其資料！');
   }
 
-  // 階層防呆：若試圖將角色改為 ADMIN，且操作者非 SUPERADMIN 且無同階管理特許
-  if (updateData.role === 'ADMIN' && targetRole !== 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
-    throw new Error('階層權限受限：您無權將同仁角色提升為同階 Admin，需由 Superadmin 授權同階管理特許！');
+  // 階層防呆：若目標帳號為其他同階 ADMIN，且操作者非 SUPERADMIN、非 BOSS 且無同階管理特許 (canManageAdmins)
+  if (targetRole === 'ADMIN' && updateData.id !== currentOperatorId && !isPrivilegedOperator && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得授予之【同階管理特許】，依規定只能管理一般同仁 (User)，無法修改其他系統管理員 (Admin) 帳號！');
+  }
+
+  // 階層防呆：若試圖將角色改為 ADMIN，且操作者非 SUPERADMIN、非 BOSS 且無同階管理特許
+  if (updateData.role === 'ADMIN' && targetRole !== 'ADMIN' && !isPrivilegedOperator && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您無權將同仁角色提升為 Admin，需由最高統裁授權同階管理特許！');
   }
 
   // 憲法防呆：Superadmin 不能被停用或直接被降級 (必須透過交接)
@@ -6581,9 +6612,22 @@ export function updateUser(
     }
   }
 
-  // 憲法防呆：不可將任何使用者直接變更為 SUPERADMIN
+  // 👑 BOSS 金身護體防呆：BOSS 不能被停用或降級
+  if (targetRole === 'BOSS') {
+    if (updateData.status === 'DISABLED') {
+      throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 具備不可停用金身護體保護！');
+    }
+    if (updateData.role && updateData.role !== 'BOSS') {
+      throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 職位不可被降級！');
+    }
+  }
+
+  // 憲法防呆：不可將任何使用者直接變更為 SUPERADMIN 或 BOSS
   if ((updateData.role as string) === 'SUPERADMIN' && targetRole !== 'SUPERADMIN') {
     throw new Error('系統禁止直接賦予 SUPERADMIN 角色，必須由現任 Superadmin 執行交接程序！');
+  }
+  if (updateData.role === 'BOSS' && targetRole !== 'BOSS') {
+    throw new Error('系統禁止直接賦予 BOSS 角色，企業最高統裁帳號具備唯一性！');
   }
 
   const updates: string[] = [];
@@ -6652,8 +6696,8 @@ export function updateUser(
       beforeDiff['同階管理員維護特許'] = '開啟';
       afterDiff['同階管理員維護特許'] = '關閉 (隨降級自動收回)';
     }
-  } else if (operatorRole === 'SUPERADMIN') {
-    // 唯獨系統最高 Superadmin 才有權限開啟或調整 Admin 進階特許
+  } else if (isPrivilegedOperator) {
+    // 系統最高 Superadmin 與企業最高統裁 BOSS 擁有授予及調整 Admin 進階特許之權力
     if (updateData.canManageUsers !== undefined) {
       updates.push(`canManageUsers = ${updateData.canManageUsers ? 1 : 0}`);
       if (Boolean(updateData.canManageUsers) !== oldCanManageUsers) {
@@ -6683,9 +6727,9 @@ export function updateUser(
       }
     }
   } else {
-    // 非 Superadmin 操作者：若試圖開啟特許則強制攔截，若未試圖開啟則自動忽略防禦性阻擋
+    // 非 Superadmin / BOSS 操作者：若試圖開啟特許則強制攔截，若未試圖開啟則自動忽略防禦性阻擋
     if (updateData.canManageUsers || updateData.canManageSystemConfigs || updateData.canManageAdmins || updateData.canManageAllCompanies) {
-      throw new Error('憲法權限防護：唯獨最高 Superadmin 才有權限授予管理員進階特許！');
+      throw new Error('憲法權限防護：唯獨最高 Superadmin 或企業最高統裁 (BOSS) 才有權限授予管理員進階特許！');
     }
   }
 
@@ -6765,31 +6809,31 @@ export function updateUser(
   notifyListeners();
 }
 
-// 快速切換特定 Admin 之帳號管理專人特許 (僅限 Superadmin 操作)
+// 快速切換特定 Admin 之帳號管理專人特許 (Superadmin 與 BOSS 均可操作)
 export function toggleAdminUserManagerPrivilege(
   userId: string,
   canManage: boolean,
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string
 ): void {
   updateUser({ id: userId, canManageUsers: canManage }, operatorRole, operatorName, true, true);
 }
 
-// 快速切換特定 Admin 之全域核心參數維護特許 (僅限 Superadmin 操作)
+// 快速切換特定 Admin 之全域核心參數維護特許 (Superadmin 與 BOSS 均可操作)
 export function toggleAdminConfigPrivilege(
   userId: string,
   canManage: boolean,
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string
 ): void {
   updateUser({ id: userId, canManageSystemConfigs: canManage }, operatorRole, operatorName, true, true);
 }
 
-// 快速切換特定 Admin 之同階管理特許 (僅限 Superadmin 操作)
+// 快速切換特定 Admin 之同階管理特許 (Superadmin 與 BOSS 均可操作)
 export function toggleAdminPeerPrivilege(
   userId: string,
   canManage: boolean,
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string
 ): void {
   updateUser({ id: userId, canManageAdmins: canManage }, operatorRole, operatorName, true, true);
@@ -6799,16 +6843,18 @@ export function toggleAdminPeerPrivilege(
 export function resetUserPassword(
   userId: string,
   newPassword: string,
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
   operatorCanManageAdmins?: boolean
 ): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
   
+  const isPrivilegedOperator = operatorRole === 'SUPERADMIN' || operatorRole === 'BOSS';
+
   // 帳號管理專人權限檢核：非所有 Admin 都能重設他人密碼
-  if (operatorRole !== 'SUPERADMIN' && !operatorCanManageUsers) {
-    throw new Error('無重設他人密碼權限：他人密碼只能由 Superadmin 特別指定之帳號管理專人 Admin 執行重設！');
+  if (!isPrivilegedOperator && !operatorCanManageUsers) {
+    throw new Error('無重設他人密碼權限：他人密碼只能由最高統裁 (BOSS) 特別指定之帳號管理專人 Admin 執行重設！');
   }
 
   const check = dbInstance.exec(`SELECT id, role, fullName FROM users WHERE id = '${userId}';`);
@@ -6818,12 +6864,17 @@ export function resetUserPassword(
 
   const role = check[0].values[0][1] as string;
   const fullName = String(check[0].values[0][2]);
+
   if (role === 'SUPERADMIN' && operatorRole !== 'SUPERADMIN') {
-    throw new Error('憲法保護防禦：一般 Admin 無權重設系統最高 Superadmin 密碼！');
+    throw new Error('憲法保護防禦：除架構師本人外，其他人無權重設系統最高 Superadmin 密碼！');
   }
 
-  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，無法重設其他同階系統管理員 (Admin) 之密碼！');
+  if (role === 'BOSS' && operatorRole !== 'SUPERADMIN' && operatorRole !== 'BOSS') {
+    throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 密碼不可由一般管理員重設！');
+  }
+
+  if (role === 'ADMIN' && !isPrivilegedOperator && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得授予之【同階管理特許】，無法重設其他系統管理員 (Admin) 之密碼！');
   }
 
   const now = new Date().toISOString().substring(0, 10);
@@ -6850,7 +6901,7 @@ export function resetUserPassword(
 export function toggleUserStatus(
   userId: string,
   newStatus: 'ACTIVE' | 'DISABLED',
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
   operatorCanManageAdmins?: boolean,
@@ -6865,7 +6916,7 @@ export function toggleUserStatus(
 // 第一階段：移入待刪除回收站（7 日冷卻期）
 export function markUserPendingDelete(
   userId: string,
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
   operatorCanManageAdmins?: boolean,
@@ -6873,9 +6924,11 @@ export function markUserPendingDelete(
 ): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
 
+  const isPrivilegedOperator = operatorRole === 'SUPERADMIN' || operatorRole === 'BOSS';
+
   // 帳號管理專人權限檢核
-  if (operatorRole !== 'SUPERADMIN' && !operatorCanManageUsers) {
-    throw new Error('無帳號管理專人權限：刪除同仁帳號需由 Superadmin 特別指定之專人 Admin 始得操作！');
+  if (!isPrivilegedOperator && !operatorCanManageUsers) {
+    throw new Error('無帳號管理專人權限：刪除同仁帳號需由最高統裁 (BOSS) 或指定之專人 Admin 始得操作！');
   }
 
   const check = dbInstance.exec(`SELECT id, role, fullName, username, deleteStage FROM users WHERE id = '${userId}';`);
@@ -6888,11 +6941,15 @@ export function markUserPendingDelete(
   const currentStage = check[0].values[0][4] as string;
 
   if (role === 'SUPERADMIN') {
-    throw new Error('【憲法金身防護】系統唯一最高管理員 (Superadmin) 具備永久保護，嚴禁刪除！');
+    throw new Error('【憲法金身防護】系統唯一最高架構師 (Superadmin) 具備永久保護，嚴禁刪除！');
   }
 
-  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，無法刪除其他同階系統管理員 (Admin) 帳號！');
+  if (role === 'BOSS') {
+    throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 具備不可撼動金身護體，嚴禁刪除！');
+  }
+
+  if (role === 'ADMIN' && !isPrivilegedOperator && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得授予之【同階管理特許】，無法刪除其他系統管理員 (Admin) 帳號！');
   }
 
   if (currentStage === 'PENDING_DELETE') {
@@ -6935,7 +6992,7 @@ export function markUserPendingDelete(
 // 刪除使用者帳號 (向下相容：自動呼叫第一階段刪除冷卻流程)
 export function deleteUser(
   userId: string,
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
   operatorCanManageAdmins?: boolean
@@ -6985,15 +7042,17 @@ export function restorePendingUser(
 // 待刪除回收站：提前手動二次刪除，轉入 Superadmin 專屬封存區
 export function advanceUserToArchive(
   userId: string,
-  operatorRole: 'SUPERADMIN' | 'ADMIN',
+  operatorRole: 'SUPERADMIN' | 'BOSS' | 'ADMIN',
   operatorName: string,
   operatorCanManageUsers?: boolean,
   operatorCanManageAdmins?: boolean
 ): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
 
-  if (operatorRole !== 'SUPERADMIN' && !operatorCanManageUsers) {
-    throw new Error('無帳號管理專人權限：操作需由 Superadmin 特別指定之專人 Admin 始得操作！');
+  const isPrivilegedOperator = operatorRole === 'SUPERADMIN' || operatorRole === 'BOSS';
+
+  if (!isPrivilegedOperator && !operatorCanManageUsers) {
+    throw new Error('無帳號管理專人權限：操作需由最高統裁 (BOSS) 或指定專人 Admin 始得操作！');
   }
 
   const check = dbInstance.exec(`SELECT id, role, fullName, username, deleteStage FROM users WHERE id = '${userId}';`);
@@ -7005,11 +7064,15 @@ export function advanceUserToArchive(
   const fullName = check[0].values[0][2] as string;
 
   if (role === 'SUPERADMIN') {
-    throw new Error('【憲法金身防護】系統唯一最高管理員嚴禁封存！');
+    throw new Error('【憲法金身防護】系統唯一最高架構師嚴禁封存！');
   }
 
-  if (role === 'ADMIN' && operatorRole !== 'SUPERADMIN' && !operatorCanManageAdmins) {
-    throw new Error('階層權限受限：您尚未取得 Superadmin 授予之【同階管理特許】，無法變更其他同階系統管理員 (Admin) 狀態！');
+  if (role === 'BOSS') {
+    throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 具備不可撼動金身護體，嚴禁封存！');
+  }
+
+  if (role === 'ADMIN' && !isPrivilegedOperator && !operatorCanManageAdmins) {
+    throw new Error('階層權限受限：您尚未取得授予之【同階管理特許】，無法變更其他系統管理員 (Admin) 狀態！');
   }
 
   const nowIso = new Date().toISOString();
@@ -7099,6 +7162,10 @@ export function superadminPermanentPurge(
 
   if (role === 'SUPERADMIN') {
     throw new Error('【憲法金身防護】系統唯一最高管理員 (Superadmin) 具備永久保護，嚴禁清除！');
+  }
+
+  if (role === 'BOSS') {
+    throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 具備永久金身護體，嚴禁清除！');
   }
 
   dbInstance.run(`DELETE FROM users WHERE id = '${userId}';`);

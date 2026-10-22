@@ -16,6 +16,7 @@ interface AuthContextType {
   allGroups: UserGroup[];
   allPermissions: GroupModulePermission[];
   isSuperadmin: boolean;
+  isBoss: boolean;
   isAdmin: boolean;
   isUser: boolean;
   approvalLimit: number;
@@ -35,11 +36,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
   activeCompanyId: propActiveCompanyId
 }) => {
   const [internalActiveCompanyId, setInternalActiveCompanyId] = useState<string>(propActiveCompanyId || 'COMP-01');
-  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [allUsersState, setAllUsersState] = useState<User[]>([]);
   const [allGroups, setAllGroups] = useState<UserGroup[]>([]);
   const [allPermissions, setAllPermissions] = useState<GroupModulePermission[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>(() => {
-    return localStorage.getItem('engineering_erp_active_user_id') || 'USR-001';
+    return localStorage.getItem('engineering_erp_active_user_id') || 'USR-BOSS';
   });
 
   useEffect(() => {
@@ -55,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
     const users = getAllUsers();
     const groups = getAllUserGroups();
     const perms = getAllGroupPermissions();
-    setAllUsers(users);
+    setAllUsersState(users);
     setAllGroups(groups);
     setAllPermissions(perms);
   }, []);
@@ -70,14 +71,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
 
   // 當前使用者 (安全防護：嚴禁靜默提權回退至 Superadmin)
   const currentUser = useMemo(() => {
-    if (!allUsers.length) return null;
-    const matched = allUsers.find(u => u.id === currentUserId);
+    if (!allUsersState.length) return null;
+    const matched = allUsersState.find(u => u.id === currentUserId);
     if (matched) {
       return matched;
     }
-    const firstActive = allUsers.find(u => u.status === 'ACTIVE');
+    const bossUser = allUsersState.find(u => u.role === 'BOSS' && u.status === 'ACTIVE');
+    if (bossUser) return bossUser;
+    const firstActive = allUsersState.find(u => u.status === 'ACTIVE');
     return firstActive || null;
-  }, [allUsers, currentUserId]);
+  }, [allUsersState, currentUserId]);
+
+  const isSuperadmin = currentUser?.role === 'SUPERADMIN' && currentUser?.status === 'ACTIVE';
+  const isBoss = currentUser?.role === 'BOSS' && currentUser?.status === 'ACTIVE';
+  const isAdmin = currentUser?.role === 'ADMIN' && currentUser?.status === 'ACTIVE';
+  const isUser = currentUser?.role === 'USER' && currentUser?.status === 'ACTIVE';
+
+  // 🛡️ 隱密防護 (Stealth Mode)：
+  // 除非目前登入身分即為系統架構師 (Superadmin 本人)，否則全系統 (包含同仁清單、統計數據、身分切換選單) 100% 隱蔽 Superadmin
+  const visibleUsers = useMemo(() => {
+    if (isSuperadmin) {
+      return allUsersState;
+    }
+    return allUsersState.filter(u => u.role !== 'SUPERADMIN');
+  }, [isSuperadmin, allUsersState]);
 
   // 取得使用者在指定法人下的業務群組 (支援跨法人業務授權矩陣)
   const getGroupsForCompany = useCallback((companyId: string): UserGroup[] => {
@@ -115,13 +132,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
     return currentGroups[0] || null;
   }, [currentGroups]);
 
-  const isSuperadmin = currentUser?.role === 'SUPERADMIN' && currentUser?.status === 'ACTIVE';
-  const isAdmin = currentUser?.role === 'ADMIN' && currentUser?.status === 'ACTIVE';
-  const isUser = currentUser?.role === 'USER' && currentUser?.status === 'ACTIVE';
-
   // 核准金額上限 (依當前法人有效群組取最大上限)
   const approvalLimit = useMemo(() => {
-    if (isSuperadmin) return Infinity;
+    if (isSuperadmin || isBoss) return Infinity;
     if (isAdmin) return 50000000;
     if (currentGroups.length > 0) {
       if (currentGroups.some(g => g.approvalLimit === -1 || g.approvalLimit >= 999999999)) {
@@ -130,16 +143,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
       return Math.max(...currentGroups.map(g => g.approvalLimit || 0), 0);
     }
     return 0;
-  }, [isSuperadmin, isAdmin, currentGroups]);
+  }, [isSuperadmin, isBoss, isAdmin, currentGroups]);
 
   // 切換模擬身分與登入
   const switchUser = useCallback((userId: string) => {
     setCurrentUserId(userId);
     localStorage.setItem('engineering_erp_active_user_id', userId);
 
-    const target = allUsers.find(u => u.id === userId);
+    const target = allUsersState.find(u => u.id === userId);
     if (target) {
-      const roleCn = target.role === 'SUPERADMIN' ? '最高管理者' : target.role === 'ADMIN' ? '系統管理員' : '一般同仁';
+      const roleCn = target.role === 'SUPERADMIN'
+        ? '系統架構師 (Superadmin)'
+        : target.role === 'BOSS'
+        ? '企業最高統裁 (集團董事長)'
+        : target.role === 'ADMIN'
+        ? '系統管理員'
+        : '一般同仁';
       recordAuditLog(
         target.fullName,
         '登入系統',
@@ -152,7 +171,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
         roleCn
       );
     }
-  }, [allUsers]);
+  }, [allUsersState]);
 
   // 權限判斷函式 (PBAC 多群組矩陣聯集解析 + 跨法人業務分權)
   const can = useCallback((moduleKey: ModuleKey, action: 'read' | 'write' | 'approve' | 'export', targetCompanyId?: string): boolean => {
@@ -161,8 +180,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
     // 停權帳號（DISABLED）或待刪除/封存帳號：全面封鎖所有模組權限
     if (currentUser.status === 'DISABLED' || (currentUser.deleteStage && currentUser.deleteStage !== 'ACTIVE')) return false;
 
-    // Superadmin: 擁有所有模組的無條件最高權限
+    // Superadmin: 系統架構師擁有所有模組的無條件最高權限
     if (currentUser.role === 'SUPERADMIN') return true;
+
+    // BOSS: 企業最高統裁 (集團董事長) 擁有全集團跨法人全業務模組穿透、最高審批權 (無限額審批)
+    // 審計日誌禁止篡改 (唯讀)
+    if (currentUser.role === 'BOSS') {
+      if (moduleKey === 'AUDIT_LOGS' && (action === 'write' || action === 'approve')) {
+        return false;
+      }
+      return true;
+    }
 
     const effCompId = targetCompanyId || activeCompanyId;
 
@@ -172,7 +200,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
       if (moduleKey === 'AUDIT_LOGS' && (action === 'write' || action === 'approve')) {
         return false;
       }
-      // 全域核心參數：若獲得 Superadmin 特許授權 (canManageSystemConfigs)，則開放維護；否則唯讀
+      // 全域核心參數：若獲得 Superadmin/BOSS 特許授權 (canManageSystemConfigs)，則開放維護；否則唯讀
       if (moduleKey === 'SYSTEM_CONFIGS' && (action === 'write' || action === 'approve')) {
         return Boolean(currentUser.canManageSystemConfigs);
       }
@@ -227,7 +255,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
   // 審核單據金額上限查核
   const checkApproval = useCallback((amount: number, moduleKey?: ModuleKey, targetCompanyId?: string): { allowed: boolean; reason?: string } => {
     if (!currentUser) return { allowed: false, reason: '未登入或無身分' };
-    if (isSuperadmin) return { allowed: true };
+    if (isSuperadmin || isBoss) return { allowed: true };
 
     const effCompId = targetCompanyId || activeCompanyId;
     const effGroups = targetCompanyId ? getGroupsForCompany(targetCompanyId) : currentGroups;
@@ -260,16 +288,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId
     }
 
     return { allowed: true };
-  }, [currentUser, isSuperadmin, isAdmin, can, activeCompanyId, currentGroups, getGroupsForCompany]);
+  }, [currentUser, isSuperadmin, isBoss, isAdmin, can, activeCompanyId, currentGroups, getGroupsForCompany]);
 
   const value = {
     currentUser,
     currentGroup,
     currentGroups,
-    allUsers,
+    allUsers: visibleUsers,
     allGroups,
     allPermissions,
     isSuperadmin,
+    isBoss,
     isAdmin,
     isUser,
     approvalLimit,

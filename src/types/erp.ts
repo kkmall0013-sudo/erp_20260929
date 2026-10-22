@@ -39,7 +39,7 @@ export interface Company {
   updatedAt: string;
 }
 
-export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'USER';
+export type UserRole = 'SUPERADMIN' | 'BOSS' | 'ADMIN' | 'USER';
 
 export interface CompanyGroupAssignment {
   companyId: string; // 營運法人 ID (如 COMP-01, COMP-02)

@@ -22,7 +22,8 @@ import {
   EyeOff,
   X,
   Check,
-  AlertTriangle
+  AlertTriangle,
+  ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -57,9 +58,14 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
   onResetDatabase,
   onOpenDatabaseCenter,
 }) => {
-  const { currentUser, allUsers, isSuperadmin, isAdmin, switchUser } = useAuth();
+  const { currentUser, allUsers, isSuperadmin, isAdmin, isBoss, switchUser } = useAuth();
   const [isDbMenuOpen, setIsDbMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 系統架構師 (Superadmin) 隱身回歸驗證對話框
+  const [isDevAuthModalOpen, setIsDevAuthModalOpen] = useState(false);
+  const [devPasswordInput, setDevPasswordInput] = useState('');
+  const [devAuthError, setDevAuthError] = useState<string | null>(null);
 
   // 動態讀取 Superadmin 專屬軟體程式設定 (app_configs)
   const [appConfigMap, setAppConfigMap] = useState<Record<string, string>>({});
@@ -80,17 +86,17 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
   }, []);
 
   // 依登入者權限精確過濾可見營運法人：
-  // 1. Superadmin 與具備全集團跨法人管理特許 (canManageAllCompanies) 之老闆/常務管理Admin 可見所有法人
+  // 1. Superadmin 與 BOSS (最高統裁) 與具備全集團跨法人管理特許 (canManageAllCompanies) 之老闆/常務管理Admin 可見所有法人
   // 2. 一般 Admin / 一般同仁 僅能看見授權之 allowedCompanies
   // 3. 無權限之法人連看都看不到 (完全自清單中排除)
   const authorizedCompanies = React.useMemo(() => {
     if (!currentUser) return [];
-    if (isSuperadmin || currentUser.canManageAllCompanies) return companies;
+    if (isSuperadmin || isBoss || currentUser.canManageAllCompanies) return companies;
     const allowed = currentUser.allowedCompanies && currentUser.allowedCompanies.length > 0
       ? currentUser.allowedCompanies
       : ['COMP-01'];
     return companies.filter(c => allowed.includes(c.id));
-  }, [companies, currentUser, isSuperadmin]);
+  }, [companies, currentUser, isSuperadmin, isBoss]);
 
   // 當切換身分或法人名單變更時，若當前選取的法人不在許可名單內，自動安全跳轉至其第一家合法法人
   React.useEffect(() => {
@@ -292,9 +298,20 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
           <span className="font-bold text-sm tracking-wide text-white">{brandName}</span>
           <span className="text-slate-400 font-light text-sm">|</span>
           <span className="font-semibold text-sm text-slate-100">{subTitle}</span>
-          <span className="text-[10px] text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 rounded font-mono hidden sm:inline">
+          <button
+            type="button"
+            onClick={() => {
+              if (!isSuperadmin) {
+                setIsDevAuthModalOpen(true);
+                setDevPasswordInput('');
+                setDevAuthError(null);
+              }
+            }}
+            title={!isSuperadmin ? "系統版本 (點擊驗證身分可切回架構師帳號)" : "系統版本"}
+            className="text-[10px] text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 rounded font-mono hidden sm:inline cursor-pointer hover:bg-amber-500/30 transition-colors"
+          >
             {version}
-          </span>
+          </button>
         </div>
       </div>
 
@@ -334,8 +351,8 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
 
       {/* 右區：長駐功能群 (簡潔專注：一般同仁僅顯示個人身分與必要功能) */}
       <div className="flex items-center gap-1.5 sm:gap-2.5 text-xs text-slate-300">
-        {/* 資料庫匯出/匯入快捷工具 (僅限最高管理員與系統管理員) */}
-        {(isSuperadmin || isAdmin) && (
+        {/* 資料庫匯出/匯入快捷工具 (僅限最高架構師、BOSS與系統管理員) */}
+        {(isSuperadmin || isBoss || isAdmin) && (
           <div className="relative">
             <button
               onClick={() => setIsDbMenuOpen(prev => !prev)}
@@ -469,12 +486,14 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
         <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700 ml-1">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 ${
             currentUser?.role === 'SUPERADMIN'
-              ? 'bg-amber-500 shadow-2xs'
+              ? 'bg-amber-500 shadow-2xs ring-1 ring-amber-300'
+              : currentUser?.role === 'BOSS'
+              ? 'bg-gradient-to-br from-amber-400 via-yellow-500 to-amber-600 ring-2 ring-yellow-300 shadow-md'
               : currentUser?.role === 'ADMIN'
               ? 'bg-indigo-600'
               : 'bg-emerald-600'
           }`}>
-            {currentUser?.fullName ? currentUser.fullName.slice(0, 1) : '帳'}
+            {currentUser?.role === 'BOSS' ? '👑' : (currentUser?.fullName ? currentUser.fullName.slice(0, 1) : '帳')}
           </div>
 
           <div className="relative flex items-center gap-1">
@@ -482,12 +501,18 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
               value={currentUser?.id || ''}
               onChange={(e) => switchUser(e.target.value)}
               title="切換操作身分 (可實測不同身分權限與畫面過濾)"
-              className="bg-slate-800 text-[11px] text-slate-200 border border-slate-700 rounded px-1.5 py-0.5 outline-none cursor-pointer max-w-[115px] sm:max-w-[155px] truncate"
+              className="bg-slate-800 text-[11px] text-slate-200 border border-slate-700 rounded px-1.5 py-0.5 outline-none cursor-pointer max-w-[115px] sm:max-w-[165px] truncate"
             >
               {allUsers
                 .filter(u => u.deleteStage !== 'ARCHIVED' || u.id === currentUser?.id)
                 .map(u => {
-                  const roleCn = u.role === 'SUPERADMIN' ? '最高管理者' : u.role === 'ADMIN' ? '管理員' : '同仁';
+                  const roleCn = u.role === 'SUPERADMIN'
+                    ? '最高架構師'
+                    : u.role === 'BOSS'
+                    ? '最高統裁 (BOSS)'
+                    : u.role === 'ADMIN'
+                    ? '管理員'
+                    : '同仁';
                   const stageTag = u.deleteStage === 'PENDING_DELETE'
                     ? ' [回收站停權]'
                     : u.status === 'DISABLED'
@@ -495,7 +520,7 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
                     : '';
                   return (
                     <option key={u.id} value={u.id}>
-                      {u.fullName} ({roleCn}{stageTag}{u.role === 'SUPERADMIN' ? ' 👑' : ''}{u.role === 'ADMIN' && u.canManageUsers ? ' 🔑' : ''}{u.role === 'ADMIN' && u.canManageSystemConfigs ? ' 🛡️' : ''}{u.role === 'ADMIN' && u.canManageAdmins ? ' ⚡' : ''})
+                      {u.fullName} ({roleCn}{stageTag}{u.role === 'SUPERADMIN' ? ' 👑' : ''}{u.role === 'BOSS' ? ' 👑' : ''}{u.role === 'ADMIN' && u.canManageUsers ? ' 🔑' : ''}{u.role === 'ADMIN' && u.canManageSystemConfigs ? ' 🛡️' : ''}{u.role === 'ADMIN' && u.canManageAdmins ? ' ⚡' : ''})
                     </option>
                   );
                 })}
@@ -740,6 +765,90 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
       {topToast && (
         <div className="fixed top-14 right-6 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs font-bold z-50 animate-in fade-in flex items-center gap-2 border border-slate-700">
           <span>{topToast}</span>
+        </div>
+      )}
+
+      {/* 🔐 架構師 (Superadmin) 隱身回歸驗證對話框 (Developer Secret Switcher) */}
+      {isDevAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-2xs animate-in fade-in text-slate-800">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-sm overflow-hidden animate-in zoom-in-95">
+            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Crown className="w-4 h-4 text-amber-400" />
+                <span className="font-bold text-xs tracking-wide">系統最高架構師 (Superadmin) 驗證登入</span>
+              </div>
+              <button
+                onClick={() => setIsDevAuthModalOpen(false)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                // 驗證碼：架構師預設密碼 888888 或 admin888
+                if (devPasswordInput === '888888' || devPasswordInput === 'admin888') {
+                  switchUser('USR-001');
+                  setIsDevAuthModalOpen(false);
+                  triggerTopToast('👑 已切換回系統最高架構師 (Superadmin) 權限！');
+                } else {
+                  setDevAuthError('驗證碼/密碼錯誤，拒絕存取！');
+                }
+              }}
+              className="p-5 space-y-3.5 text-xs"
+            >
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-[11px] leading-relaxed">
+                <div className="font-bold mb-1 flex items-center gap-1 text-amber-800">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>架構師極致隱身防護作用中</span>
+                </div>
+                依企業最高治理規範，Superadmin 帳號對外完全隱身（清單、選單、統計卡全數隱藏）。請輸入架構師密碼即可切換回最高權杖身分。
+              </div>
+
+              {devAuthError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium animate-in fade-in">
+                  ❌ {devAuthError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  架構師密碼 (預設: 888888) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="password"
+                  autoFocus
+                  required
+                  value={devPasswordInput}
+                  onChange={(e) => {
+                    setDevPasswordInput(e.target.value);
+                    setDevAuthError(null);
+                  }}
+                  placeholder="請輸入架構師驗證密碼"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-800 font-mono text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsDevAuthModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Crown className="w-3.5 h-3.5 text-yellow-200" />
+                  <span>解鎖切換</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </header>
