@@ -41,6 +41,11 @@ export interface Company {
 
 export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'USER';
 
+export interface CompanyGroupAssignment {
+  companyId: string; // 營運法人 ID (如 COMP-01, COMP-02)
+  groupIds: string[]; // 該法人專屬指派之業務群組 (如 GRP-ACC 財務, GRP-PROC 採購)
+}
+
 export interface User {
   id: string;
   username: string;
@@ -53,6 +58,7 @@ export interface User {
   canManageAllCompanies?: boolean; // 【全集團跨法人管理特許】代替Superadmin統籌管理全集團所有公司法人（不受限於特定子公司，如老闆/營運長）
   groupId?: string; // 當 role === 'USER' 時主要群組 ID
   groupIds?: string[]; // 支援同仁同時隸屬多個業務群組矩陣 (PBAC 多重群組)
+  companyGroupAssignments?: CompanyGroupAssignment[]; // 【跨法人業務授權矩陣】針對不同法人個別指派不同業務職能 (如 A公司管財務，B公司管採購)
   status: 'ACTIVE' | 'DISABLED';
   title?: string;
   allowedCompanies: string[];

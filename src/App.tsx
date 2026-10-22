@@ -159,7 +159,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <AuthProvider>
+    <AuthProvider activeCompanyId={selectedCompanyId}>
       {/* ======================================================== */}
       {/* 父視窗：滿版 100vw × 100vh，外層無捲軸，嚴格切割為 3 個子視窗 */}
       {/* ======================================================== */}

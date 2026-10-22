@@ -38,6 +38,7 @@ import {
   AuditLog,
   CashFlowMetrics,
   User,
+  CompanyGroupAssignment,
   UserGroup,
   GroupModulePermission,
   ModuleKey,
@@ -158,6 +159,7 @@ function initializeTables(db: Database) {
       canManageAllCompanies INTEGER DEFAULT 0,
       groupId TEXT,
       groupIds TEXT DEFAULT '[]',
+      companyGroupAssignments TEXT DEFAULT '[]',
       status TEXT DEFAULT 'ACTIVE',
       title TEXT,
       allowedCompanies TEXT DEFAULT '["COMP-01","COMP-02"]',
@@ -5584,16 +5586,17 @@ export function seedUserPermissionData(db: Database) {
     }
   }
 
-  // 3. 建立三層式身分種子使用者 (唯一 Superadmin、Admin、四大業務 User)
+  // 3. 建立三層式身分種子使用者 (唯一 Superadmin、Admin、四大業務 User、跨法人矩陣調度專員)
   db.run(`
-    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
+    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, companyGroupAssignments, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
     VALUES
-      ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', 1, 1, 1, NULL, '[]', 'ACTIVE', '副總經理兼營運長 (唯一最高管理者)', '["COMP-01","COMP-02"]', 'COMP-01', 'admin888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-002', 'admin_chen', '陳資訊主任', 'chen.it@mega-build.com.tw', 'ADMIN', 0, 0, 0, NULL, '[]', 'ACTIVE', '資訊系統處主任 (一般管理員)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-003', 'eng_lin', '林工務主任', 'lin.site@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ENG', '["GRP-ENG"]', 'ACTIVE', '土木結構主任工程師', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-004', 'acc_chang', '張會計長', 'chang.acc@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ACC', '["GRP-ACC"]', 'ACTIVE', '財務會計處副理', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-005', 'proc_wang', '王採購專員', 'wang.proc@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-PROC', '["GRP-PROC"]', 'ACTIVE', '發包採購部資深專員', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
-      ('USR-006', 'sales_liu', '劉業務副理', 'liu.sales@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-SALES', '["GRP-SALES"]', 'ACTIVE', '專案開發業務副理', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01');
+      ('USR-001', 'superadmin', '黃副總經理', 'huang.gm@mega-build.com.tw', 'SUPERADMIN', 1, 1, 1, NULL, '[]', '[]', 'ACTIVE', '副總經理兼營運長 (唯一最高管理者)', '["COMP-01","COMP-02"]', 'COMP-01', 'admin888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-002', 'admin_chen', '陳資訊主任', 'chen.it@mega-build.com.tw', 'ADMIN', 0, 0, 0, NULL, '[]', '[]', 'ACTIVE', '資訊系統處主任 (一般管理員)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-003', 'eng_lin', '林工務主任', 'lin.site@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ENG', '["GRP-ENG"]', '[]', 'ACTIVE', '土木結構主任工程師', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-004', 'acc_chang', '張會計長', 'chang.acc@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ACC', '["GRP-ACC"]', '[]', 'ACTIVE', '財務會計處副理', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-005', 'proc_wang', '王採購專員', 'wang.proc@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-PROC', '["GRP-PROC"]', '[]', 'ACTIVE', '發包採購部資深專員', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-006', 'sales_liu', '劉業務副理', 'liu.sales@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-SALES', '["GRP-SALES"]', '[]', 'ACTIVE', '專案開發業務副理', '["COMP-01"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01'),
+      ('USR-007', 'matrix_zhao', '趙專員', 'zhao.matrix@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ACC', '["GRP-ACC","GRP-PROC"]', '[{"companyId":"COMP-01","groupIds":["GRP-ACC"]},{"companyId":"COMP-02","groupIds":["GRP-PROC"]}]', 'ACTIVE', '跨法人調度專員 (大巨財務 / 宏達採購)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01');
   `);
 }
 
@@ -5648,6 +5651,7 @@ export function ensureDatabaseIntegrity(db: Database) {
 
   // 升級檢測：確保 users、user_groups、group_module_permissions、system_configs 擁有最新欄位與三柱版本控制
   try { db.run(`ALTER TABLE users ADD COLUMN groupIds TEXT DEFAULT '[]';`); } catch (e) {}
+  try { db.run(`ALTER TABLE users ADD COLUMN companyGroupAssignments TEXT DEFAULT '[]';`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageUsers INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageSystemConfigs INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE users ADD COLUMN canManageAdmins INTEGER DEFAULT 0;`); } catch (e) {}
@@ -6065,6 +6069,19 @@ export function ensureDatabaseIntegrity(db: Database) {
     console.error('Integrity sync for admin company access failed', e);
   }
 
+  // 升級檢測：確保跨法人業務授權示範專員 USR-007 (趙專員 - 大巨財務 / 宏達採購) 存在
+  try {
+    const zhaoCheck = db.exec(`SELECT count(*) FROM users WHERE id = 'USR-007';`);
+    if (!zhaoCheck.length || Number(zhaoCheck[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, companyGroupAssignments, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
+        VALUES ('USR-007', 'matrix_zhao', '趙專員', 'zhao.matrix@mega-build.com.tw', 'USER', 0, 0, 0, 'GRP-ACC', '["GRP-ACC","GRP-PROC"]', '[{"companyId":"COMP-01","groupIds":["GRP-ACC"]},{"companyId":"COMP-02","groupIds":["GRP-PROC"]}]', 'ACTIVE', '跨法人調度專員 (大巨財務 / 宏達採購)', '["COMP-01","COMP-02"]', 'COMP-01', '888888', 0, '2026-01-01', '2026-01-01');
+      `);
+    }
+  } catch (e) {
+    console.error('USR-007 integrity check failed', e);
+  }
+
   // 自動清理舊版含英文代號之日誌，並將既有種子審計日誌升級為高可讀性純中文差異格式
   try {
     db.run(`
@@ -6142,6 +6159,21 @@ function resolveCompanyNamesCn(companyIds?: string[]): string {
     .join('、');
 }
 
+function formatCompanyGroupAssignmentsCn(assignments?: CompanyGroupAssignment[]): string {
+  if (!assignments || assignments.length === 0) return '未設定 (採全域業務群組)';
+  const allComps = getAllCompanies();
+  const allGroups = getAllUserGroups();
+  return assignments.map(a => {
+    const comp = allComps.find(c => c.id === a.companyId);
+    const compName = comp ? (comp.shortName || comp.name) : a.companyId;
+    const groupNames = a.groupIds.map(gid => {
+      const g = allGroups.find(grp => grp.id === gid);
+      return g ? g.groupName : gid;
+    }).join('+');
+    return `[${compName}: ${groupNames || '無指派'}]`;
+  }).join('、');
+}
+
 // 自動將逾期 7 天之冷卻同仁轉入 Superadmin 封存區
 export function autoArchiveExpiredUsers(): void {
   if (!dbInstance) return;
@@ -6184,7 +6216,7 @@ export function getAllUsers(): User[] {
   if (!dbInstance) return [];
   autoArchiveExpiredUsers();
   const res = dbInstance.exec(`
-    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, lastLoginAt, createdAt, updatedAt, deleteStage, stageDeletedAt, purgeDueAt, deletedBy, stageNotes, canManageAllCompanies 
+    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, lastLoginAt, createdAt, updatedAt, deleteStage, stageDeletedAt, purgeDueAt, deletedBy, stageNotes, canManageAllCompanies, companyGroupAssignments 
     FROM users 
     ORDER BY CASE role WHEN 'SUPERADMIN' THEN 1 WHEN 'ADMIN' THEN 2 ELSE 3 END, id ASC;
   `);
@@ -6201,6 +6233,13 @@ export function getAllUsers(): User[] {
     if (groupIds.length === 0 && groupId) {
       groupIds = [groupId];
     }
+    let companyGroupAssignments: CompanyGroupAssignment[] = [];
+    if (v[25]) {
+      try {
+        const parsed = JSON.parse(String(v[25]));
+        if (Array.isArray(parsed)) companyGroupAssignments = parsed;
+      } catch (e) {}
+    }
     return {
       id: String(v[0]),
       username: String(v[1]),
@@ -6213,6 +6252,7 @@ export function getAllUsers(): User[] {
       canManageAllCompanies: Boolean(v[24]),
       groupId: groupId || groupIds[0],
       groupIds,
+      companyGroupAssignments,
       status: (v[10] || 'ACTIVE') as User['status'],
       title: v[11] ? String(v[11]) : undefined,
       allowedCompanies: v[12] ? JSON.parse(String(v[12])) : ['COMP-01'],
@@ -6335,6 +6375,7 @@ export function createUser(
     canManageAllCompanies?: boolean;
     groupId?: string;
     groupIds?: string[];
+    companyGroupAssignments?: CompanyGroupAssignment[];
     title?: string;
     allowedCompanies?: string[];
     defaultCompanyId?: string;
@@ -6365,8 +6406,8 @@ export function createUser(
     ? newUser.groupIds
     : (newUser.groupId ? [newUser.groupId] : []);
 
-  if (newUser.role === 'USER' && selectedGroupIds.length === 0) {
-    throw new Error('一般同仁帳號必須至少指派一個所屬業務群組！');
+  if (newUser.role === 'USER' && selectedGroupIds.length === 0 && (!newUser.companyGroupAssignments || newUser.companyGroupAssignments.length === 0)) {
+    throw new Error('一般同仁帳號必須至少指派一個所屬業務群組或設定跨法人業務矩陣！');
   }
 
   // 檢查帳號重複
@@ -6386,14 +6427,15 @@ export function createUser(
   const title = newUser.title ? `'${newUser.title.replace(/'/g, "''")}'` : 'NULL';
   const primaryGroupId = selectedGroupIds[0] ? `'${selectedGroupIds[0]}'` : 'NULL';
   const groupIdsJson = `'${JSON.stringify(selectedGroupIds)}'`;
+  const matrixJson = `'${JSON.stringify(newUser.companyGroupAssignments || []).replace(/'/g, "''")}'`;
   const comps = newUser.allowedCompanies && newUser.allowedCompanies.length > 0 ? newUser.allowedCompanies : ['COMP-01', 'COMP-02'];
   const compsJson = `'${JSON.stringify(comps)}'`;
   const defComp = newUser.defaultCompanyId || comps[0] || 'COMP-01';
   const pass = (newUser.password || '888888').replace(/'/g, "''");
 
   dbInstance.run(`
-    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, canManageAllCompanies, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
-    VALUES ('${id}', '${newUser.username.replace(/'/g, "''")}', '${newUser.fullName.replace(/'/g, "''")}', '${(newUser.email || '').replace(/'/g, "''")}', '${newUser.role}', ${canManageUserMgr}, ${canManageConfigs}, ${canManagePeers}, ${canManageAllComps}, ${primaryGroupId}, ${groupIdsJson}, 'ACTIVE', ${title}, ${compsJson}, '${defComp}', '${pass}', 0, '${now}', '${now}');
+    INSERT INTO users (id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, canManageAllCompanies, groupId, groupIds, companyGroupAssignments, status, title, allowedCompanies, defaultCompanyId, passwordHash, isPasswordReset, createdAt, updatedAt)
+    VALUES ('${id}', '${newUser.username.replace(/'/g, "''")}', '${newUser.fullName.replace(/'/g, "''")}', '${(newUser.email || '').replace(/'/g, "''")}', '${newUser.role}', ${canManageUserMgr}, ${canManageConfigs}, ${canManagePeers}, ${canManageAllComps}, ${primaryGroupId}, ${groupIdsJson}, ${matrixJson}, 'ACTIVE', ${title}, ${compsJson}, '${defComp}', '${pass}', 0, '${now}', '${now}');
   `);
 
   const createSummary: Record<string, string> = {
@@ -6404,6 +6446,9 @@ export function createUser(
   };
   if (newUser.role === 'USER') {
     createSummary['所屬業務群組'] = resolveGroupNamesCn(selectedGroupIds);
+    if (newUser.companyGroupAssignments && newUser.companyGroupAssignments.length > 0) {
+      createSummary['跨法人業務授權矩陣'] = formatCompanyGroupAssignmentsCn(newUser.companyGroupAssignments);
+    }
   } else {
     if (canManageUserMgr) createSummary['帳號管理專人特許'] = '開啟';
     if (canManageConfigs) createSummary['全域核心參數特許'] = '開啟';
@@ -6428,6 +6473,7 @@ export function createUser(
     canManageAllCompanies: Boolean(canManageAllComps),
     groupId: selectedGroupIds[0],
     groupIds: selectedGroupIds,
+    companyGroupAssignments: newUser.companyGroupAssignments || [],
     status: 'ACTIVE',
     title: newUser.title,
     allowedCompanies: comps,
@@ -6452,6 +6498,7 @@ export function updateUser(
     canManageAllCompanies?: boolean;
     groupId?: string | null;
     groupIds?: string[];
+    companyGroupAssignments?: CompanyGroupAssignment[];
     allowedCompanies?: string[];
     defaultCompanyId?: string;
     status?: 'ACTIVE' | 'DISABLED';
@@ -6477,7 +6524,7 @@ export function updateUser(
 
   // 取得原目標帳號完整資料以便精準比對修改差異
   const currentRes = dbInstance.exec(`
-    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, canManageAllCompanies 
+    SELECT id, username, fullName, email, role, canManageUsers, canManageSystemConfigs, canManageAdmins, groupId, groupIds, status, title, allowedCompanies, defaultCompanyId, canManageAllCompanies, companyGroupAssignments 
     FROM users WHERE id = '${updateData.id}';
   `);
   if (!currentRes.length || !currentRes[0].values.length) {
@@ -6497,6 +6544,10 @@ export function updateUser(
     if (oldRow[9]) oldGroupIds = JSON.parse(String(oldRow[9]));
   } catch (e) {}
   if (oldGroupIds.length === 0 && oldRow[8]) oldGroupIds = [String(oldRow[8])];
+  let oldCompanyGroupAssignments: CompanyGroupAssignment[] = [];
+  try {
+    if (oldRow[15]) oldCompanyGroupAssignments = JSON.parse(String(oldRow[15]));
+  } catch (e) {}
   const oldStatus = String(oldRow[10] || 'ACTIVE');
   const oldTitle = String(oldRow[11] || '');
   let oldAllowedComps: string[] = ['COMP-01'];
@@ -6678,6 +6729,17 @@ export function updateUser(
     if (oldGrpKey !== newGrpKey && (effectiveRole === 'USER' || targetRole === 'USER')) {
       beforeDiff['所屬業務群組'] = resolveGroupNamesCn(oldGroupIds);
       afterDiff['所屬業務群組'] = resolveGroupNamesCn(newArr);
+    }
+  }
+
+  if (updateData.companyGroupAssignments !== undefined) {
+    const matJson = JSON.stringify(updateData.companyGroupAssignments).replace(/'/g, "''");
+    updates.push(`companyGroupAssignments = '${matJson}'`);
+    const oldMatKey = JSON.stringify(oldCompanyGroupAssignments || []);
+    const newMatKey = JSON.stringify(updateData.companyGroupAssignments || []);
+    if (oldMatKey !== newMatKey && (effectiveRole === 'USER' || targetRole === 'USER')) {
+      beforeDiff['跨法人業務授權矩陣'] = formatCompanyGroupAssignmentsCn(oldCompanyGroupAssignments);
+      afterDiff['跨法人業務授權矩陣'] = formatCompanyGroupAssignmentsCn(updateData.companyGroupAssignments);
     }
   }
 

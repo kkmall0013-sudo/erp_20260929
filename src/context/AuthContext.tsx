@@ -19,21 +19,37 @@ interface AuthContextType {
   isAdmin: boolean;
   isUser: boolean;
   approvalLimit: number;
-  can: (moduleKey: ModuleKey, action: 'read' | 'write' | 'approve' | 'export') => boolean;
-  checkApproval: (amount: number, moduleKey?: ModuleKey) => { allowed: boolean; reason?: string };
+  activeCompanyId: string;
+  setActiveCompanyId: (id: string) => void;
+  can: (moduleKey: ModuleKey, action: 'read' | 'write' | 'approve' | 'export', targetCompanyId?: string) => boolean;
+  checkApproval: (amount: number, moduleKey?: ModuleKey, targetCompanyId?: string) => { allowed: boolean; reason?: string };
+  getGroupsForCompany: (companyId: string) => UserGroup[];
   switchUser: (userId: string) => void;
   reloadAuth: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode; activeCompanyId?: string }> = ({
+  children,
+  activeCompanyId: propActiveCompanyId
+}) => {
+  const [internalActiveCompanyId, setInternalActiveCompanyId] = useState<string>(propActiveCompanyId || 'COMP-01');
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [allGroups, setAllGroups] = useState<UserGroup[]>([]);
   const [allPermissions, setAllPermissions] = useState<GroupModulePermission[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>(() => {
     return localStorage.getItem('engineering_erp_active_user_id') || 'USR-001';
   });
+
+  useEffect(() => {
+    if (propActiveCompanyId && propActiveCompanyId !== internalActiveCompanyId) {
+      setInternalActiveCompanyId(propActiveCompanyId);
+    }
+  }, [propActiveCompanyId, internalActiveCompanyId]);
+
+  const activeCompanyId = propActiveCompanyId || internalActiveCompanyId;
+  const setActiveCompanyId = setInternalActiveCompanyId;
 
   const reloadAuth = useCallback(() => {
     const users = getAllUsers();
@@ -55,24 +71,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 當前使用者 (安全防護：嚴禁靜默提權回退至 Superadmin)
   const currentUser = useMemo(() => {
     if (!allUsers.length) return null;
-    // 優先精準鎖定當前儲存之使用者 ID（即使遭停權也如實保留其帳號實體，絕不自動提權或回退至 Superadmin）
     const matched = allUsers.find(u => u.id === currentUserId);
     if (matched) {
       return matched;
     }
-    // 若帳號已被完全物理永久抹除 (不存在於資料庫)，則安全回退至第一位正常在職者
     const firstActive = allUsers.find(u => u.status === 'ACTIVE');
     return firstActive || null;
   }, [allUsers, currentUserId]);
 
-  // 當前使用者所屬全部群組 (支援多重業務群組矩陣)
-  const currentGroups = useMemo<UserGroup[]>(() => {
+  // 取得使用者在指定法人下的業務群組 (支援跨法人業務授權矩陣)
+  const getGroupsForCompany = useCallback((companyId: string): UserGroup[] => {
     if (!currentUser || currentUser.role !== 'USER' || currentUser.status !== 'ACTIVE') return [];
+
+    // 若設定了跨法人業務授權矩陣
+    if (currentUser.companyGroupAssignments && currentUser.companyGroupAssignments.length > 0) {
+      if (companyId === 'COMP-ALL' || !companyId) {
+        const allAssignedGroupIds = Array.from(new Set(currentUser.companyGroupAssignments.flatMap(a => a.groupIds)));
+        return allGroups.filter(g => allAssignedGroupIds.includes(g.id));
+      }
+
+      const match = currentUser.companyGroupAssignments.find(a => a.companyId === companyId);
+      if (match && match.groupIds && match.groupIds.length > 0) {
+        return allGroups.filter(g => match.groupIds.includes(g.id));
+      }
+      // 在矩陣模式下，若此特定法人未被指派業務群組，代表在此法人無權限
+      return [];
+    }
+
+    // 回退至全域業務群組 (向下相容)
     const ids = currentUser.groupIds && currentUser.groupIds.length > 0
       ? currentUser.groupIds
       : (currentUser.groupId ? [currentUser.groupId] : []);
     return allGroups.filter(g => ids.includes(g.id));
   }, [currentUser, allGroups]);
+
+  // 當前使用者在當前選定法人下的有效群組
+  const currentGroups = useMemo<UserGroup[]>(() => {
+    return getGroupsForCompany(activeCompanyId);
+  }, [getGroupsForCompany, activeCompanyId]);
 
   // 主要群組 (供單一群組簡易向下相容顯示)
   const currentGroup = useMemo<UserGroup | null>(() => {
@@ -83,7 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isAdmin = currentUser?.role === 'ADMIN' && currentUser?.status === 'ACTIVE';
   const isUser = currentUser?.role === 'USER' && currentUser?.status === 'ACTIVE';
 
-  // 核准金額上限 (多群組取最大上限，賦予同仁最大授權)
+  // 核准金額上限 (依當前法人有效群組取最大上限)
   const approvalLimit = useMemo(() => {
     if (isSuperadmin) return Infinity;
     if (isAdmin) return 50000000;
@@ -118,8 +154,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [allUsers]);
 
-  // 權限判斷函式 (PBAC 多群組矩陣聯集解析)
-  const can = useCallback((moduleKey: ModuleKey, action: 'read' | 'write' | 'approve' | 'export'): boolean => {
+  // 權限判斷函式 (PBAC 多群組矩陣聯集解析 + 跨法人業務分權)
+  const can = useCallback((moduleKey: ModuleKey, action: 'read' | 'write' | 'approve' | 'export', targetCompanyId?: string): boolean => {
     if (!currentUser) return false;
 
     // 停權帳號（DISABLED）或待刪除/封存帳號：全面封鎖所有模組權限
@@ -127,6 +163,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Superadmin: 擁有所有模組的無條件最高權限
     if (currentUser.role === 'SUPERADMIN') return true;
+
+    const effCompId = targetCompanyId || activeCompanyId;
 
     // Admin: 系統管理員擁有絕大多數檢視、同仁維護與系統管理權限
     if (currentUser.role === 'ADMIN') {
@@ -138,14 +176,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (moduleKey === 'SYSTEM_CONFIGS' && (action === 'write' || action === 'approve')) {
         return Boolean(currentUser.canManageSystemConfigs);
       }
+      // 若指定特定公司，檢查是否在授權法人範圍內
+      if (effCompId && !currentUser.canManageAllCompanies && !(currentUser.allowedCompanies || []).includes(effCompId)) {
+        return false;
+      }
       return true;
     }
 
-    // User: 依所屬多個業務群組之 group_module_permissions 綜合聯集 (OR) 查核
-    if (currentGroups.length === 0) return false;
+    // User: 業務同仁
+    // 若未指定 targetCompanyId，且當前法人下群組為空，但查詢為唯讀（例如左側導航選單項目是否對同仁可見）
+    if (!targetCompanyId && currentGroups.length === 0 && action === 'read') {
+      if (currentUser.companyGroupAssignments && currentUser.companyGroupAssignments.length > 0) {
+        const allAssignedGroupIds = Array.from(new Set(currentUser.companyGroupAssignments.flatMap(a => a.groupIds)));
+        const allAssignedGroups = allGroups.filter(g => allAssignedGroupIds.includes(g.id));
+        return allAssignedGroups.some(grp => {
+          const perm = allPermissions.find(p => p.groupId === grp.id && p.moduleKey === moduleKey);
+          return perm?.canRead;
+        });
+      }
+    }
+
+    const effGroups = targetCompanyId ? getGroupsForCompany(targetCompanyId) : currentGroups;
+    if (effGroups.length === 0) return false;
 
     // 檢查是否有任一個所屬群組具備該權限
-    return currentGroups.some(grp => {
+    return effGroups.some(grp => {
       // 若為匯出動作，該群組必須具有全域匯出授權 (canExport)
       if (action === 'export' && !grp.canExport) {
         return false;
@@ -167,32 +222,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return false;
       }
     });
-  }, [currentUser, currentGroups, allPermissions]);
+  }, [currentUser, activeCompanyId, currentGroups, getGroupsForCompany, allGroups, allPermissions]);
 
   // 審核單據金額上限查核
-  const checkApproval = useCallback((amount: number, moduleKey?: ModuleKey): { allowed: boolean; reason?: string } => {
+  const checkApproval = useCallback((amount: number, moduleKey?: ModuleKey, targetCompanyId?: string): { allowed: boolean; reason?: string } => {
     if (!currentUser) return { allowed: false, reason: '未登入或無身分' };
     if (isSuperadmin) return { allowed: true };
 
-    const groupNames = currentGroups.map(g => g.groupName).join(' / ') || currentUser.role;
+    const effCompId = targetCompanyId || activeCompanyId;
+    const effGroups = targetCompanyId ? getGroupsForCompany(targetCompanyId) : currentGroups;
+    const groupNames = effGroups.map(g => g.groupName).join(' / ') || currentUser.role;
 
-    if (moduleKey && !can(moduleKey, 'approve')) {
-      return { allowed: false, reason: `您所屬身分 [${groupNames}] 尚未被賦予本模組的單據核准權限！` };
+    if (moduleKey && !can(moduleKey, 'approve', effCompId)) {
+      return { allowed: false, reason: `您在當前法人所屬身分 [${groupNames}] 尚未被賦予本模組的單據核准權限！` };
     }
 
-    if (approvalLimit === 0) {
-      return { allowed: false, reason: `您所屬群組 [${groupNames}] 單筆核准額度為 NT$ 0，僅可填報草稿，無核准權限！` };
+    let effLimit = 0;
+    if (isAdmin) {
+      effLimit = 50000000;
+    } else if (effGroups.length > 0) {
+      if (effGroups.some(g => g.approvalLimit === -1 || g.approvalLimit >= 999999999)) {
+        effLimit = Infinity;
+      } else {
+        effLimit = Math.max(...effGroups.map(g => g.approvalLimit || 0), 0);
+      }
     }
 
-    if (amount > approvalLimit) {
+    if (effLimit === 0) {
+      return { allowed: false, reason: `您在當前法人所屬群組 [${groupNames}] 單筆核准額度為 NT$ 0，僅可填報草稿，無核准權限！` };
+    }
+
+    if (amount > effLimit) {
       return {
         allowed: false,
-        reason: `單據金額 NT$ ${amount.toLocaleString()} 超出您所屬群組之單筆審核上限 NT$ ${approvalLimit.toLocaleString()}，須呈報上級長官核准！`
+        reason: `單據金額 NT$ ${amount.toLocaleString()} 超出您在當前法人所屬群組之單筆審核上限 NT$ ${effLimit.toLocaleString()}，須呈報上級長官核准！`
       };
     }
 
     return { allowed: true };
-  }, [currentUser, isSuperadmin, can, currentGroups, approvalLimit]);
+  }, [currentUser, isSuperadmin, isAdmin, can, activeCompanyId, currentGroups, getGroupsForCompany]);
 
   const value = {
     currentUser,
@@ -205,8 +273,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAdmin,
     isUser,
     approvalLimit,
+    activeCompanyId,
+    setActiveCompanyId,
     can,
     checkApproval,
+    getGroupsForCompany,
     switchUser,
     reloadAuth,
   };

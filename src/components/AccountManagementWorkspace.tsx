@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { User, Company, AuditLog, ModuleKey } from '../types/erp';
+import { User, Company, AuditLog, ModuleKey, CompanyGroupAssignment } from '../types/erp';
 import {
   Users,
   Shield,
@@ -25,7 +25,8 @@ import {
   Clock,
   Flame,
   Undo2,
-  ScrollText
+  ScrollText,
+  Building2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -200,6 +201,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     canManageAdmins: boolean;
     canManageAllCompanies: boolean;
     groupIds: string[];
+    companyGroupAssignments: CompanyGroupAssignment[];
+    permissionMode: 'GLOBAL' | 'MATRIX';
     allowedCompanies: string[];
     defaultCompanyId: string;
     password?: string;
@@ -214,6 +217,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     canManageAdmins: false,
     canManageAllCompanies: false,
     groupIds: ['GRP-ENG'],
+    companyGroupAssignments: [],
+    permissionMode: 'GLOBAL',
     allowedCompanies: ['COMP-01'],
     defaultCompanyId: 'COMP-01',
     password: '888888',
@@ -223,6 +228,60 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   const getGroupName = (groupId?: string) => {
     const found = allGroups.find(g => g.id === groupId);
     return found ? found.groupName : groupId;
+  };
+
+  // 跨法人矩陣：切換特定法人之特定業務群組
+  const handleToggleMatrixCompanyGroup = (companyId: string, groupId: string) => {
+    setFormData(prev => {
+      const existing = prev.companyGroupAssignments.find(a => a.companyId === companyId);
+      let updatedAssignments: CompanyGroupAssignment[];
+      if (existing) {
+        const hasGrp = existing.groupIds.includes(groupId);
+        const nextGroups = hasGrp
+          ? existing.groupIds.filter(g => g !== groupId)
+          : [...existing.groupIds, groupId];
+        updatedAssignments = prev.companyGroupAssignments.map(a => 
+          a.companyId === companyId ? { ...a, groupIds: nextGroups } : a
+        );
+      } else {
+        updatedAssignments = [...prev.companyGroupAssignments, { companyId, groupIds: [groupId] }];
+      }
+
+      // 確保至少有一項群組的法人自動包含在 allowedCompanies 內
+      const compHasAny = updatedAssignments.some(a => a.companyId === companyId && a.groupIds.length > 0);
+      let nextAllowed = prev.allowedCompanies;
+      if (compHasAny && !nextAllowed.includes(companyId)) {
+        nextAllowed = [...nextAllowed, companyId];
+      }
+
+      // 全域 groupIds 聯集更新供向下相容
+      const allAssigned = Array.from(new Set(updatedAssignments.flatMap(a => a.groupIds)));
+      return {
+        ...prev,
+        allowedCompanies: nextAllowed,
+        companyGroupAssignments: updatedAssignments,
+        groupIds: allAssigned.length > 0 ? allAssigned : prev.groupIds
+      };
+    });
+  };
+
+  // 跨法人矩陣：為特定法人快速全選或清空群組
+  const handleSetMatrixCompanyAllGroups = (companyId: string, groupIds: string[]) => {
+    setFormData(prev => {
+      const filtered = prev.companyGroupAssignments.filter(a => a.companyId !== companyId);
+      const updatedAssignments = [...filtered, { companyId, groupIds }];
+      const allAssigned = Array.from(new Set(updatedAssignments.flatMap(a => a.groupIds)));
+      let nextAllowed = prev.allowedCompanies;
+      if (groupIds.length > 0 && !nextAllowed.includes(companyId)) {
+        nextAllowed = [...nextAllowed, companyId];
+      }
+      return {
+        ...prev,
+        allowedCompanies: nextAllowed,
+        companyGroupAssignments: updatedAssignments,
+        groupIds: allAssigned.length > 0 ? allAssigned : prev.groupIds
+      };
+    });
   };
 
   // 權限檢查輔助函式：當前操作者是否能管理目標帳號 (置頂警示視窗防護)
@@ -283,6 +342,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       canManageAdmins: false,
       canManageAllCompanies: false,
       groupIds: ['GRP-ENG'],
+      companyGroupAssignments: [],
+      permissionMode: 'GLOBAL',
       allowedCompanies: ['COMP-01', 'COMP-02'],
       defaultCompanyId: 'COMP-01',
       password: '888888',
@@ -295,6 +356,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     if (!checkCanManageTarget(user, '編輯')) return;
 
     setEditingUser(user);
+    const hasMatrix = Boolean(user.companyGroupAssignments && user.companyGroupAssignments.length > 0);
     setFormData({
       id: user.id,
       username: user.username,
@@ -307,6 +369,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       canManageAdmins: Boolean(user.canManageAdmins),
       canManageAllCompanies: Boolean(user.canManageAllCompanies),
       groupIds: user.groupIds && user.groupIds.length > 0 ? user.groupIds : (user.groupId ? [user.groupId] : []),
+      companyGroupAssignments: user.companyGroupAssignments || [],
+      permissionMode: hasMatrix ? 'MATRIX' : 'GLOBAL',
       allowedCompanies: user.allowedCompanies && user.allowedCompanies.length > 0 ? user.allowedCompanies : ['COMP-01'],
       defaultCompanyId: user.defaultCompanyId || 'COMP-01',
     });
@@ -322,6 +386,25 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
         message: '同仁登入帳號代碼與真實姓名為必填欄位，請完整輸入！',
       });
       return;
+    }
+
+    if (formData.role === 'USER') {
+      if (formData.permissionMode === 'MATRIX') {
+        const hasValidAssignment = formData.companyGroupAssignments.some(a => a.groupIds && a.groupIds.length > 0);
+        if (!hasValidAssignment) {
+          setAlertModal({
+            title: '矩陣授權未設定',
+            message: '您選擇了「跨法人業務授權矩陣模式」，請至少為一家營運法人指派業務職能群組！',
+          });
+          return;
+        }
+      } else if (formData.groupIds.length === 0) {
+        setAlertModal({
+          title: '業務群組未指派',
+          message: '一般同仁帳號必須至少指派一個所屬業務群組！',
+        });
+        return;
+      }
     }
 
     const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
@@ -341,6 +424,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           canManageAdmins: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageAdmins) : false,
           canManageAllCompanies: isSuperadmin && formData.role === 'ADMIN' ? Boolean(formData.canManageAllCompanies) : false,
           groupIds: formData.role === 'USER' ? (formData.groupIds.length > 0 ? formData.groupIds : ['GRP-ENG']) : [],
+          companyGroupAssignments: formData.role === 'USER' && formData.permissionMode === 'MATRIX' ? formData.companyGroupAssignments : [],
           allowedCompanies: formData.allowedCompanies,
           defaultCompanyId: formData.defaultCompanyId,
           password: formData.password || '888888',
@@ -454,6 +538,28 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
           newValue: newNames || '(無)'
         });
       }
+
+      // 跨法人業務授權矩陣變更比對
+      const oldMat = editingUser.companyGroupAssignments || [];
+      const newMat = formData.permissionMode === 'MATRIX' ? formData.companyGroupAssignments : [];
+      const oldMatKey = JSON.stringify(oldMat);
+      const newMatKey = JSON.stringify(newMat);
+      if (oldMatKey !== newMatKey) {
+        const formatMat = (assignments: CompanyGroupAssignment[]) => {
+          if (!assignments.length) return '全域群組模式 (統包)';
+          return assignments.map(a => {
+            const comp = companies.find(c => c.id === a.companyId);
+            const compName = comp ? (comp.shortName || comp.name) : a.companyId;
+            const grpNames = a.groupIds.map(getGroupName).join('+') || '無指派';
+            return `[${compName}: ${grpNames}]`;
+          }).join('、');
+        };
+        diffs.push({
+          fieldName: '跨法人業務授權矩陣',
+          oldValue: formatMat(oldMat),
+          newValue: formatMat(newMat)
+        });
+      }
     }
 
     const oldComps = (editingUser.allowedCompanies || ['COMP-01']).sort().join(',');
@@ -492,6 +598,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       canManageAdmins: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageAdmins : undefined,
       canManageAllCompanies: isSuperadmin && formData.role === 'ADMIN' ? formData.canManageAllCompanies : undefined,
       groupIds: finalGroupIds,
+      companyGroupAssignments: formData.role === 'USER' && formData.permissionMode === 'MATRIX' ? formData.companyGroupAssignments : [],
       allowedCompanies: formData.allowedCompanies,
       defaultCompanyId: formData.defaultCompanyId,
     };
@@ -1639,19 +1746,41 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                       {/* 所屬業務群組 */}
                       <td className="py-2.5 px-3">
                         {user.role === 'USER' ? (
-                          <div className="flex flex-wrap gap-1">
-                            {(user.groupIds && user.groupIds.length > 0
-                              ? user.groupIds
-                              : (user.groupId ? [user.groupId] : [])
-                            ).map(gId => (
-                              <span
-                                key={gId}
-                                className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200"
-                              >
-                                {getGroupName(gId)}
+                          user.companyGroupAssignments && user.companyGroupAssignments.length > 0 ? (
+                            <div className="space-y-1">
+                              <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                                <Building2 className="w-2.5 h-2.5 text-purple-600" />
+                                <span>跨法人業務矩陣</span>
                               </span>
-                            ))}
-                          </div>
+                              <div className="flex flex-col gap-0.5">
+                                {user.companyGroupAssignments.filter(a => a.groupIds.length > 0).map(a => {
+                                  const c = companies.find(item => item.id === a.companyId);
+                                  const compLabel = c?.shortName || a.companyId;
+                                  const gNames = a.groupIds.map(getGroupName).join('、');
+                                  return (
+                                    <div key={a.companyId} className="text-[10px] flex items-center gap-1">
+                                      <span className="font-semibold text-slate-700 bg-slate-100 px-1 py-0.2 rounded text-[9px] font-mono">{compLabel}:</span>
+                                      <span className="text-indigo-600 font-medium">{gNames}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {(user.groupIds && user.groupIds.length > 0
+                                ? user.groupIds
+                                : (user.groupId ? [user.groupId] : [])
+                              ).map(gId => (
+                                <span
+                                  key={gId}
+                                  className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                >
+                                  {getGroupName(gId)}
+                                </span>
+                              ))}
+                            </div>
+                          )
                         ) : (
                           <span className="text-[11px] text-slate-400 italic">全域管理組</span>
                         )}
@@ -2527,124 +2656,371 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                 </div>
               )}
 
-              {/* 所屬業務群組多選 (當 role === 'USER' 時必選) */}
+              {/* USER 身分：授權模式切換 (全域統包 vs 跨法人精細分權矩陣) */}
               {formData.role === 'USER' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-slate-700 font-bold">
+                      業務權限授權模式 <span className="text-rose-500">*</span>
+                    </label>
+                    <span className="text-[11px] text-slate-500 font-normal">
+                      支援依單一營運法人個別指定業務職能
+                    </span>
+                  </div>
+
+                  <div className="bg-slate-100 p-1 rounded-lg flex items-center gap-1 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, permissionMode: 'GLOBAL' }))}
+                      className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        formData.permissionMode === 'GLOBAL'
+                          ? 'bg-white text-slate-800 shadow-2xs'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5 text-slate-500" />
+                      <span>全域群組模式 (統包共用)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => {
+                          let assignments = prev.companyGroupAssignments;
+                          if (!assignments || assignments.length === 0) {
+                            assignments = prev.allowedCompanies.map(cId => ({
+                              companyId: cId,
+                              groupIds: [...prev.groupIds]
+                            }));
+                          }
+                          return {
+                            ...prev,
+                            permissionMode: 'MATRIX',
+                            companyGroupAssignments: assignments
+                          };
+                        });
+                      }}
+                      className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        formData.permissionMode === 'MATRIX'
+                          ? 'bg-indigo-600 text-white shadow-2xs'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>跨法人業務矩陣 (獨立分權)</span>
+                      <span className="text-[10px] bg-indigo-500/80 text-white px-1 py-0.2 rounded font-normal">精細指定</span>
+                    </button>
+                  </div>
+
+                  {/* 模式 A：全域群組模式 (統包) */}
+                  {formData.permissionMode === 'GLOBAL' ? (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-slate-700 font-bold mb-1.5">
+                          指派業務權限群組 (PBAC 矩陣多選) <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="space-y-1.5 bg-slate-50 border border-slate-200 p-2.5 rounded-lg">
+                          {allGroups.map(grp => {
+                            const checked = formData.groupIds.includes(grp.id);
+                            return (
+                              <label
+                                key={grp.id}
+                                className={`p-2 rounded border flex items-center justify-between cursor-pointer transition-colors ${
+                                  checked
+                                    ? 'bg-white border-indigo-400 text-indigo-900 shadow-2xs font-semibold'
+                                    : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setFormData({ ...formData, groupIds: [...formData.groupIds, grp.id] });
+                                      } else {
+                                        if (formData.groupIds.length === 1) {
+                                          setAlertModal({
+                                            title: '操作限制',
+                                            message: '一般同仁至少需保留一個業務權限群組！',
+                                          });
+                                          return;
+                                        }
+                                        setFormData({ ...formData, groupIds: formData.groupIds.filter(id => id !== grp.id) });
+                                      }
+                                    }}
+                                    className="rounded text-indigo-600 focus:ring-indigo-500"
+                                  />
+                                  <span>{grp.groupName}</span>
+                                  <span className="text-[10px] text-slate-400 font-mono">({grp.groupCode})</span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono">
+                                  審核額度: {grp.approvalLimit > 0 ? `NT$ ${grp.approvalLimit.toLocaleString()}` : '$0 (草稿填報)'}
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <span className="text-[10px] text-slate-400 mt-1 block">
+                          在全域模式下，所選群組權限將無差別套用於該同仁獲授權的所有營運法人中。
+                        </span>
+                      </div>
+
+                      {/* 授權營運法人 */}
+                      <div>
+                        <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
+                          <span>授權操作營運法人</span>
+                          {!isSuperadmin && !currentUser?.canManageAllCompanies && (
+                            <span className="text-[11px] font-normal text-slate-500">
+                              (僅限指派您自身獲授權之營運法人)
+                            </span>
+                          )}
+                        </label>
+                        <div className="space-y-1.5 bg-slate-50 border border-slate-200 p-2.5 rounded-lg">
+                          {companies.map(comp => {
+                            const checked = formData.allowedCompanies.includes(comp.id);
+                            const operatorCanAssign = isSuperadmin || currentUser?.canManageAllCompanies || (currentUser?.allowedCompanies || []).includes(comp.id);
+                            return (
+                              <label
+                                key={comp.id}
+                                className={`p-2 rounded border flex items-center justify-between transition-colors ${
+                                  !operatorCanAssign
+                                    ? 'bg-slate-100/80 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                                    : checked
+                                    ? 'bg-white border-indigo-400 text-indigo-900 shadow-2xs font-semibold cursor-pointer'
+                                    : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white cursor-pointer'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={!operatorCanAssign}
+                                    onChange={(e) => {
+                                      if (!operatorCanAssign) return;
+                                      if (e.target.checked) {
+                                        setFormData({ ...formData, allowedCompanies: [...formData.allowedCompanies, comp.id] });
+                                      } else {
+                                        if (formData.allowedCompanies.length === 1) {
+                                          setAlertModal({
+                                            title: '操作限制',
+                                            message: '至少需保留一個授權法人！',
+                                          });
+                                          return;
+                                        }
+                                        setFormData({ ...formData, allowedCompanies: formData.allowedCompanies.filter(id => id !== comp.id) });
+                                      }
+                                    }}
+                                    className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                                  />
+                                  <span>[{comp.companyCode}] {comp.shortName || comp.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {!operatorCanAssign && (
+                                    <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                      非您授權管轄
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-slate-400">
+                                    {comp.entityType === 'GROUP' ? '母體集團' : comp.entityType === 'PERSONAL' ? '老闆私帳' : '公司法人'}
+                                  </span>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* 模式 B：跨法人業務授權矩陣 (精細分權) */
+                    <div className="space-y-3">
+                      <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-lg">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                            <Building2 className="w-4 h-4 text-indigo-600" />
+                            <span>跨法人多維度業務授權矩陣</span>
+                          </div>
+                          <span className="text-[10px] text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full font-semibold">
+                            {formData.companyGroupAssignments.filter(a => a.groupIds && a.groupIds.length > 0).length} 家法人已指派
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-indigo-800 leading-relaxed">
+                          您可以為每一家營運法人指定該同仁負責之業務。例如：在<strong>【大巨營造】負責財務會計</strong>、在<strong>【宏達機電】負責採購發包</strong>。同仁在頂部切換不同公司時，系統將自動套用對應的模組權限與審核額度。
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        {companies.map(comp => {
+                          const operatorCanAssign = isSuperadmin || currentUser?.canManageAllCompanies || (currentUser?.allowedCompanies || []).includes(comp.id);
+                          const assignment = formData.companyGroupAssignments.find(a => a.companyId === comp.id);
+                          const assignedGroupIds = assignment ? assignment.groupIds : [];
+                          const isCompanyEnabled = assignedGroupIds.length > 0;
+
+                          const compGroups = allGroups.filter(g => assignedGroupIds.includes(g.id));
+                          const compLimit = compGroups.length > 0
+                            ? (compGroups.some(g => g.approvalLimit === -1 || g.approvalLimit >= 999999999)
+                                ? '無限制'
+                                : `NT$ ${Math.max(...compGroups.map(g => g.approvalLimit || 0), 0).toLocaleString()}`)
+                            : '$0 (未指派業務)';
+
+                          return (
+                            <div
+                              key={comp.id}
+                              className={`p-3 rounded-lg border transition-all ${
+                                !operatorCanAssign
+                                  ? 'bg-slate-50 border-slate-200 opacity-50'
+                                  : isCompanyEnabled
+                                  ? 'bg-white border-indigo-300 shadow-2xs'
+                                  : 'bg-slate-50/70 border-slate-200'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs text-slate-800">
+                                    [{comp.companyCode}] {comp.shortName || comp.name}
+                                  </span>
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200 font-mono">
+                                    {comp.entityType === 'GROUP' ? '母體集團' : comp.entityType === 'PERSONAL' ? '老闆私帳' : '公司法人'}
+                                  </span>
+                                  {!operatorCanAssign && (
+                                    <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                      非您授權管轄
+                                    </span>
+                                  )}
+                                </div>
+
+                                {operatorCanAssign && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-mono text-slate-500">
+                                      審核額度: <span className="font-bold text-slate-700">{compLimit}</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetMatrixCompanyAllGroups(comp.id, allGroups.map(g => g.id))}
+                                      className="text-[10px] text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                                    >
+                                      全選
+                                    </button>
+                                    <span className="text-slate-300 text-xs">|</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetMatrixCompanyAllGroups(comp.id, [])}
+                                      className="text-[10px] text-rose-600 hover:text-rose-800 hover:underline cursor-pointer"
+                                    >
+                                      清空
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="pt-2">
+                                <div className="text-[10px] text-slate-500 font-medium mb-1.5">
+                                  指派業務職能群組 (點選按鈕切換)：
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                                  {allGroups.map(grp => {
+                                    const isChecked = assignedGroupIds.includes(grp.id);
+                                    const colorClass = grp.id === 'GRP-ENG'
+                                      ? isChecked ? 'bg-blue-600 text-white border-blue-600 shadow-2xs' : 'bg-white border-slate-200 text-slate-700 hover:border-blue-400'
+                                      : grp.id === 'GRP-ACC'
+                                      ? isChecked ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs' : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-400'
+                                      : grp.id === 'GRP-PROC'
+                                      ? isChecked ? 'bg-amber-600 text-white border-amber-600 shadow-2xs' : 'bg-white border-slate-200 text-slate-700 hover:border-amber-400'
+                                      : isChecked ? 'bg-purple-600 text-white border-purple-600 shadow-2xs' : 'bg-white border-slate-200 text-slate-700 hover:border-purple-400';
+
+                                    return (
+                                      <button
+                                        key={grp.id}
+                                        type="button"
+                                        disabled={!operatorCanAssign}
+                                        onClick={() => handleToggleMatrixCompanyGroup(comp.id, grp.id)}
+                                        className={`py-1.5 px-2 rounded-lg border text-xs font-semibold flex items-center justify-between transition-all cursor-pointer disabled:cursor-not-allowed ${colorClass}`}
+                                      >
+                                        <span className="truncate">{grp.groupName}</span>
+                                        {isChecked ? (
+                                          <Check className="w-3.5 h-3.5 shrink-0" />
+                                        ) : (
+                                          <span className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ADMIN 身分：授權營運法人 */}
+              {formData.role === 'ADMIN' && (
                 <div>
-                  <label className="block text-slate-700 font-bold mb-1.5">
-                    指派業務權限群組 (PBAC 矩陣多選) <span className="text-rose-500">*</span>
+                  <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
+                    <span>授權操作營運法人</span>
+                    {!isSuperadmin && !currentUser?.canManageAllCompanies && (
+                      <span className="text-[11px] font-normal text-slate-500">
+                        (僅限指派您自身獲授權之營運法人)
+                      </span>
+                    )}
                   </label>
                   <div className="space-y-1.5 bg-slate-50 border border-slate-200 p-2.5 rounded-lg">
-                    {allGroups.map(grp => {
-                      const checked = formData.groupIds.includes(grp.id);
+                    {companies.map(comp => {
+                      const checked = formData.allowedCompanies.includes(comp.id);
+                      const operatorCanAssign = isSuperadmin || currentUser?.canManageAllCompanies || (currentUser?.allowedCompanies || []).includes(comp.id);
                       return (
                         <label
-                          key={grp.id}
-                          className={`p-2 rounded border flex items-center justify-between cursor-pointer transition-colors ${
-                            checked
-                              ? 'bg-white border-indigo-400 text-indigo-900 shadow-2xs font-semibold'
-                              : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
+                          key={comp.id}
+                          className={`p-2 rounded border flex items-center justify-between transition-colors ${
+                            !operatorCanAssign
+                              ? 'bg-slate-100/80 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                              : checked
+                              ? 'bg-white border-indigo-400 text-indigo-900 shadow-2xs font-semibold cursor-pointer'
+                              : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white cursor-pointer'
                           }`}
                         >
                           <div className="flex items-center gap-2">
                             <input
                               type="checkbox"
                               checked={checked}
+                              disabled={!operatorCanAssign}
                               onChange={(e) => {
+                                if (!operatorCanAssign) return;
                                 if (e.target.checked) {
-                                  setFormData({ ...formData, groupIds: [...formData.groupIds, grp.id] });
+                                  setFormData({ ...formData, allowedCompanies: [...formData.allowedCompanies, comp.id] });
                                 } else {
-                                  if (formData.groupIds.length === 1) {
+                                  if (formData.allowedCompanies.length === 1) {
                                     setAlertModal({
                                       title: '操作限制',
-                                      message: '一般同仁至少需保留一個業務權限群組！',
+                                      message: '至少需保留一個授權法人！',
                                     });
                                     return;
                                   }
-                                  setFormData({ ...formData, groupIds: formData.groupIds.filter(id => id !== grp.id) });
+                                  setFormData({ ...formData, allowedCompanies: formData.allowedCompanies.filter(id => id !== comp.id) });
                                 }
                               }}
-                              className="rounded text-indigo-600 focus:ring-indigo-500"
+                              className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                             />
-                            <span>{grp.groupName}</span>
-                            <span className="text-[10px] text-slate-400 font-mono">({grp.groupCode})</span>
+                            <span>[{comp.companyCode}] {comp.shortName || comp.name}</span>
                           </div>
-                          <div className="text-[10px] text-slate-500 font-mono">
-                            審核額度: {grp.approvalLimit > 0 ? `NT$ ${grp.approvalLimit.toLocaleString()}` : '$0 (草稿填報)'}
+                          <div className="flex items-center gap-2">
+                            {!operatorCanAssign && (
+                              <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                非您授權管轄
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-400">
+                              {comp.entityType === 'GROUP' ? '母體集團' : comp.entityType === 'PERSONAL' ? '老闆私帳' : '公司法人'}
+                            </span>
                           </div>
                         </label>
                       );
                     })}
                   </div>
-                  <span className="text-[10px] text-slate-400 mt-1 block">
-                    勾選多個群組時，系統自動將模組權限採聯集 (OR) 生效，並取最大單筆核准額度。
-                  </span>
                 </div>
               )}
-
-              {/* 授權營運法人 */}
-              <div>
-                <label className="block text-slate-700 font-bold mb-1.5 flex items-center justify-between">
-                  <span>授權操作營運法人</span>
-                  {!isSuperadmin && !currentUser?.canManageAllCompanies && (
-                    <span className="text-[11px] font-normal text-slate-500">
-                      (僅限指派您自身獲授權之營運法人)
-                    </span>
-                  )}
-                </label>
-                <div className="space-y-1.5 bg-slate-50 border border-slate-200 p-2.5 rounded-lg">
-                  {companies.map(comp => {
-                    const checked = formData.allowedCompanies.includes(comp.id);
-                    const operatorCanAssign = isSuperadmin || currentUser?.canManageAllCompanies || (currentUser?.allowedCompanies || []).includes(comp.id);
-                    return (
-                      <label
-                        key={comp.id}
-                        className={`p-2 rounded border flex items-center justify-between transition-colors ${
-                          !operatorCanAssign
-                            ? 'bg-slate-100/80 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
-                            : checked
-                            ? 'bg-white border-indigo-400 text-indigo-900 shadow-2xs font-semibold cursor-pointer'
-                            : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white cursor-pointer'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={!operatorCanAssign}
-                            onChange={(e) => {
-                              if (!operatorCanAssign) return;
-                              if (e.target.checked) {
-                                setFormData({ ...formData, allowedCompanies: [...formData.allowedCompanies, comp.id] });
-                              } else {
-                                if (formData.allowedCompanies.length === 1) {
-                                  setAlertModal({
-                                    title: '操作限制',
-                                    message: '至少需保留一個授權法人！',
-                                  });
-                                  return;
-                                }
-                                setFormData({ ...formData, allowedCompanies: formData.allowedCompanies.filter(id => id !== comp.id) });
-                              }
-                            }}
-                            className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
-                          />
-                          <span>[{comp.companyCode}] {comp.shortName || comp.name}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {!operatorCanAssign && (
-                            <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                              非您授權管轄
-                            </span>
-                          )}
-                          <span className="text-[10px] text-slate-400">
-                            {comp.entityType === 'GROUP' ? '母體集團' : comp.entityType === 'PERSONAL' ? '老闆私帳' : '公司法人'}
-                          </span>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
 
               {/* 新增時初始密碼 */}
               {!editingUser && (
