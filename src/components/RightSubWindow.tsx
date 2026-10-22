@@ -23,11 +23,13 @@ import {
   ShieldCheck,
   Send,
   Sliders,
+  SlidersHorizontal,
   Ban,
   KeyRound
 } from 'lucide-react';
 import { FlowchartNavigator } from './FlowchartNavigator';
 import { MainCanvasWorkspace } from './MainCanvasWorkspace';
+import { ProjectWorkspace } from './projects/ProjectWorkspace';
 import { DiscussionRoadmapView } from './DiscussionRoadmapView';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
 import { AccountManagementWorkspace } from './AccountManagementWorkspace';
@@ -109,6 +111,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   const [systemConfigs, setSystemConfigs] = useState<SystemConfig[]>([]);
   const [editingConfigs, setEditingConfigs] = useState<Record<string, string>>({});
   const [appConfigMap, setAppConfigMap] = useState<Record<string, string>>({});
+  const [projectSubTab, setProjectSubTab] = useState<'MANAGEMENT' | 'WBS'>('MANAGEMENT');
 
   useEffect(() => {
     const loadConfigs = () => {
@@ -186,7 +189,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
       case 'DASHBOARD':
         return `${brandName} 營運戰情儀表板 (Dashboard & Lifecycle Map)`;
       case 'PROJECTS':
-        return '專案與案場工程主檔';
+        return '案場管理主檔 (工程專案與工區現地建檔)';
       case 'FLOWCHART':
         return `${brandName} 業務流程圖導航`;
       case 'PARTNERS':
@@ -453,35 +456,70 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           </div>
         )}
 
-        {/* B. 專案案場主檔 */}
+        {/* B. 專案案場主檔 (ProjectWorkspace & WBS) */}
         {activeNavId === 'PROJECTS' && (
           <div className="space-y-4">
-            <div className="bg-white p-3 rounded-lg border border-slate-200 flex items-center justify-between text-xs shadow-2xs">
+            {/* 子分頁切換列：案場清冊主檔 vs 工項 WBS 畫布 */}
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs shadow-2xs">
               <div className="flex items-center gap-2">
-                <FolderGit2 className="w-4 h-4 text-indigo-600" />
-                <span className="font-bold text-slate-700">當前案場：</span>
-                <select
-                  value={selectedProjectId}
-                  onChange={(e) => onSelectProjectId(e.target.value)}
-                  className="bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs font-bold text-slate-800 outline-none"
+                <button
+                  onClick={() => setProjectSubTab('MANAGEMENT')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+                    projectSubTab === 'MANAGEMENT'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
                 >
-                  {projects.map(p => (
-                    <option key={p.id} value={p.id}>
-                      [{p.projectCode}] {p.name}
-                    </option>
-                  ))}
-                </select>
+                  <FolderGit2 className="w-3.5 h-3.5" />
+                  <span>案場管理主檔 (清冊與建檔)</span>
+                </button>
+                <button
+                  onClick={() => setProjectSubTab('WBS')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+                    projectSubTab === 'WBS'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>工程工料與 WBS 畫布</span>
+                </button>
               </div>
 
-              <div className="text-[11px] text-slate-400">
-                向下滾動滑鼠，檢視左側子視窗與上方 TOP 是否 100% 保持不動
-              </div>
+              {projectSubTab === 'WBS' && (
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 font-medium">檢視工項案場：</span>
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => onSelectProjectId(e.target.value)}
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {projects.map(p => (
+                      <option key={p.id} value={p.id}>
+                        [{p.projectCode}] {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
-            <MainCanvasWorkspace
-              project={currentProject}
-              onDataChanged={onReloadData}
-            />
+            {projectSubTab === 'MANAGEMENT' ? (
+              <ProjectWorkspace
+                projects={projects}
+                selectedProjectId={selectedProjectId}
+                onSelectProjectId={onSelectProjectId}
+                companies={companies}
+                selectedCompanyId={selectedCompanyId}
+                onDataChanged={onReloadData}
+                triggerToast={triggerModuleToast}
+              />
+            ) : (
+              <MainCanvasWorkspace
+                project={currentProject}
+                onDataChanged={onReloadData}
+              />
+            )}
           </div>
         )}
 

@@ -110,6 +110,8 @@ export const ENGINEERING_CATEGORIES: ServiceCategoryGroup[] = [
   {
     mainCategory: '專業技術顧問與測量設計',
     subCategories: [
+      '拆圖廠商 / 施工大樣圖拆圖',
+      '鋼筋模板拆圖 (出料料單)',
       '建築設計與執照代辦',
       '結構技師簽證與精算',
       '水電消防專業技師簽證',

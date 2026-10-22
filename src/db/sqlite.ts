@@ -2724,6 +2724,254 @@ export function quickCreateProject(
   return getAllProjects().find(p => p.id === id)!;
 }
 
+// 讀取單一專案
+export function getProjectById(id: string): Project | null {
+  if (!dbInstance) return null;
+  const res = dbInstance.exec(`SELECT * FROM projects WHERE id = '${id.replace(/'/g, "''")}' AND isDeleted = 0;`);
+  if (!res.length || !res[0].values.length) return null;
+  const v = res[0].values[0];
+  return {
+    id: String(v[0]),
+    projectCode: String(v[1]),
+    name: String(v[2]),
+    ownerName: String(v[3]),
+    ownerTaxId: String(v[4] || ''),
+    contractAmount: Number(v[5] || 0),
+    budgetAmount: Number(v[6] || 0),
+    committedCost: Number(v[7] || 0),
+    actualCost: Number(v[8] || 0),
+    startDate: String(v[9] || ''),
+    endDate: String(v[10] || ''),
+    status: v[11] as Project['status'],
+    isLocked: Boolean(v[12]),
+    companyId: String(v[13]),
+    isDeleted: Boolean(v[14]),
+    version: Number(v[15]),
+    createdAt: String(v[16]),
+    updatedAt: String(v[17]),
+  };
+}
+
+// 讀取所有工區案場現址資訊 (含起造人、監造人、承造人、拆圖廠商與地號)
+export function getAllProjectSites(): ProjectSite[] {
+  if (!dbInstance) return [];
+  ensureDatabaseIntegrity(dbInstance);
+  try {
+    const res = dbInstance.exec(`
+      SELECT id, projectId, siteName, address, contactPerson, contactPhone, permitNumber, developerName, architect, constructor, shopDrawingVendorId, shopDrawingVendorName, landNumber 
+      FROM project_sites;
+    `);
+    if (!res.length || !res[0].values) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      projectId: String(v[1]),
+      siteName: String(v[2] || ''),
+      address: String(v[3] || ''),
+      contactPerson: String(v[4] || ''),
+      contactPhone: String(v[5] || ''),
+      permitNumber: v[6] ? String(v[6]) : undefined,
+      developerName: v[7] ? String(v[7]) : undefined,
+      architect: v[8] ? String(v[8]) : undefined,
+      constructor: v[9] ? String(v[9]) : undefined,
+      shopDrawingVendorId: v[10] ? String(v[10]) : undefined,
+      shopDrawingVendorName: v[11] ? String(v[11]) : undefined,
+      landNumber: v[12] ? String(v[12]) : undefined,
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+// 讀取特定專案的工區現址資訊
+export function getProjectSiteByProjectId(projectId: string): ProjectSite | null {
+  if (!dbInstance) return null;
+  ensureDatabaseIntegrity(dbInstance);
+  try {
+    const res = dbInstance.exec(`
+      SELECT id, projectId, siteName, address, contactPerson, contactPhone, permitNumber, developerName, architect, constructor, shopDrawingVendorId, shopDrawingVendorName, landNumber 
+      FROM project_sites 
+      WHERE projectId = '${projectId.replace(/'/g, "''")}';
+    `);
+    if (!res.length || !res[0].values.length) return null;
+    const v = res[0].values[0];
+    return {
+      id: String(v[0]),
+      projectId: String(v[1]),
+      siteName: String(v[2] || ''),
+      address: String(v[3] || ''),
+      contactPerson: String(v[4] || ''),
+      contactPhone: String(v[5] || ''),
+      permitNumber: v[6] ? String(v[6]) : undefined,
+      developerName: v[7] ? String(v[7]) : undefined,
+      architect: v[8] ? String(v[8]) : undefined,
+      constructor: v[9] ? String(v[9]) : undefined,
+      shopDrawingVendorId: v[10] ? String(v[10]) : undefined,
+      shopDrawingVendorName: v[11] ? String(v[11]) : undefined,
+      landNumber: v[12] ? String(v[12]) : undefined,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// 正式新增案場 (專案代碼一律依據 document_sequence_rules 既定格式自動配發，法人支援未定)
+export function createProjectRecord(
+  projectData: Partial<Project>,
+  siteData?: Partial<ProjectSite>,
+  operatorName: string = '系統管理員'
+): Project {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+  const id = projectData.id || `PRJ-${Date.now().toString().slice(-6)}`;
+  // 嚴格依據單據編碼規則變數自動配發代碼，禁止手動覆蓋
+  const projectCode = getNextDocumentNumber('PRJ');
+  const cleanName = (projectData.name || '新建工程案場').trim();
+  const cleanOwner = (projectData.ownerName || '自建案場業主').trim();
+  const cleanOwnerTaxId = (projectData.ownerTaxId || '').trim();
+  const contractAmount = Number(projectData.contractAmount) || 0;
+  const budgetAmount = Number(projectData.budgetAmount) || 0;
+  const committedCost = Number(projectData.committedCost) || 0;
+  const actualCost = Number(projectData.actualCost) || 0;
+  const startDate = projectData.startDate || now.slice(0, 10);
+  const endDate = projectData.endDate || '';
+  const status = projectData.status || 'ACTIVE';
+  const isLocked = projectData.isLocked ? 1 : 0;
+  // 支援簽約法人未定 (NULL)
+  const companyIdVal = projectData.companyId && projectData.companyId.trim() ? `'${projectData.companyId.trim()}'` : 'NULL';
+
+  dbInstance.run(`
+    INSERT INTO projects (
+      id, projectCode, name, ownerName, ownerTaxId, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt
+    ) VALUES (
+      '${id}', '${projectCode}', '${cleanName.replace(/'/g, "''")}', '${cleanOwner.replace(/'/g, "''")}', '${cleanOwnerTaxId.replace(/'/g, "''")}', ${contractAmount}, ${budgetAmount}, ${committedCost}, ${actualCost}, '${startDate}', '${endDate}', '${status}', ${isLocked}, ${companyIdVal}, 0, 1, '${now}', '${now}'
+    );
+  `);
+
+  if (siteData) {
+    const siteId = siteData.id || `SITE-${Date.now().toString().slice(-6)}`;
+    const cleanSiteName = (siteData.siteName || cleanName).trim();
+    const cleanAddress = (siteData.address || '').trim();
+    const cleanPerson = (siteData.contactPerson || '').trim();
+    const cleanPhone = (siteData.contactPhone || '').trim();
+    const cleanPermit = (siteData.permitNumber || '').trim();
+    const cleanDeveloper = (siteData.developerName || cleanOwner).trim();
+    const cleanArchitect = (siteData.architect || '').trim();
+    const cleanConstructor = (siteData.constructor || '').trim();
+    const cleanShopDrawingId = (siteData.shopDrawingVendorId || '').trim();
+    const cleanShopDrawingName = (siteData.shopDrawingVendorName || '').trim();
+    const cleanLandNumber = (siteData.landNumber || '').trim();
+
+    dbInstance.run(`
+      INSERT INTO project_sites (
+        id, projectId, siteName, address, contactPerson, contactPhone, permitNumber, developerName, architect, constructor, shopDrawingVendorId, shopDrawingVendorName, landNumber
+      ) VALUES (
+        '${siteId}', '${id}', '${cleanSiteName.replace(/'/g, "''")}', '${cleanAddress.replace(/'/g, "''")}', '${cleanPerson.replace(/'/g, "''")}', '${cleanPhone.replace(/'/g, "''")}', '${cleanPermit.replace(/'/g, "''")}',
+        '${cleanDeveloper.replace(/'/g, "''")}', '${cleanArchitect.replace(/'/g, "''")}', '${cleanConstructor.replace(/'/g, "''")}',
+        ${cleanShopDrawingId ? `'${cleanShopDrawingId}'` : 'NULL'}, '${cleanShopDrawingName.replace(/'/g, "''")}', '${cleanLandNumber.replace(/'/g, "''")}'
+      );
+    `);
+  }
+
+  logAudit(dbInstance, operatorName, '新增資料', '專案案場工程', cleanName, undefined, { '專案代碼': projectCode, '合約總額': contractAmount, '起造人/業主': cleanOwner, '所屬法人': projectData.companyId || '未定' });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return getProjectById(id)!;
+}
+
+// 完整更新案場資料 (專案代碼為系統主鍵不可變更，法人可改為未定)
+export function updateProjectRecord(
+  id: string,
+  projectData: Partial<Project>,
+  siteData?: Partial<ProjectSite>,
+  operatorName: string = '系統管理員'
+): Project {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+  const existing = getProjectById(id);
+  if (!existing) throw new Error(`找不到案場 ${id}`);
+
+  const updates: string[] = [`updatedAt = '${now}'`, `version = version + 1`];
+  if (projectData.name !== undefined) updates.push(`name = '${projectData.name.trim().replace(/'/g, "''")}'`);
+  if (projectData.ownerName !== undefined) updates.push(`ownerName = '${projectData.ownerName.trim().replace(/'/g, "''")}'`);
+  if (projectData.ownerTaxId !== undefined) updates.push(`ownerTaxId = '${projectData.ownerTaxId.trim().replace(/'/g, "''")}'`);
+  if (projectData.companyId !== undefined) {
+    updates.push(projectData.companyId && projectData.companyId.trim() ? `companyId = '${projectData.companyId.trim()}'` : `companyId = NULL`);
+  }
+  if (projectData.contractAmount !== undefined) updates.push(`contractAmount = ${Number(projectData.contractAmount) || 0}`);
+  if (projectData.budgetAmount !== undefined) updates.push(`budgetAmount = ${Number(projectData.budgetAmount) || 0}`);
+  if (projectData.startDate !== undefined) updates.push(`startDate = '${projectData.startDate}'`);
+  if (projectData.endDate !== undefined) updates.push(`endDate = '${projectData.endDate}'`);
+  if (projectData.status !== undefined) updates.push(`status = '${projectData.status}'`);
+  if (projectData.isLocked !== undefined) updates.push(`isLocked = ${projectData.isLocked ? 1 : 0}`);
+
+  dbInstance.run(`UPDATE projects SET ${updates.join(', ')} WHERE id = '${id}';`);
+
+  if (siteData) {
+    const existingSite = getProjectSiteByProjectId(id);
+    const cleanSiteName = (siteData.siteName !== undefined ? siteData.siteName : existing.name).trim();
+    const cleanAddress = (siteData.address !== undefined ? siteData.address : '').trim();
+    const cleanPerson = (siteData.contactPerson !== undefined ? siteData.contactPerson : '').trim();
+    const cleanPhone = (siteData.contactPhone !== undefined ? siteData.contactPhone : '').trim();
+    const cleanPermit = (siteData.permitNumber !== undefined ? siteData.permitNumber : '').trim();
+    const cleanDeveloper = (siteData.developerName !== undefined ? siteData.developerName : (existingSite?.developerName || existing.ownerName)).trim();
+    const cleanArchitect = (siteData.architect !== undefined ? siteData.architect : (existingSite?.architect || '')).trim();
+    const cleanConstructor = (siteData.constructor !== undefined ? siteData.constructor : (existingSite?.constructor || '')).trim();
+    const cleanShopDrawingId = (siteData.shopDrawingVendorId !== undefined ? siteData.shopDrawingVendorId : (existingSite?.shopDrawingVendorId || '')).trim();
+    const cleanShopDrawingName = (siteData.shopDrawingVendorName !== undefined ? siteData.shopDrawingVendorName : (existingSite?.shopDrawingVendorName || '')).trim();
+    const cleanLandNumber = (siteData.landNumber !== undefined ? siteData.landNumber : (existingSite?.landNumber || '')).trim();
+
+    if (existingSite) {
+      dbInstance.run(`
+        UPDATE project_sites 
+        SET siteName = '${cleanSiteName.replace(/'/g, "''")}',
+            address = '${cleanAddress.replace(/'/g, "''")}',
+            contactPerson = '${cleanPerson.replace(/'/g, "''")}',
+            contactPhone = '${cleanPhone.replace(/'/g, "''")}',
+            permitNumber = '${cleanPermit.replace(/'/g, "''")}',
+            developerName = '${cleanDeveloper.replace(/'/g, "''")}',
+            architect = '${cleanArchitect.replace(/'/g, "''")}',
+            constructor = '${cleanConstructor.replace(/'/g, "''")}',
+            shopDrawingVendorId = ${cleanShopDrawingId ? `'${cleanShopDrawingId}'` : 'NULL'},
+            shopDrawingVendorName = '${cleanShopDrawingName.replace(/'/g, "''")}',
+            landNumber = '${cleanLandNumber.replace(/'/g, "''")}'
+        WHERE projectId = '${id}';
+      `);
+    } else {
+      const siteId = `SITE-${Date.now().toString().slice(-6)}`;
+      dbInstance.run(`
+        INSERT INTO project_sites (
+          id, projectId, siteName, address, contactPerson, contactPhone, permitNumber, developerName, architect, constructor, shopDrawingVendorId, shopDrawingVendorName, landNumber
+        ) VALUES (
+          '${siteId}', '${id}', '${cleanSiteName.replace(/'/g, "''")}', '${cleanAddress.replace(/'/g, "''")}', '${cleanPerson.replace(/'/g, "''")}', '${cleanPhone.replace(/'/g, "''")}', '${cleanPermit.replace(/'/g, "''")}',
+          '${cleanDeveloper.replace(/'/g, "''")}', '${cleanArchitect.replace(/'/g, "''")}', '${cleanConstructor.replace(/'/g, "''")}',
+          ${cleanShopDrawingId ? `'${cleanShopDrawingId}'` : 'NULL'}, '${cleanShopDrawingName.replace(/'/g, "''")}', '${cleanLandNumber.replace(/'/g, "''")}'
+        );
+      `);
+    }
+  }
+
+  logAudit(dbInstance, operatorName, '修改資料', '專案案場工程', existing.name, { '狀態': existing.status }, { '狀態': projectData.status || existing.status });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return getProjectById(id)!;
+}
+
+// 軟刪除案場
+export function deleteProjectRecord(id: string, operatorName: string = '系統管理員'): boolean {
+  if (!dbInstance) return false;
+  const existing = getProjectById(id);
+  if (!existing) return false;
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE projects SET isDeleted = 1, updatedAt = '${now}', version = version + 1 WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '刪除資料', '專案案場工程', existing.name, { '刪除狀態': '正常' }, { '刪除狀態': '已刪除' });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+
 // ⚡ 一鍵極速建立合作廠商 (直接同步寫入商業夥伴模組，杜絕 SQL 欄位報錯)
 export function quickCreateVendor(
   name: string,
@@ -5693,6 +5941,26 @@ export function ensureDatabaseIntegrity(db: Database) {
   try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN receivedDate TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN statutoryExpiryDate TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN chequeFiles TEXT;`); } catch (e) {}
+
+  // 🏛️ 專案案場工區現地法規欄位更新 (起造人、監造人、承造人、拆圖廠商、座落地號)
+  try { db.run(`ALTER TABLE project_sites ADD COLUMN developerName TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE project_sites ADD COLUMN architect TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE project_sites ADD COLUMN constructor TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE project_sites ADD COLUMN shopDrawingVendorId TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE project_sites ADD COLUMN shopDrawingVendorName TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE project_sites ADD COLUMN landNumber TEXT;`); } catch (e) {}
+
+  // 確保拆圖廠商種子資料存在供選取
+  try {
+    const bp07Check = db.exec(`SELECT count(*) FROM business_partners WHERE id = 'BP-07';`);
+    if (!bp07Check.length || Number(bp07Check[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO business_partners (id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson, phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer, hasInvoice, paymentTermsDays, isHighRisk, currentScore, status, companyId, isDeleted, version, createdAt, updatedAt)
+        VALUES ('BP-07', 'SUB-003', '宏聯結構工程拆圖顧問有限公司', '54321678', 'CORPORATION', 'SUBCONTRACTOR', 0, 1, '專業技術顧問與測量設計', '拆圖廠商 / 施工大樣圖拆圖', 'G123456789', '黃宏達 技師', '黃宏達', '02-2345-6789', 'detail@honglian.com.tw', '台北市中山區南京東路三段28號', '台北富邦銀行', '012', '012001998877', '宏聯結構工程拆圖顧問有限公司', 'COMPANY', 1, 30, 0, 95, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01')
+        ON CONFLICT(id) DO NOTHING;
+      `);
+    }
+  } catch (e) {}
 
   // 若子表為空，自動從既有 business_partners 填補主要地址、聯絡人與銀行帳戶
   try {

@@ -231,7 +231,13 @@ export interface ProjectSite {
   address: string;
   contactPerson: string;
   contactPhone: string;
-  permitNumber?: string;
+  permitNumber?: string; // 建造執照字號
+  developerName?: string; // 起造人全銜 (業主/起造人代表人)
+  architect?: string; // 設計監造人 (建築師事務所 / 結構技師)
+  constructor?: string; // 承造人 (營造廠全銜 / 專任工程人員)
+  shopDrawingVendorId?: string; // 拆圖廠商 ID (商業夥伴)
+  shopDrawingVendorName?: string; // 拆圖廠商全銜快照
+  landNumber?: string; // 基地座落地號
 }
 
 export interface ProjectWBS {
