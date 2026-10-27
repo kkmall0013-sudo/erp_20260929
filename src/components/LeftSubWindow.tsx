@@ -50,9 +50,9 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
   onSelect,
   isOpen = true,
 }) => {
-  const { currentUser, isSuperadmin, isAdmin, can } = useAuth();
-  const hasUserManagementAccess = (isSuperadmin || Boolean(currentUser?.canManageUsers)) && currentUser?.status === 'ACTIVE';
-  const hasSystemSettingsAccess = isSuperadmin || isAdmin || Boolean(currentUser?.canManageSystemConfigs) || hasUserManagementAccess;
+  const { currentUser, isSuperadmin, isBoss, isAdmin, can } = useAuth();
+  const hasUserManagementAccess = (isSuperadmin || isBoss || Boolean(currentUser?.canManageUsers)) && currentUser?.status === 'ACTIVE';
+  const hasSystemSettingsAccess = isSuperadmin || isBoss || isAdmin || Boolean(currentUser?.canManageSystemConfigs) || hasUserManagementAccess;
 
   // 1. 上半部：常用業務主幹道 (按營造生命週期業務發生頻率由上至下嚴謹排列)
   const operationalNavItems: {
@@ -90,21 +90,21 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
       case 'DASHBOARD':
         return true; // 個人工作儀表板全體可用
       case 'PROJECTS':
-        return isSuperadmin || isAdmin || can('PROJECTS', 'read');
+        return isSuperadmin || isBoss || isAdmin || can('PROJECTS', 'read');
       case 'PARTNERS':
-        return isSuperadmin || isAdmin || can('PARTNERS', 'read');
+        return isSuperadmin || isBoss || isAdmin || can('PARTNERS', 'read');
       case 'QUOTATIONS':
-        return isSuperadmin || isAdmin || can('QUOTATIONS', 'read');
+        return isSuperadmin || isBoss || isAdmin || can('QUOTATIONS', 'read');
       case 'INBOUND':
-        return isSuperadmin || isAdmin || can('INBOUND_RECEIPTS', 'read') || can('PURCHASE_ORDERS', 'read');
+        return isSuperadmin || isBoss || isAdmin || can('INBOUND_RECEIPTS', 'read') || can('PURCHASE_ORDERS', 'read');
       case 'VALUATIONS':
-        return isSuperadmin || isAdmin || can('VALUATIONS', 'read');
+        return isSuperadmin || isBoss || isAdmin || can('VALUATIONS', 'read');
       case 'FINANCE':
-        return isSuperadmin || isAdmin || can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('BANK_CHECKS', 'read');
+        return isSuperadmin || isBoss || isAdmin || can('FINANCE_AP', 'read') || can('FINANCE_AR', 'read') || can('BANK_CHECKS', 'read');
       case 'VAULT':
-        return isSuperadmin || isAdmin || can('PROJECTS', 'read') || can('QUOTATIONS', 'read') || can('VALUATIONS', 'read') || can('PARTNERS', 'read');
+        return isSuperadmin || isBoss || isAdmin || can('PROJECTS', 'read') || can('QUOTATIONS', 'read') || can('VALUATIONS', 'read') || can('PARTNERS', 'read');
       case 'COMMAND_CENTER':
-        return isSuperadmin || isAdmin || (can('FINANCE_AP', 'read') && can('PROJECTS', 'read'));
+        return isSuperadmin || isBoss || isAdmin || (can('FINANCE_AP', 'read') && can('PROJECTS', 'read'));
       case 'SETTINGS':
         return hasSystemSettingsAccess;
       default:

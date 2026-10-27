@@ -421,7 +421,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
       }
     }
 
-    const operatorRole = isSuperadmin ? 'SUPERADMIN' : 'ADMIN';
+    const operatorRole = isSuperadmin ? 'SUPERADMIN' : isOperatorBoss ? 'BOSS' : 'ADMIN';
     const operatorName = currentUser?.fullName || '系統管理員';
 
     // 若為新增帳號：直接二次確認
@@ -1079,6 +1079,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
     const str = String(val);
     const valMap: Record<string, string> = {
       SUPERADMIN: '最高管理者',
+      BOSS: '企業最高統裁 (集團董事長)',
       ADMIN: '系統管理員',
       USER: '一般同仁',
       ACTIVE: '啟用中',
@@ -1260,8 +1261,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
             )}
           </button>
 
-          {/* 頁籤 3: 帳號封存與終極清理 (僅 Superadmin 可見) */}
-          {isSuperadmin && (
+          {/* 頁籤 3: 帳號封存與終極清理 (Superadmin 與 BOSS 統裁可見) */}
+          {(isSuperadmin || isOperatorBoss) && (
             <button
               onClick={() => setActiveTab('ARCHIVE')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
@@ -1273,7 +1274,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
               <Archive className="w-4 h-4" />
               <span>帳號封存與終極清理</span>
               <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 text-purple-800 font-semibold border border-purple-200">
-                Superadmin
+                {isSuperadmin ? 'Superadmin' : '👑 BOSS 統裁'}
               </span>
               {archivedUsers.length > 0 && (
                 <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
@@ -1285,8 +1286,8 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
             </button>
           )}
 
-          {/* 頁籤 4: 系統操作與登入稽核日誌 (僅 Superadmin 可見) */}
-          {isSuperadmin && (
+          {/* 頁籤 4: 系統操作與登入稽核日誌 (Superadmin 與 BOSS 統裁可見) */}
+          {(isSuperadmin || isOperatorBoss) && (
             <button
               onClick={() => setActiveTab('AUDIT_LOGS')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
@@ -1298,7 +1299,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
               <ScrollText className="w-4 h-4 text-emerald-400" />
               <span>系統操作與登入稽核日誌</span>
               <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-900 text-emerald-300 font-semibold border border-emerald-700">
-                特權日誌
+                {isSuperadmin ? '特權日誌' : '👑 統裁日誌'}
               </span>
             </button>
           )}
@@ -2082,9 +2083,9 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   )}
 
   {/* ======================================================== */}
-  {/* 視圖 3: 帳號封存與終極清理 (Superadmin 專屬救援與粉碎清理) */}
+  {/* 視圖 3: 帳號封存與終極清理 (Superadmin 與 BOSS 專屬救援與粉碎清理) */}
   {/* ======================================================== */}
-  {activeTab === 'ARCHIVE' && isSuperadmin && (
+  {activeTab === 'ARCHIVE' && (isSuperadmin || isOperatorBoss) && (
     <div className="space-y-4">
       {/* 封存區說明 Banner */}
       <div className="bg-purple-50/80 border border-purple-200 rounded-xl p-4 flex items-start gap-3">
@@ -2181,9 +2182,9 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
   )}
 
   {/* ======================================================== */}
-  {/* 視圖 4: 系統操作與登入稽核日誌 (Superadmin 專屬資安追蹤功能)   */}
+  {/* 視圖 4: 系統操作與登入稽核日誌 (Superadmin 與 BOSS 專屬資安追蹤功能)   */}
   {/* ======================================================== */}
-  {activeTab === 'AUDIT_LOGS' && isSuperadmin && (
+  {activeTab === 'AUDIT_LOGS' && (isSuperadmin || isOperatorBoss) && (
     <div className="space-y-4">
       {/* 稽核日誌說明 Banner */}
       <div className="bg-slate-900 text-slate-200 border border-slate-700 rounded-xl p-4 flex items-start justify-between gap-3 shadow-sm">
@@ -2254,7 +2255,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
               >
                 <option value="ALL">全部同仁</option>
                 {allUsers.map(u => {
-                  const roleLabel = u.role === 'SUPERADMIN' ? '最高管理者' : u.role === 'ADMIN' ? '系統管理員' : '一般同仁';
+                  const roleLabel = u.role === 'SUPERADMIN' ? '最高管理者' : u.role === 'BOSS' ? '企業最高統裁 (BOSS)' : u.role === 'ADMIN' ? '系統管理員' : '一般同仁';
                   return (
                     <option key={u.id} value={u.fullName}>
                       {u.fullName}（{roleLabel}）
@@ -2318,7 +2319,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                   // 解析操作人員之中文身分角色（絕不顯示 USR-xxx 代號）
                   const operatorObj = allUsers.find(u => u.fullName === log.userName || u.id === log.userId);
                   const operatorRoleCn = operatorObj
-                    ? (operatorObj.role === 'SUPERADMIN' ? '最高管理者' : operatorObj.role === 'ADMIN' ? '系統管理員' : '一般同仁')
+                    ? (operatorObj.role === 'SUPERADMIN' ? '最高管理者' : operatorObj.role === 'BOSS' ? '企業最高統裁 (BOSS)' : operatorObj.role === 'ADMIN' ? '系統管理員' : '一般同仁')
                     : (log.userId && !/^[A-Za-z0-9_-]+$/.test(log.userId) && log.userId !== log.userName ? log.userId : '系統操作員');
 
                   // 解析 beforeJson 與 afterJson，僅擷取有修改的差異項目並轉為純中文
@@ -2553,6 +2554,17 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                     <div>
                       <div className="font-bold">此帳號為系統唯一最高 Superadmin</div>
                       <div className="text-[11px] text-amber-700">不可直接變更為其他角色，欲更換請使用「最高權限交接」流程。</div>
+                    </div>
+                  </div>
+                ) : editingUser?.role === 'BOSS' ? (
+                  <div className="p-3 bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-lg text-amber-950 flex items-center gap-2">
+                    <Crown className="w-5 h-5 text-amber-600 fill-amber-400 shrink-0" />
+                    <div>
+                      <div className="font-bold flex items-center gap-1.5">
+                        <span>企業最高統裁 (集團董事長 BOSS)</span>
+                        <span className="text-[10px] bg-amber-200/80 text-amber-950 font-bold px-1.5 py-0.2 rounded border border-amber-300">金身護體</span>
+                      </div>
+                      <div className="text-[11px] text-amber-800">享有不可撼動的金身護體防護，角色身分鎖定為 BOSS，不可降階或變更。</div>
                     </div>
                   </div>
                 ) : (
@@ -3334,7 +3346,7 @@ export const AccountManagementWorkspace: React.FC<AccountManagementWorkspaceProp
                 >
                   <option value="">-- 請選擇要移轉權限的同仁 --</option>
                   {allUsers
-                    .filter(u => u.role !== 'SUPERADMIN' && u.status === 'ACTIVE')
+                    .filter(u => u.role !== 'SUPERADMIN' && u.role !== 'BOSS' && u.status === 'ACTIVE')
                     .map(u => (
                       <option key={u.id} value={u.id}>
                         {u.fullName} (@{u.username}) - {u.role} ({u.title || '無職稱'})

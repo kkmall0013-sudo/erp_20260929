@@ -126,10 +126,10 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
   onSelectCompany,
   onDataChanged,
 }) => {
-  const { currentUser, isSuperadmin, can, reloadAuth } = useAuth();
+  const { currentUser, isSuperadmin, isBoss, can, reloadAuth } = useAuth();
   const canWriteCompany = can('COMPANIES', 'write');
   const isCompanyAllowed = (compId: string) => {
-    if (isSuperadmin) return true;
+    if (isSuperadmin || isBoss) return true;
     if (currentUser?.canManageAllCompanies) return true;
     const allowed = currentUser?.allowedCompanies && currentUser.allowedCompanies.length > 0
       ? currentUser.allowedCompanies

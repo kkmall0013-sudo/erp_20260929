@@ -12,12 +12,17 @@ import {
   ExternalLink,
   Info,
   Scale,
-  Search
+  Search,
+  Users2,
+  Building2,
+  DraftingCompass
 } from 'lucide-react';
 import { TaiwanAddressPicker, TaiwanAddressValue } from './widgets/TaiwanAddressPicker';
 import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget';
 import { TaiwanBankPickerWidget } from './widgets/TaiwanBankPickerWidget';
 import { MediaPreviewLightbox, MediaPreviewItem } from './widgets/MediaPreviewLightbox';
+import { PartnerSearchSelect } from './widgets/PartnerSearchSelect';
+import { BusinessPartner } from '../types/erp';
 import {
   TAIWAN_BANKS,
   BANK_CATEGORIES,
@@ -30,8 +35,13 @@ export interface MiniAppsWorkspaceProps {
 }
 
 export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }) => {
-  const [activeTab, setActiveTab] = useState<'ADDRESS' | 'TAX_ID' | 'BANKS' | 'CHEQUE_CALC' | 'MEDIA' | 'DEV_DOCS'>('ADDRESS');
+  const [activeTab, setActiveTab] = useState<'ADDRESS' | 'TAX_ID' | 'BANKS' | 'CHEQUE_CALC' | 'PARTNER_SEARCH' | 'MEDIA' | 'DEV_DOCS'>('ADDRESS');
   const [copiedCodeKey, setCopiedCodeKey] = useState<string | null>(null);
+
+  // 0. 夥伴搜尋與另建小程式測試狀態
+  const [demoPartner, setDemoPartner] = useState<BusinessPartner | null>(null);
+  const [demoPartnerName, setDemoPartnerName] = useState<string>('');
+  const [demoPartnerFilter, setDemoPartnerFilter] = useState<'ALL' | 'CUSTOMER' | 'VENDOR' | 'SUBCONTRACTOR' | 'SHOP_DRAWING'>('ALL');
 
   // 1. 地址小程式測試狀態
   const [demoAddress, setDemoAddress] = useState<TaiwanAddressValue>({
@@ -153,6 +163,19 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
           >
             <Landmark className="w-3.5 h-3.5" />
             <span>全國金融機構小程式</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('PARTNER_SEARCH')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+              activeTab === 'PARTNER_SEARCH'
+                ? 'bg-white text-indigo-700 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users2 className="w-3.5 h-3.5" />
+            <span>夥伴快搜/快建小程式</span>
           </button>
 
           <button
@@ -761,6 +784,143 @@ import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget
         )}
 
         {/* ======================================================== */}
+        {/* 4. 商業夥伴即時搜尋與彈窗快建小程式 (PartnerSearchSelect) */}
+        {/* ======================================================== */}
+        {activeTab === 'PARTNER_SEARCH' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 space-y-5">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <Users2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">
+                      小程式：商業夥伴即時搜尋與彈窗快建元件 (PartnerSearchSelect)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      打字即時動態過濾（打一個字即自動篩選出宏、大巨等），若查無夥伴可直接點擊「另建新客戶/廠商」彈窗即時新增！
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 篩選模式切換 */}
+              <div className="flex items-center gap-2 text-xs flex-wrap">
+                <span className="font-bold text-slate-700">夥伴類型過濾：</span>
+                {(['ALL', 'CUSTOMER', 'VENDOR', 'SUBCONTRACTOR', 'SHOP_DRAWING'] as const).map(type => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setDemoPartnerFilter(type)}
+                    className={`px-2.5 py-1 rounded-lg font-bold border transition-all cursor-pointer ${
+                      demoPartnerFilter === type
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {type === 'ALL' ? '全部夥伴' : type === 'CUSTOMER' ? '僅業主客戶' : type === 'VENDOR' ? '供料廠商' : type === 'SUBCONTRACTOR' ? '下包工班' : '拆圖協力廠'}
+                  </button>
+                ))}
+              </div>
+
+              {/* 實體小程式互動預覽 */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <span className="text-xs font-bold text-slate-700">
+                  互動即時體驗區（可輸入「宏」、「大巨」、「台泥」、「結構」實測打字即時篩選，或輸入不存在名稱測試彈窗另建）：
+                </span>
+                <PartnerSearchSelect
+                  label="搜尋客戶、廠商或拆圖夥伴"
+                  partnerTypeFilter={demoPartnerFilter}
+                  placeholder="請輸入關鍵字搜尋夥伴 (如：宏、開發、營造、結構)..."
+                  value={demoPartnerName}
+                  onSelect={(partner, manualName) => {
+                    setDemoPartner(partner);
+                    setDemoPartnerName(partner ? partner.name : (manualName || ''));
+                  }}
+                  allowQuickCreate={true}
+                  quickCreateDefaultCategory={demoPartnerFilter === 'SHOP_DRAWING' ? '專業技術顧問 / 拆圖廠商' : undefined}
+                  helperText="打字即時篩選，可直接以鍵盤或滑鼠點選帶入，查無資料可彈窗另建！"
+                />
+              </div>
+
+              {/* 選取結果展示 */}
+              <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-2 text-xs">
+                <div className="font-bold text-indigo-950 flex items-center justify-between">
+                  <span>選定之商業夥伴物件 SSoT：</span>
+                  <span className="text-[11px] font-mono bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-700">
+                    {demoPartner ? `已綁定 (ID: ${demoPartner.id})` : '手動輸入名稱'}
+                  </span>
+                </div>
+                <pre className="p-3 bg-white rounded-lg border border-indigo-200 font-mono text-[11px] text-slate-800 overflow-x-auto max-h-56">
+                  {demoPartner ? JSON.stringify(demoPartner, null, 2) : JSON.stringify({ manualName: demoPartnerName || '(尚未選取或輸入)' }, null, 2)}
+                </pre>
+              </div>
+            </div>
+
+            {/* 調用代碼指南 */}
+            <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-between">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Code2 className="w-4 h-4 text-indigo-600" />
+                    <span>其他模組如何調用此小程式？</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleCopyCode(
+                        'partner_select',
+                        `import { PartnerSearchSelect } from './widgets/PartnerSearchSelect';\n\n<PartnerSearchSelect\n  label="廠商名稱"\n  partnerTypeFilter="VENDOR"\n  placeholder="輸入文字即時篩選..."\n  value={vendorName}\n  onSelect={(partner, manualName) => {\n    if (partner) {\n      setVendorId(partner.id);\n      setVendorName(partner.name);\n    } else {\n      setVendorName(manualName || '');\n    }\n  }}\n  allowQuickCreate={true}\n/>`
+                      )
+                    }
+                    className="text-xs text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedCodeKey === 'partner_select' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedCodeKey === 'partner_select' ? '已複製！' : '複製代碼'}</span>
+                  </button>
+                </div>
+
+                <div className="text-xs text-slate-600 leading-relaxed space-y-2">
+                  <p>
+                    <strong>適用模組：</strong>專案案場立項（甲方發票買受人 B / 起造人 A / 拆圖協力廠商）、採購發包單 PO、下包承攬約、進貨簽收單、應收應付憑單、支票受款人。
+                  </p>
+                  <p>
+                    <strong>三大核心特性：</strong>
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 text-slate-500 text-[11px]">
+                    <li><strong>即打即篩：</strong>打一個字立即過濾數百筆夥伴（支援名稱、統編、夥伴代號模糊比對），無須在超長下拉選單中肉眼尋找。</li>
+                    <li><strong>查無直接彈窗快建：</strong>若關鍵字找不到，下拉選單底部即時顯示「＋ 另建新客戶/廠商」按鈕，點擊彈出簡約建檔窗，儲存後立即自動選取並寫入資料庫。</li>
+                    <li><strong>分流過濾：</strong>支援 <code>partnerTypeFilter</code> (CUSTOMER, VENDOR, SUBCONTRACTOR, SHOP_DRAWING) 與 <code>categoryFilter</code> (如拆圖)，精準限定或加權推薦。</li>
+                  </ul>
+                </div>
+
+                <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-[11px] font-mono overflow-x-auto leading-relaxed">
+{`// 1. 引入通用元件
+import { PartnerSearchSelect } from './widgets/PartnerSearchSelect';
+
+// 2. 於 JSX 中調用
+<PartnerSearchSelect
+  label="合約甲方全銜"
+  required
+  partnerTypeFilter="CUSTOMER"
+  placeholder="輸入關鍵字篩選 (如: 富鼎、宏)..."
+  value={ownerName}
+  onSelect={(partner, manualName) => {
+    if (partner) {
+      setOwnerName(partner.name);
+      setOwnerTaxId(partner.taxId);
+    }
+  }}
+  allowQuickCreate={true}
+/>`}
+                </pre>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
         {/* 5. 模組調用手冊與開發者指南 */}
         {/* ======================================================== */}
         {activeTab === 'DEV_DOCS' && (
@@ -785,6 +945,9 @@ import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget
                   📁 元件與工具函數檔案架構清單：
                 </h4>
                 <ul className="text-xs text-slate-700 font-mono space-y-1.5 pl-4 list-disc">
+                  <li>
+                    <code>src/components/widgets/PartnerSearchSelect.tsx</code> — 商業夥伴即時搜尋與彈窗快建小程式 (支援即打即篩、拆圖分類、甲方/起造人分流、無資料彈窗建檔)
+                  </li>
                   <li>
                     <code>src/components/widgets/TaiwanAddressPicker.tsx</code> — 臺灣郵遞地址選單小程式
                   </li>

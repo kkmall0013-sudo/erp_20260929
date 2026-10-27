@@ -101,8 +101,8 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
   onQuickBackupSqlite,
   onResetDatabase
 }) => {
-  const { currentUser, isSuperadmin, can } = useAuth();
-  const canWriteModule = isSuperadmin || can('SYSTEM_CONFIGS', 'write') || Boolean(currentUser?.canManageSystemConfigs);
+  const { currentUser, isSuperadmin, isBoss, can } = useAuth();
+  const canWriteModule = isSuperadmin || isBoss || can('SYSTEM_CONFIGS', 'write') || Boolean(currentUser?.canManageSystemConfigs);
 
   // 分頁 Tabs
   const [activeTab, setActiveTab] = useState<'COMPANIES' | 'TAX_REG' | 'CONTRACT' | 'SEQUENCES' | 'DATABASE'>('COMPANIES');
@@ -392,8 +392,8 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
 
   // 💾 備份還原後全域指針重新對齊 (Post-Restore Re-seed)
   const handleReseedAfterRestore = () => {
-    if (!isSuperadmin) {
-      triggerToast('⛔ 權限攔截：僅最高管理員 (Superadmin) 可執行底層指針重置！');
+    if (!isSuperadmin && !isBoss) {
+      triggerToast('⛔ 權限攔截：僅最高統裁 / 管理員 (Superadmin / BOSS) 可執行底層指針重置！');
       return;
     }
     try {

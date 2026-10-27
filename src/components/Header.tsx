@@ -122,12 +122,14 @@ export const Header: React.FC<HeaderProps> = ({
             className={`w-7 h-7 rounded-full border flex items-center justify-center text-xs font-bold ${
               currentUser?.role === 'SUPERADMIN'
                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                : currentUser?.role === 'BOSS'
+                ? 'bg-gradient-to-br from-amber-400 via-yellow-500 to-amber-600 text-slate-950 border-amber-300 shadow-xs'
                 : currentUser?.role === 'ADMIN'
                 ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/50'
                 : 'bg-slate-700 text-slate-200 border-slate-600'
             }`}
           >
-            {currentUser?.fullName ? currentUser.fullName.slice(0, 1) : '用'}
+            {currentUser?.role === 'BOSS' ? '👑' : (currentUser?.fullName ? currentUser.fullName.slice(0, 1) : '用')}
           </div>
 
           <div className="hidden sm:block text-left text-xs leading-tight">
@@ -139,6 +141,12 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-amber-400 font-bold flex items-center gap-0.5">
                   <Crown className="w-2.5 h-2.5" />
                   Superadmin
+                </span>
+              )}
+              {currentUser?.role === 'BOSS' && (
+                <span className="text-yellow-400 font-bold flex items-center gap-0.5">
+                  <Crown className="w-2.5 h-2.5 fill-yellow-400" />
+                  BOSS (董事長)
                 </span>
               )}
               {currentUser?.role === 'ADMIN' && (
@@ -168,8 +176,8 @@ export const Header: React.FC<HeaderProps> = ({
             >
               {allUsers.map(u => (
                 <option key={u.id} value={u.id}>
-                  {u.role === 'SUPERADMIN' ? '👑 ' : u.role === 'ADMIN' ? '🛡️ ' : '👤 '}
-                  {u.fullName} ({u.role})
+                  {u.role === 'SUPERADMIN' ? '👑 ' : u.role === 'BOSS' ? '👑 ' : u.role === 'ADMIN' ? '🛡️ ' : '👤 '}
+                  {u.fullName} ({u.role === 'BOSS' ? 'BOSS 董事長' : u.role})
                 </option>
               ))}
             </select>

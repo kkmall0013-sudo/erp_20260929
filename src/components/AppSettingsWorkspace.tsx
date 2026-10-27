@@ -54,7 +54,7 @@ export const AppSettingsWorkspace: React.FC<AppSettingsWorkspaceProps> = ({
   onConfigChanged,
   triggerToast
 }) => {
-  const { currentUser, isSuperadmin } = useAuth();
+  const { currentUser, isSuperadmin, isBoss } = useAuth();
   const [appConfigs, setAppConfigs] = useState<AppConfig[]>([]);
   const [formData, setFormData] = useState<Record<string, string>>({
     APP_BRAND_NAME: '田頭',
@@ -117,13 +117,13 @@ export const AppSettingsWorkspace: React.FC<AppSettingsWorkspaceProps> = ({
   };
 
   const handleSaveAll = () => {
-    if (!isSuperadmin) {
-      triggerToast('⛔ 權限攔截：只有唯一最高管理員 (Superadmin) 可修改軟體程式設定！');
+    if (!isSuperadmin && !isBoss) {
+      triggerToast('⛔ 權限攔截：只有唯一最高管理員 (Superadmin) 或最高統裁 (BOSS) 可修改軟體程式設定！');
       return;
     }
 
     try {
-      const operator = currentUser?.fullName || 'Superadmin';
+      const operator = currentUser?.fullName || (isBoss ? 'BOSS 董事長' : 'Superadmin');
       batchUpdateAppConfigs(formData, operator);
       loadConfigs();
       if (formData.APP_HTML_TITLE) {

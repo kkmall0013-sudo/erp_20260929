@@ -42,8 +42,8 @@ export const SystemHubWorkspace: React.FC<SystemHubWorkspaceProps> = ({
   onOpenDatabaseCenter,
   onSwitchToWorkspaceTest
 }) => {
-  const { currentUser, isSuperadmin, isAdmin } = useAuth();
-  const hasUserManagementAccess = isSuperadmin || Boolean(currentUser?.canManageUsers);
+  const { currentUser, isSuperadmin, isBoss, isAdmin } = useAuth();
+  const hasUserManagementAccess = isSuperadmin || isBoss || Boolean(currentUser?.canManageUsers);
 
   // 定義分頁清單與權限檢核
   const allTabs: {
@@ -59,8 +59,8 @@ export const SystemHubWorkspace: React.FC<SystemHubWorkspaceProps> = ({
       label: '營運基本資料',
       subLabel: '法人 · 稅制 · 合約 · 編碼 · 備份',
       icon: Building2,
-      isPermitted: isSuperadmin || isAdmin,
-      roleBadge: 'Admin / 最高管理'
+      isPermitted: isSuperadmin || isBoss || isAdmin,
+      roleBadge: isBoss ? '👑 統裁 / 最高管理' : 'Admin / 最高管理'
     },
     {
       id: 'USERS',
@@ -68,22 +68,22 @@ export const SystemHubWorkspace: React.FC<SystemHubWorkspaceProps> = ({
       subLabel: '三層身分矩陣 · PBAC · 審批額 · 稽核',
       icon: UserCog,
       isPermitted: hasUserManagementAccess,
-      roleBadge: isSuperadmin ? 'Superadmin' : '特許 Admin'
+      roleBadge: isSuperadmin ? 'Superadmin' : isBoss ? '👑 BOSS (統裁)' : '特許 Admin'
     },
     {
       id: 'APP_SETTINGS',
       label: '軟體程式設定',
       subLabel: '抬頭 · 版本 · 主題色 · 公告廣播 · Flags',
       icon: SlidersHorizontal,
-      isPermitted: isSuperadmin,
-      roleBadge: 'Superadmin 專屬'
+      isPermitted: isSuperadmin || isBoss,
+      roleBadge: isSuperadmin || isBoss ? '統裁 / Superadmin 專屬' : 'Superadmin 專屬'
     },
     {
       id: 'MINI_APPS',
       label: '常用小程式庫',
       subLabel: '郵遞區號 · 全國 414 家金融機構速查',
       icon: Sparkles,
-      isPermitted: isSuperadmin || isAdmin,
+      isPermitted: isSuperadmin || isBoss || isAdmin,
       roleBadge: '共用工具庫'
     },
     {
@@ -91,8 +91,8 @@ export const SystemHubWorkspace: React.FC<SystemHubWorkspaceProps> = ({
       label: '藍圖總綱與規約',
       subLabel: '憲法規約 · 架構討論綱要 · 模組清冊',
       icon: ClipboardList,
-      isPermitted: isSuperadmin,
-      roleBadge: 'Superadmin 專屬'
+      isPermitted: isSuperadmin || isBoss,
+      roleBadge: isSuperadmin || isBoss ? '統裁 / Superadmin 專屬' : 'Superadmin 專屬'
     }
   ];
 

@@ -7245,6 +7245,11 @@ export function transferSuperadmin(
     throw new Error('指定的交接對象不存在！');
   }
 
+  const targetRole = String(targetCheck[0].values[0][2]);
+  if (targetRole === 'BOSS') {
+    throw new Error('【金身護體防護】企業最高統裁 (集團董事長 BOSS) 具備專屬統裁身分，不可讓渡為 Superadmin！');
+  }
+
   const now = new Date().toISOString().substring(0, 10);
   const oldName = String(superCheck[0].values[0][1]);
   const newName = String(targetCheck[0].values[0][1]);

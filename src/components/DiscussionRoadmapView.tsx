@@ -12,7 +12,8 @@ import {
   Lock,
   Layers,
   Sparkles,
-  MousePointer2
+  MousePointer2,
+  Crown
 } from 'lucide-react';
 
 interface DiscussionRoadmapViewProps {
@@ -96,34 +97,91 @@ export const DiscussionRoadmapView: React.FC<DiscussionRoadmapViewProps> = ({
           </div>
         </div>
 
-        {/* 2. 三層身分權限架構與 2D 矩陣 PBAC */}
+        {/* 2. 四層身分權限架構與 2D 矩陣 PBAC */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
             <ShieldCheck className="w-5 h-5 text-amber-600" />
             <h3 className="text-sm font-bold text-slate-900">
-              【討論結論二】三層式身分架構與 2D 矩陣多群組 (PBAC)
+              【討論結論二】四層式身分架構與金身護體防護憲法
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
             <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-lg space-y-1">
-              <div className="font-bold text-amber-900">唯一 Superadmin 最高保護</div>
+              <div className="font-bold text-amber-900 flex items-center gap-1">
+                <Crown className="w-3.5 h-3.5 text-amber-600" />
+                <span>唯一 Superadmin 最高保護</span>
+              </div>
               <div className="text-amber-800 text-[11px] leading-relaxed">
-                系統僅 1 位，無上限審批，底層參數與還原特權。一般 Admin 無法停用或刪除，只能由本人進行交接。
+                系統唯一架構師，負責底層參數、無上限審批與全庫還原特權。一般 Admin 無法停用或刪除，只能由本人進行安全交接。
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-gradient-to-br from-amber-50 to-yellow-50/50 border-2 border-amber-300 rounded-lg space-y-1">
+              <div className="font-bold text-amber-950 flex items-center gap-1">
+                <Crown className="w-3.5 h-3.5 text-amber-600 fill-amber-400" />
+                <span>👑 企業最高統裁 (BOSS)</span>
+              </div>
+              <div className="text-amber-900 text-[11px] leading-relaxed">
+                集團董事長專屬，享<strong>不可撼動之金身護體</strong>（禁止停用、刪除、降階或重設密碼），具備全模組無限額審批與全集團法人穿透權限。
               </div>
             </div>
 
             <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-lg space-y-1">
               <div className="font-bold text-indigo-900">Admin 若干位分權治理</div>
               <div className="text-indigo-800 text-[11px] leading-relaxed">
-                工區所長與資訊管理，可建立與分派同仁帳號，受憲法約束禁止刪除其他 Admin。
+                主管與資訊人員，具備審查核可與同仁指派權。可由 BOSS 或 Superadmin 授予「帳號專人」、「核心參數」與「同階管理」特許。
               </div>
             </div>
 
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
-              <div className="font-bold text-slate-900">2D 多群組矩陣聯集</div>
+              <div className="font-bold text-slate-900">USER 2D 多群組矩陣聯集</div>
               <div className="text-slate-600 text-[11px] leading-relaxed">
-                同仁可同時隸屬多個群組（工務+業務），權限採聯集 (Union)，單筆審批額度自動取最高值。
+                一般同仁可同時隸屬多個業務群組（工務+業務+財務），權限採聯集 (Union)，單筆審批額度自動取最高值。
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 2-1. 通用小程式專區與跨模組元件庫 */}
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <Sparkles className="w-5 h-5 text-indigo-600" />
+            <h3 className="text-sm font-bold text-slate-900">
+              【討論結論三】通用小程式專區 (Mini-Apps Hub) 與跨模組獨立元件規範
+            </h3>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            <p className="text-slate-600 leading-relaxed">
+              依據系統中樞設計規範，所有具有高度共用性與商業邏輯防呆之獨立小工具，均統整收錄於<strong>「系統中樞 ➔ 常用小程式庫 (MiniAppsWorkspace)」</strong>，並封裝為純淨 React 元件（位於 <code>src/components/widgets/</code>）以利全系統所有模組直接引用：
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3.5 bg-indigo-50/50 border border-indigo-200 rounded-lg space-y-2">
+                <div className="font-bold text-indigo-950 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                  <span>商業夥伴即時篩選與彈窗快建 (PartnerSearchSelect)</span>
+                </div>
+                <div className="text-slate-600 text-[11px] leading-relaxed space-y-1">
+                  <div><strong>即打即篩：</strong>輸入單一關鍵字（如「宏」）即自動於數百筆夥伴資料庫中動態模糊過濾。</div>
+                  <div><strong>無資料即時彈窗另建：</strong>打完若無相符紀錄，選單底部呈現「＋ 另建新客戶/廠商」快捷按鈕，彈窗填寫後直接存庫並自動選中。</div>
+                  <div><strong>合約甲方 (B) vs. 起造人 (A) 分流：</strong>支援立項時發票買受人與建照法定起造人不同之業務實務。</div>
+                  <div><strong>拆圖廠商分類支援：</strong>支援 <code>categoryFilter="拆圖"</code> 快速帶入專業技術顧問與大樣圖拆圖協力廠商。</div>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                  <span>臺灣在地化標準驗證元件庫</span>
+                </div>
+                <div className="text-slate-600 text-[11px] leading-relaxed space-y-1">
+                  <div><strong>TaiwanAddressPicker：</strong>【郵遞區號 ➔ 縣市 ➔ 鄉鎮 ➔ 住址】雙向連動，全臺 368 鄉鎮精確對應。</div>
+                  <div><strong>TaiwanIdTaxValidatorWidget：</strong>依法定加權演算法即時檢核公司 8 碼統編與個人 10 碼身分證。</div>
+                  <div><strong>TaiwanBankPickerWidget：</strong>全臺 414 家銀行/信合社/農漁會 3 碼金融機構代碼與分行資料庫。</div>
+                  <div><strong>票據法期別試算：</strong>自發票日 + 1 年自動產生法定時效警示日與約定票期兌現日。</div>
+                </div>
               </div>
             </div>
           </div>
@@ -135,7 +193,7 @@ export const DiscussionRoadmapView: React.FC<DiscussionRoadmapViewProps> = ({
             <div className="flex items-center gap-2">
               <Layers className="w-5 h-5 text-indigo-600" />
               <h3 className="text-sm font-bold text-slate-900">
-                【討論結論三】後續模組聚焦推進藍圖（單一模組開發完才加上選單）
+                【討論結論四】後續模組聚焦推進藍圖（單一模組開發完才加上選單）
               </h3>
             </div>
             <span className="text-[11px] text-slate-400 font-mono">
