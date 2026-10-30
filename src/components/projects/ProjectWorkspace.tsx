@@ -29,9 +29,14 @@ import {
   Landmark,
   HardHat,
   Briefcase,
-  Info
+  Info,
+  Layers,
+  Settings,
+  PackageCheck,
+  ChevronRight,
+  ExternalLink
 } from 'lucide-react';
-import { Project, ProjectSite, Company, BusinessPartner, InboundReceipt } from '../../types/erp';
+import { Project, ProjectSite, Company, BusinessPartner, InboundReceipt, BuildingCategoryGroup, ProjectBudgetPartner } from '../../types/erp';
 import { useAuth } from '../../context/AuthContext';
 import {
   getAllProjects,
@@ -41,11 +46,47 @@ import {
   deleteProjectRecord,
   previewNextDocumentNumber,
   getAllBusinessPartners,
-  getAllInboundReceipts
+  getAllInboundReceipts,
+  getBuildingCategoryTree,
+  getProjectBudgetPartners,
+  getProjectPartnerBillingSummary
 } from '../../db/sqlite';
 import { PartnerSearchSelect } from '../widgets/PartnerSearchSelect';
+import { FloatingSubcontractorSelect } from '../widgets/FloatingSubcontractorSelect';
 import { TaiwanIdTaxValidatorWidget } from '../widgets/TaiwanIdTaxValidatorWidget';
 import { validateTaiwanTaxId } from '../../utils/taiwanValidation';
+import { BuildingCategoryManagerModal } from './BuildingCategoryManagerModal';
+import { ProjectVendorInboundModal } from './ProjectVendorInboundModal';
+
+// 🏛️ 建造建物類型標準分類
+export const BUILDING_TYPES = [
+  '集合住宅大樓',
+  '商辦金融大樓',
+  '廠辦與工業廠房',
+  '透天別墅與住宅群',
+  '鋼結構廠房與倉儲物流',
+  '公共工程與文教展館',
+  '醫療長照機構',
+  '土地重劃與基盤工程',
+  '商業零售商場',
+  '專業室內裝修與改建',
+  '其他特殊工程'
+];
+
+// 🏛️ 承攬工作內容與工程性質標準分類
+export const WORK_SCOPES = [
+  '統包新建工程',
+  '建築結構主體工程',
+  '室內裝修與機電消防工程',
+  '外牆拉皮與結構補強工程',
+  '基礎開挖與地質改良工程',
+  '鋼結構吊裝工程',
+  '連續壁與擋土排樁工程',
+  '景觀綠美化與外部附屬工程',
+  '舊建拆除與整地工程',
+  '專業代工代料工程',
+  '其他工程承攬'
+];
 
 interface ProjectWorkspaceProps {
   projects: Project[];
@@ -73,12 +114,31 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
   // 篩選與搜尋
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'PLANNING' | 'COMPLETED' | 'LOCKED'>('ALL');
+  const [buildingTypeFilter, setBuildingTypeFilter] = useState<string>('ALL');
+  const [workScopeFilter, setWorkScopeFilter] = useState<string>('ALL');
 
   // Modal 狀態
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [viewingProject, setViewingProject] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
+
+  // 建物與業務類型階層字典 (大項 -> 小項)
+  const [categoryTree, setCategoryTree] = useState<BuildingCategoryGroup[]>(() => getBuildingCategoryTree());
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+
+  // 廠商進料穿透檢視狀態
+  const [drillingVendor, setDrillingVendor] = useState<{
+    project: Project;
+    partnerId: string;
+    partnerName: string;
+    workScope?: string;
+    estimatedAmount?: number;
+  } | null>(null);
+
+  const refreshCategoryTree = () => {
+    setCategoryTree(getBuildingCategoryTree());
+  };
 
   // 載入現地資料與商業夥伴
   useEffect(() => {
@@ -103,12 +163,20 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
       // 狀態篩選
       if (statusFilter !== 'ALL' && p.status !== statusFilter) return false;
 
+      // 建物類型篩選
+      if (buildingTypeFilter !== 'ALL' && p.buildingType !== buildingTypeFilter) return false;
+
+      // 工作內容/承攬性質篩選
+      if (workScopeFilter !== 'ALL' && p.workScope !== workScopeFilter) return false;
+
       // 關鍵字搜尋
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
         const site = siteMap.get(p.id);
         const matchCode = p.projectCode?.toLowerCase().includes(term);
         const matchName = p.name?.toLowerCase().includes(term);
+        const matchBuildingType = p.buildingType?.toLowerCase().includes(term);
+        const matchWorkScope = p.workScope?.toLowerCase().includes(term);
         const matchOwner = p.ownerName?.toLowerCase().includes(term);
         const matchDeveloper = site?.developerName?.toLowerCase().includes(term);
         const matchArchitect = site?.architect?.toLowerCase().includes(term);
@@ -120,6 +188,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
         return (
           matchCode ||
           matchName ||
+          matchBuildingType ||
+          matchWorkScope ||
           matchOwner ||
           matchDeveloper ||
           matchArchitect ||
@@ -132,7 +202,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
       }
       return true;
     });
-  }, [projects, statusFilter, searchTerm, siteMap]);
+  }, [projects, statusFilter, buildingTypeFilter, workScopeFilter, searchTerm, siteMap]);
 
   // KPI 彙總指標
   const kpiStats = useMemo(() => {
@@ -187,6 +257,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
     const headers = [
       '專案代碼',
       '案場工程全銜',
+      '建造建物類型',
+      '工作內容與承攬性質',
       '簽約法人',
       '起造人/業主',
       '統一編號',
@@ -212,6 +284,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
       return [
         `"${p.projectCode}"`,
         `"${(p.name || '').replace(/"/g, '""')}"`,
+        `"${(p.buildingType || '未分類').replace(/"/g, '""')}"`,
+        `"${(p.workScope || '未分類').replace(/"/g, '""')}"`,
         `"${compName}"`,
         `"${(site?.developerName || p.ownerName || '').replace(/"/g, '""')}"`,
         `"${p.ownerTaxId || ''}"`,
@@ -386,9 +460,55 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
               </button>
             ))}
           </div>
+
+          {/* 建物類型篩選 (依大項分組，篩選第二階小項) */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+            <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+            <select
+              value={buildingTypeFilter}
+              onChange={(e) => setBuildingTypeFilter(e.target.value)}
+              className="bg-transparent text-slate-700 font-bold outline-none text-xs cursor-pointer"
+              title="依建造建物類型篩選 (第二階小項)"
+            >
+              <option value="ALL">全部建物類型</option>
+              {categoryTree.map(grp => (
+                <optgroup key={grp.id} label={`【${grp.name}】`}>
+                  {grp.items.filter(i => i.isActive).map(item => (
+                    <option key={item.id} value={item.name}>{item.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+
+          {/* 工作內容/承攬性質篩選 */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+            <Briefcase className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+            <select
+              value={workScopeFilter}
+              onChange={(e) => setWorkScopeFilter(e.target.value)}
+              className="bg-transparent text-slate-700 font-bold outline-none text-xs cursor-pointer"
+              title="依工作內容/承攬性質篩選"
+            >
+              <option value="ALL">全部工作內容</option>
+              {WORK_SCOPES.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 自訂管理建物類型字典按鈕 */}
+          <button
+            onClick={() => setIsCategoryManagerOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+            title="自訂管理建造物與業務項目階層字典 (新增大項與第二階小項)"
+          >
+            <Layers className="w-3.5 h-3.5 text-indigo-600" />
+            <span>自訂類型管理</span>
+          </button>
+
           <button
             onClick={handleExportCsv}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
@@ -472,6 +592,18 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
                         </div>
                         <div className="text-sm font-bold text-slate-800 mt-1 hover:text-indigo-600 transition-colors">
                           {p.name}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                          {p.buildingType && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200/70 font-medium">
+                              {p.buildingType}
+                            </span>
+                          )}
+                          {p.workScope && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200/70 font-medium">
+                              {p.workScope}
+                            </span>
+                          )}
                         </div>
                       </td>
 
@@ -643,6 +775,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
           initialSite={editingProject ? siteMap.get(editingProject.id) || null : null}
           companies={companies}
           partners={partners}
+          categoryTree={categoryTree}
+          onOpenCategoryManager={() => setIsCategoryManagerOpen(true)}
           onClose={() => setIsEditorOpen(false)}
           onSave={(projectData, siteData) => {
             try {
@@ -674,6 +808,15 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
             handleOpenEdit(p);
           }}
           onClose={() => setViewingProject(null)}
+          onDrillVendor={(proj, partnerId, partnerName, workScope, estimatedAmount) => {
+            setDrillingVendor({
+              project: proj,
+              partnerId,
+              partnerName,
+              workScope,
+              estimatedAmount
+            });
+          }}
         />
       )}
 
@@ -721,6 +864,32 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
           </div>
         </div>
       )}
+
+      {/* 7. 建造物與工作業務類型階層管理 Modal (大項 -> 小項) */}
+      <BuildingCategoryManagerModal
+        isOpen={isCategoryManagerOpen}
+        onClose={() => {
+          setIsCategoryManagerOpen(false);
+          refreshCategoryTree();
+        }}
+        onSaved={() => {
+          refreshCategoryTree();
+          triggerToast('✓ 建物與業務類別階層字典已成功更新！');
+        }}
+      />
+
+      {/* 8. 協力廠商進料與請款穿透檢視 Modal (projectId + partnerId 隔離) */}
+      {drillingVendor && (
+        <ProjectVendorInboundModal
+          isOpen={Boolean(drillingVendor)}
+          project={drillingVendor.project}
+          partnerId={drillingVendor.partnerId}
+          partnerName={drillingVendor.partnerName}
+          workScope={drillingVendor.workScope}
+          estimatedAmount={drillingVendor.estimatedAmount}
+          onClose={() => setDrillingVendor(null)}
+        />
+      )}
     </div>
   );
 };
@@ -734,6 +903,8 @@ interface ProjectEditorModalProps {
   initialSite: ProjectSite | null;
   companies: Company[];
   partners: BusinessPartner[];
+  categoryTree: BuildingCategoryGroup[];
+  onOpenCategoryManager: () => void;
   onClose: () => void;
   onSave: (projectData: Partial<Project>, siteData: Partial<ProjectSite>) => void;
 }
@@ -744,6 +915,8 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   initialSite,
   companies,
   partners,
+  categoryTree,
+  onOpenCategoryManager,
   onClose,
   onSave
 }) => {
@@ -759,6 +932,8 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   const [ownerName, setOwnerName] = useState(initialProject?.ownerName || '');
   const [ownerTaxId, setOwnerTaxId] = useState(initialProject?.ownerTaxId || '');
   const [status, setStatus] = useState<Project['status']>(initialProject?.status || 'ACTIVE');
+  const [buildingType, setBuildingType] = useState<string>(initialProject?.buildingType || '鐵皮倉庫');
+  const [workScope, setWorkScope] = useState<string>(initialProject?.workScope || '統包新建工程');
   const [contractAmount, setContractAmount] = useState<number>(initialProject?.contractAmount || 0);
   const [budgetAmount, setBudgetAmount] = useState<number>(initialProject?.budgetAmount || 0);
   const [startDate, setStartDate] = useState(initialProject?.startDate || new Date().toISOString().slice(0, 10));
@@ -777,13 +952,30 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   const [shopDrawingVendorName, setShopDrawingVendorName] = useState(initialSite?.shopDrawingVendorName || '');
   const [landNumber, setLandNumber] = useState(initialSite?.landNumber || '');
 
+  // 預計協力廠商多筆清冊 (預估發包金額與工料項目)
+  const [budgetPartners, setBudgetPartners] = useState<ProjectBudgetPartner[]>(() => {
+    if (initialProject?.budgetPartners && initialProject.budgetPartners.length > 0) {
+      return initialProject.budgetPartners;
+    }
+    if (initialProject?.id) {
+      return getProjectBudgetPartners(initialProject.id);
+    }
+    return [];
+  });
+
   // 錯誤提示
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // 初始化專案代碼：從 document_sequence_rules 讀取既定格式動態預覽
+  // 初始化專案代碼與屬性：從 document_sequence_rules 讀取既定格式動態預覽
   useEffect(() => {
     if (isEditing && initialProject) {
       setProjectCode(initialProject.projectCode);
+      setBuildingType(initialProject.buildingType || '鐵皮倉庫');
+      setWorkScope(initialProject.workScope || '統包新建工程');
+      const loaded = initialProject.budgetPartners && initialProject.budgetPartners.length > 0
+        ? initialProject.budgetPartners
+        : getProjectBudgetPartners(initialProject.id);
+      setBudgetPartners(loaded || []);
     } else {
       try {
         const previewCode = previewNextDocumentNumber('PRJ');
@@ -791,6 +983,7 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       } catch (err) {
         setProjectCode('PRJ-2026-自動配發');
       }
+      setBudgetPartners([]);
     }
   }, [isEditing, initialProject]);
 
@@ -809,25 +1002,33 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
     }
   };
 
-  // 快速選擇業主商業夥伴帶入
-  const handleSelectPartner = (partnerId: string) => {
-    const p = partners.find(item => item.id === partnerId);
-    if (p) {
-      handleOwnerChange(p.name);
-      setOwnerTaxId(p.taxId || '');
-    }
+  // 新增預計協力廠商列
+  const handleAddBudgetPartner = () => {
+    const newPartner: ProjectBudgetPartner = {
+      id: `pbp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      projectId: initialProject?.id || '',
+      partnerId: '',
+      partnerName: '',
+      workScope: '',
+      estimatedAmount: 0,
+      notes: ''
+    };
+    setBudgetPartners(prev => [...prev, newPartner]);
   };
 
-  // 選擇拆圖廠商
-  const handleSelectShopDrawingVendor = (partnerId: string) => {
-    setShopDrawingVendorId(partnerId);
-    const p = partners.find(item => item.id === partnerId);
-    if (p) {
-      setShopDrawingVendorName(p.name);
-    } else if (!partnerId) {
-      setShopDrawingVendorName('');
-    }
+  // 更新單列協力廠商
+  const handleUpdateBudgetPartner = (id: string, updates: Partial<ProjectBudgetPartner>) => {
+    setBudgetPartners(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
   };
+
+  // 移除協力廠商列
+  const handleRemoveBudgetPartner = (id: string) => {
+    setBudgetPartners(prev => prev.filter(item => item.id !== id));
+  };
+
+  const totalEstimatedPartnerBudget = useMemo(() => {
+    return budgetPartners.reduce((acc, p) => acc + (p.estimatedAmount || 0), 0);
+  }, [budgetPartners]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -851,6 +1052,14 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       }
     }
 
+    // 檢查若有設定拆圖類的協力廠商，自動同動更新至 site 記錄供簡視
+    const drawingPartner = budgetPartners.find(bp =>
+      (bp.workScope && bp.workScope.includes('拆圖')) ||
+      (bp.partnerName && bp.partnerName.includes('拆圖'))
+    );
+    const finalDrawingId = drawingPartner ? drawingPartner.partnerId : shopDrawingVendorId;
+    const finalDrawingName = drawingPartner ? drawingPartner.partnerName : shopDrawingVendorName;
+
     onSave(
       {
         name: name.trim(),
@@ -858,10 +1067,13 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
         ownerName: ownerName.trim(),
         ownerTaxId: ownerTaxId.trim(),
         status,
+        buildingType: buildingType.trim(),
+        workScope: workScope.trim(),
         contractAmount,
         budgetAmount,
         startDate,
-        endDate
+        endDate,
+        budgetPartners: budgetPartners.filter(bp => bp.partnerName.trim() !== '')
       },
       {
         siteName: (siteName.trim() || name.trim()),
@@ -872,8 +1084,8 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
         developerName: (developerName.trim() || ownerName.trim()),
         architect: architect.trim(),
         constructor: constructorName.trim(),
-        shopDrawingVendorId: shopDrawingVendorId.trim(),
-        shopDrawingVendorName: shopDrawingVendorName.trim(),
+        shopDrawingVendorId: finalDrawingId.trim(),
+        shopDrawingVendorName: finalDrawingName.trim(),
         landNumber: landNumber.trim()
       }
     );
@@ -893,7 +1105,7 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                 {isEditing ? `編輯案場工程：${initialProject?.name}` : '建立新工程案場基本資料'}
               </h2>
               <p className="text-[11px] text-slate-500">
-                依據系統設定格式自動配號，登錄法定起造、監造、承造、拆圖廠商與工區資訊
+                依據系統設定格式自動配號，登錄法定起造、監造、承造、預計協力廠商發包與工區資訊
               </p>
             </div>
           </div>
@@ -991,6 +1203,59 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
               </div>
             </div>
 
+            {/* 建造建物類型 與 工作內容 / 承攬性質 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-medium text-slate-600">
+                    建造建物類型 <span className="text-[10px] text-slate-400">(兩階層分類：選第二階小項)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={onOpenCategoryManager}
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                    title="開啟自訂管理介面，新增/管理大項與小項"
+                  >
+                    <Settings className="w-3 h-3" />
+                    <span>管理類型項目</span>
+                  </button>
+                </div>
+                <select
+                  value={buildingType}
+                  onChange={(e) => setBuildingType(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-semibold focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-xs"
+                >
+                  <option value="">-- 請選擇建造建物類型 (小項) --</option>
+                  {categoryTree.map(group => (
+                    <optgroup key={group.id} label={`【${group.name}】`}>
+                      {group.items.filter(it => it.isActive !== false).map(item => (
+                        <option key={item.id} value={item.name}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">選單已依自訂大項分群，僅能點選小項；點右上角「管理類型項目」可自由增刪大項與小項</p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  工作內容 / 承攬性質 <span className="text-[10px] text-slate-400">(分類與搜尋用)</span>
+                </label>
+                <select
+                  value={workScope}
+                  onChange={(e) => setWorkScope(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-semibold focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-xs"
+                >
+                  {WORK_SCOPES.map(ws => (
+                    <option key={ws} value={ws}>{ws}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">例如：統包新建工程、主體結構工程、精裝修工程等</p>
+              </div>
+            </div>
+
             {/* 合約甲方 (發票開立買受人) 與 統一編號 */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
               <div className="sm:col-span-2">
@@ -1037,11 +1302,11 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
             </div>
           </div>
 
-          {/* 區塊 2: 建築執照法定主體與專業拆圖協力廠商 */}
-          <div className="space-y-3">
+          {/* 區塊 2: 建造執照法定團隊與預計協力廠商發包預算管理 */}
+          <div className="space-y-4">
             <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs border-b border-slate-200 pb-1.5">
-              <DraftingCompass className="w-4 h-4 text-purple-600" />
-              <span>二、建造執照法定團隊與拆圖協力廠商</span>
+              <HardHat className="w-4 h-4 text-purple-600" />
+              <span>二、建造執照法定團隊與預計協力廠商管理 (叫料預算與請款對帳連動)</span>
             </div>
 
             {/* 起造人 vs 發票買受人分流說明 Banner */}
@@ -1113,46 +1378,118 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <PartnerSearchSelect
-                  label="拆圖協力廠商 (專業結構 / 施工大樣圖 / 鋼筋拆圖)"
-                  partnerTypeFilter="SHOP_DRAWING"
-                  categoryFilter="拆圖"
-                  quickCreateDefaultType="VENDOR"
-                  quickCreateDefaultCategory="專業技術顧問與測量設計 / 拆圖廠商 / 施工大樣圖拆圖"
-                  placeholder="輸入關鍵字篩選拆圖廠商 (如: 宏、結構、拆圖)..."
-                  selectedPartnerId={shopDrawingVendorId}
-                  value={shopDrawingVendorName}
-                  onSelect={(partner, manualName) => {
-                    if (partner) {
-                      setShopDrawingVendorId(partner.id);
-                      setShopDrawingVendorName(partner.name);
-                    } else {
-                      setShopDrawingVendorId('');
-                      setShopDrawingVendorName(manualName || '');
-                    }
-                  }}
-                  allowQuickCreate={true}
-                  helperText="打字即時篩選（如打「宏」即自動列出宏聯等廠商），查無可彈窗直接建檔！"
-                />
+            {/* 預計協力廠商與發包預算管理清冊 (二階段式選單：第一階工料類別 ➔ 第二階公司名稱，懸浮式不遮蔽) */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
+                    <Briefcase className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>預計協力廠商清冊 (二階段式清單：工料類別 ➔ 公司名稱)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    清單二階段快速選定：第一階為工料類別（如鋼材、混凝土、拆圖等），第二階為公司名稱（如中鋼、東和等）。選單採獨立懸浮層（不會被表格邊界截斷遮蔽），僅需公司名稱，不需填寫繁複細節！
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddBudgetPartner}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 transition-colors shadow-2xs cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>新增預計協力廠商</span>
+                </button>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  拆圖廠商備註 / 補充出圖料單說明
-                </label>
-                <input
-                  type="text"
-                  value={shopDrawingVendorName}
-                  onChange={(e) => setShopDrawingVendorName(e.target.value)}
-                  placeholder="例如：宏聯結構工程拆圖顧問有限公司 (樑柱接頭施工大樣)"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-xs"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  亦可在此手動調整名稱快照或補充工程拆圖註記
-                </p>
-              </div>
+              {budgetPartners.length === 0 ? (
+                <div className="p-4 bg-white rounded-lg border border-dashed border-slate-300 text-center text-slate-400 text-xs">
+                  尚未新增預計協力廠商。點擊上方「新增預計協力廠商」按鈕即可新增（例如：鋼材類的中鋼、東和；混凝土類的台泥等）。
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse bg-white rounded-lg border border-slate-200">
+                      <thead>
+                        <tr className="bg-slate-100/80 text-slate-600 font-semibold border-b border-slate-200">
+                          <th className="py-2 px-3 w-60">協力廠商公司名稱 (二階懸浮選單)</th>
+                          <th className="py-2 px-3 w-40">承攬工料類別 / 工項</th>
+                          <th className="py-2 px-3 w-36 text-right">預估發包金額 (NT$)</th>
+                          <th className="py-2 px-3">備註說明</th>
+                          <th className="py-2 px-2 w-12 text-center">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {budgetPartners.map((bp) => (
+                          <tr key={bp.id} className="hover:bg-slate-50">
+                            <td className="py-2 px-3">
+                              <FloatingSubcontractorSelect
+                                value={bp.partnerName}
+                                workScope={bp.workScope}
+                                placeholder="點選二階廠商 (中鋼/東和等)..."
+                                onChange={(vendorName, category) => {
+                                  handleUpdateBudgetPartner(bp.id, {
+                                    partnerName: vendorName,
+                                    workScope: bp.workScope ? bp.workScope : (category || '')
+                                  });
+                                }}
+                              />
+                            </td>
+                            <td className="py-2 px-3">
+                              <input
+                                type="text"
+                                value={bp.workScope || ''}
+                                onChange={(e) => handleUpdateBudgetPartner(bp.id, { workScope: e.target.value })}
+                                placeholder="例如: 鋼材/混凝土/拆圖"
+                                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded text-slate-800 text-xs focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                              />
+                            </td>
+                            <td className="py-2 px-3 text-right">
+                              <input
+                                type="number"
+                                min="0"
+                                step="1000"
+                                value={bp.estimatedAmount || 0}
+                                onChange={(e) => handleUpdateBudgetPartner(bp.id, { estimatedAmount: Number(e.target.value) || 0 })}
+                                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded text-slate-800 font-mono font-bold text-right text-xs focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                              />
+                            </td>
+                            <td className="py-2 px-3">
+                              <input
+                                type="text"
+                                value={bp.notes || ''}
+                                onChange={(e) => handleUpdateBudgetPartner(bp.id, { notes: e.target.value })}
+                                placeholder="備註料號、發包階段或叫料期程"
+                                className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded text-slate-700 text-xs focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                              />
+                            </td>
+                            <td className="py-2 px-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveBudgetPartner(bp.id)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                title="刪除此協力廠商列"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-between px-2 pt-1">
+                    <span className="text-[11px] text-slate-500">
+                      共登錄 <span className="font-bold text-indigo-700">{budgetPartners.length}</span> 家協力廠商
+                    </span>
+                    <div className="text-xs font-medium text-slate-700">
+                      預計發包總金額合計：
+                      <span className="font-mono font-bold text-indigo-700 text-sm ml-1">
+                        NT$ {totalEstimatedPartnerBudget.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1350,6 +1687,13 @@ interface ProjectDetailModalProps {
   companies: Company[];
   onEdit: () => void;
   onClose: () => void;
+  onDrillVendor: (
+    project: Project,
+    partnerId: string,
+    partnerName: string,
+    workScope?: string,
+    estimatedAmount?: number
+  ) => void;
 }
 
 const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
@@ -1357,7 +1701,8 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
   site,
   companies,
   onEdit,
-  onClose
+  onClose,
+  onDrillVendor
 }) => {
   // 取得此案場的現場進料單據列表
   const inboundReceipts = useMemo(() => {
@@ -1368,6 +1713,46 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
     }
   }, [project.id]);
 
+  // 取得此案場的預計協力廠商發包資料
+  const budgetPartners = useMemo(() => {
+    if (project.budgetPartners && project.budgetPartners.length > 0) {
+      return project.budgetPartners;
+    }
+    return getProjectBudgetPartners(project.id);
+  }, [project.id, project.budgetPartners]);
+
+  // 取得各協力廠商連動進貨與請款即時彙整資料 (解決廠商忘記請款與查帳問題)
+  const partnerBillingSummaries = useMemo(() => {
+    return budgetPartners.map(bp => {
+      const summary = getProjectPartnerBillingSummary(
+        project.id,
+        bp.partnerId,
+        bp.estimatedAmount,
+        bp.workScope,
+        bp.partnerName
+      );
+      return {
+        partner: bp,
+        summary
+      };
+    });
+  }, [budgetPartners, project.id]);
+
+  // 統計總體預估、進貨、已請款與待請款
+  const aggregateTotals = useMemo(() => {
+    return partnerBillingSummaries.reduce(
+      (acc, item) => {
+        acc.estimated += item.summary.estimatedAmount;
+        acc.inbound += item.summary.totalInboundAmount;
+        acc.billed += item.summary.billedInboundAmount;
+        acc.pending += item.summary.pendingBillingAmount;
+        acc.paid += item.summary.totalPaidAmount;
+        return acc;
+      },
+      { estimated: 0, inbound: 0, billed: 0, pending: 0, paid: 0 }
+    );
+  }, [partnerBillingSummaries]);
+
   const budgetUsagePct = project.budgetAmount > 0 ? Math.round((project.actualCost / project.budgetAmount) * 100) : 0;
   const grossMargin = project.contractAmount - project.budgetAmount;
   const grossMarginRate = project.contractAmount > 0 ? Math.round((grossMargin / project.contractAmount) * 100) : 0;
@@ -1377,7 +1762,7 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden my-auto">
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden my-auto">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
           <div className="flex items-center gap-3">
@@ -1385,7 +1770,7 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
               <FolderGit2 className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded border border-indigo-200">
                   {project.projectCode}
                 </span>
@@ -1398,6 +1783,16 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
                 }`}>
                   {project.status === 'ACTIVE' ? '施工中' : project.status === 'PLANNING' ? '規劃中' : project.status === 'COMPLETED' ? '已完工' : '已結算'}
                 </span>
+                {project.buildingType && (
+                  <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    {project.buildingType}
+                  </span>
+                )}
+                {project.workScope && (
+                  <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                    {project.workScope}
+                  </span>
+                )}
               </div>
               <h2 className="text-base font-bold text-slate-900 mt-1">
                 {project.name}
@@ -1476,7 +1871,7 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
             <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
               <div className="font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-2">
                 <DraftingCompass className="w-4 h-4 text-purple-600" />
-                <span>建造執照法定主體與拆圖</span>
+                <span>建造執照法定主體與承攬</span>
               </div>
               <div className="space-y-2.5 text-slate-600">
                 <div className="flex justify-between items-start">
@@ -1502,6 +1897,20 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">簽約承攬乙方：</span>
                   <span className="font-medium text-slate-800">{compName}</span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">建造建物類型：</span>
+                  <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[11px]">
+                    {project.buildingType || '未分類'}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">承攬工作內容：</span>
+                  <span className="font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 text-[11px]">
+                    {project.workScope || '未分類'}
+                  </span>
                 </div>
 
                 <div className="flex justify-between items-center pt-1 border-t border-slate-100">
@@ -1564,12 +1973,170 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
             </div>
           </div>
 
-          {/* 現場材料進貨簽收單關聯 (穿透檢視) */}
+          {/* 🌟 核心功能：預計協力廠商、進貨與請款連動即時追蹤 (解決廠商忘記請款的痛點) */}
+          <div className="bg-white border border-indigo-200 rounded-xl p-4 space-y-3 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+              <div>
+                <div className="font-bold text-slate-800 flex items-center gap-1.5 text-sm">
+                  <Briefcase className="w-4 h-4 text-indigo-600" />
+                  <span>預計協力廠商、進料與請款連動即時統計</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  自動連動抓取該案場之進貨簽收單與計價單，即時計算「預估金額、已進貨金額、已計價請款、待請款差額與已支付金額」。
+                  點擊各廠商右側按鈕可穿透檢視僅屬於本案場的進料細項！
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                  全案待請款差額：NT$ {aggregateTotals.pending.toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* 總結 KPI 列 */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+              <div className="text-center">
+                <div className="text-[10px] text-slate-500">預計發包合計 (A)</div>
+                <div className="font-mono font-bold text-slate-800 text-xs mt-0.5">
+                  NT$ {aggregateTotals.estimated.toLocaleString()}
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] text-slate-500">累計已進貨簽收 (B)</div>
+                <div className="font-mono font-bold text-indigo-700 text-xs mt-0.5">
+                  NT$ {aggregateTotals.inbound.toLocaleString()}
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] text-slate-500">累計已計價請款 (C)</div>
+                <div className="font-mono font-bold text-slate-800 text-xs mt-0.5">
+                  NT$ {aggregateTotals.billed.toLocaleString()}
+                </div>
+              </div>
+              <div className="text-center bg-amber-100/50 rounded-lg py-0.5 border border-amber-200">
+                <div className="text-[10px] text-amber-800 font-bold">⚠️ 待請款差額 (B-C)</div>
+                <div className="font-mono font-bold text-amber-700 text-xs mt-0.5">
+                  NT$ {aggregateTotals.pending.toLocaleString()}
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] text-slate-500">累計已支付出帳 (D)</div>
+                <div className="font-mono font-bold text-emerald-700 text-xs mt-0.5">
+                  NT$ {aggregateTotals.paid.toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            {/* 協力廠商彙整表 */}
+            {partnerBillingSummaries.length === 0 ? (
+              <div className="py-6 text-center text-slate-400 text-xs bg-slate-50/50 rounded-lg border border-dashed border-slate-200">
+                此案場尚未設定預計協力廠商清冊。請點擊上方「修改資料」在第二區塊新增預計協力廠商與預算金額。
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100/80 text-slate-600 font-semibold border-b border-slate-200">
+                      <th className="py-2.5 px-3">協力廠商全銜</th>
+                      <th className="py-2.5 px-3">預計承攬工料</th>
+                      <th className="py-2.5 px-3 text-right">預估發包 (A)</th>
+                      <th className="py-2.5 px-3 text-right">累計已進貨 (B)</th>
+                      <th className="py-2.5 px-3 text-right">已計價請款 (C)</th>
+                      <th className="py-2.5 px-3 text-right bg-amber-50/60 font-bold text-amber-900">待請款差額 (B-C)</th>
+                      <th className="py-2.5 px-3 text-right">已支付金額 (D)</th>
+                      <th className="py-2.5 px-3 text-center">請款狀態</th>
+                      <th className="py-2.5 px-3 text-center">本案進貨穿透檢視</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-mono">
+                    {partnerBillingSummaries.map(({ partner, summary }) => {
+                      const hasPending = summary.pendingBillingAmount > 0;
+                      const isComplete = summary.totalInboundAmount > 0 && summary.pendingBillingAmount === 0;
+                      const hasNoInbound = summary.totalInboundAmount === 0;
+
+                      return (
+                        <tr key={partner.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-2.5 px-3 font-sans font-bold text-slate-800">
+                            {summary.partnerName || partner.partnerName}
+                          </td>
+                          <td className="py-2.5 px-3 font-sans text-slate-600">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px]">
+                              {summary.workScope || '未指定'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-medium text-slate-700">
+                            NT$ {summary.estimatedAmount.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-bold text-indigo-700">
+                            NT$ {summary.totalInboundAmount.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-slate-800">
+                            NT$ {summary.billedInboundAmount.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-right bg-amber-50/40">
+                            {hasPending ? (
+                              <span className="font-bold text-amber-700">
+                                NT$ {summary.pendingBillingAmount.toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">NT$ 0</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-emerald-700 font-bold">
+                            NT$ {summary.totalPaidAmount.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-sans">
+                            {hasPending ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>尚有未請款 (待請款)</span>
+                              </span>
+                            ) : isComplete ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <span>已全部請款完成</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] text-slate-400 bg-slate-100">
+                                尚未進貨
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-sans">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onDrillVendor(
+                                  project,
+                                  partner.partnerId,
+                                  partner.partnerName,
+                                  partner.workScope,
+                                  partner.estimatedAmount
+                                );
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 transition-colors cursor-pointer"
+                              title="穿透檢視：調出該廠商僅屬於本案場的進料單據明細"
+                            >
+                              <PackageCheck className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>調閱本案進貨</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* 現場材料進貨簽收單總表 */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <div className="font-bold text-slate-800 flex items-center gap-1.5">
                 <Package className="w-4 h-4 text-indigo-600" />
-                <span>此案場之材料進貨簽收單據（即時累計成本來源）</span>
+                <span>此案場全部材料進貨簽收單據（即時累計成本來源）</span>
               </div>
               <span className="text-[11px] text-slate-400 font-mono">
                 共 {inboundReceipts.length} 筆進料簽收

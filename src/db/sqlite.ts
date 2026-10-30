@@ -50,7 +50,12 @@ import {
   RestoreStrategy,
   ModularBackupPackage,
   RestoreResult,
-  RegulatorySchedule
+  RegulatorySchedule,
+  BuildingCategoryGroup,
+  BuildingCategoryItem,
+  ProjectBudgetPartner,
+  SubcontractorCategoryGroup,
+  SubcontractorVendorItem
 } from '../types/erp';
 
 declare global {
@@ -386,6 +391,8 @@ function initializeTables(db: Database) {
       name TEXT NOT NULL,
       ownerName TEXT NOT NULL,
       ownerTaxId TEXT,
+      buildingType TEXT,
+      workScope TEXT,
       contractAmount REAL DEFAULT 0,
       budgetAmount REAL DEFAULT 0,
       committedCost REAL DEFAULT 0,
@@ -421,6 +428,19 @@ function initializeTables(db: Database) {
       committedAmount REAL DEFAULT 0,
       actualAmount REAL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS project_budget_partners (
+      id TEXT PRIMARY KEY,
+      projectId TEXT NOT NULL,
+      partnerId TEXT NOT NULL,
+      partnerName TEXT NOT NULL,
+      workScope TEXT NOT NULL,
+      estimatedAmount REAL DEFAULT 0,
+      notes TEXT,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_budget_partners_prj ON project_budget_partners (projectId);
 
     -- 4. 商業夥伴 (BusinessPartner) 與 料件工項 (Item)
     CREATE TABLE IF NOT EXISTS business_partners (
@@ -968,11 +988,11 @@ export function seedInitialData(db: Database) {
 
   // 4. 專案工程與案場 (Projects, ProjectSites, ProjectWBS)
   db.run(`
-    INSERT INTO projects (id, projectCode, name, ownerName, ownerTaxId, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt)
+    INSERT INTO projects (id, projectCode, name, ownerName, ownerTaxId, buildingType, workScope, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt)
     VALUES
-      ('PRJ-01', 'PRJ-2026-001', '台北南港經貿園區商辦總部新建工程', '富鼎置地開發建設股份有限公司', '12345678', 85000000, 72000000, 48000000, 31500000, '2026-02-01', '2027-12-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-02-01', '2026-02-01'),
-      ('PRJ-02', 'PRJ-2026-002', '新竹科技園區精密廠房無塵室機電擴建專案', '國揚高新科技園區開發股份有限公司', '23456789', 42000000, 36000000, 29000000, 14200000, '2026-03-15', '2027-06-30', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-03-15', '2026-03-15'),
-      ('PRJ-03', 'PRJ-2026-003', '新北新莊副都心商業住宅地基連續壁基礎工程', '富鼎置地開發建設股份有限公司', '12345678', 19800000, 17500000, 16000000, 8900000, '2026-01-10', '2026-08-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-01-10', '2026-01-10');
+      ('PRJ-01', 'PRJ-2026-001', '台北南港經貿園區商辦總部新建工程', '富鼎置地開發建設股份有限公司', '12345678', '商辦金融大樓', '統包新建工程', 85000000, 72000000, 48000000, 31500000, '2026-02-01', '2027-12-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-02-01', '2026-02-01'),
+      ('PRJ-02', 'PRJ-2026-002', '新竹科技園區精密廠房無塵室機電擴建專案', '國揚高新科技園區開發股份有限公司', '23456789', '廠辦與工業廠房', '室內裝修與機電消防工程', 42000000, 36000000, 29000000, 14200000, '2026-03-15', '2027-06-30', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-03-15', '2026-03-15'),
+      ('PRJ-03', 'PRJ-2026-003', '新北新莊副都心商業住宅地基連續壁基礎工程', '富鼎置地開發建設股份有限公司', '12345678', '集合住宅大樓', '連續壁與擋土排樁工程', 19800000, 17500000, 16000000, 8900000, '2026-01-10', '2026-08-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-01-10', '2026-01-10');
 
     INSERT INTO project_sites (id, projectId, siteName, address, contactPerson, contactPhone, permitNumber)
     VALUES
@@ -2641,13 +2661,14 @@ export function deleteCompany(companyId: string, operatorName: string = '系統�
 // 讀取所有專案
 export function getAllProjects(companyId?: string): Project[] {
   if (!dbInstance) return [];
+  ensureDatabaseIntegrity(dbInstance);
 
   try {
     const check3310 = dbInstance.exec(`SELECT count(*) FROM projects WHERE name LIKE '%3310%' OR projectCode = 'PRJ-2026-004';`);
     if (check3310.length && Number(check3310[0].values[0][0]) === 0) {
       dbInstance.run(`
-        INSERT INTO projects (id, projectCode, name, ownerName, ownerTaxId, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt)
-        VALUES ('PRJ-04', 'PRJ-2026-004', '3310新建工程', '大城建設開發股份有限公司', '88991234', 35000000, 30000000, 18000000, 6500000, '2026-03-01', '2027-05-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-03-01', '2026-03-01');
+        INSERT INTO projects (id, projectCode, name, ownerName, ownerTaxId, buildingType, workScope, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt)
+        VALUES ('PRJ-04', 'PRJ-2026-004', '3310新建工程', '大城建設開發股份有限公司', '88991234', '集合住宅大樓', '建築結構主體工程', 35000000, 30000000, 18000000, 6500000, '2026-03-01', '2027-05-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-03-01', '2026-03-01');
       `);
       dbInstance.run(`
         INSERT INTO project_sites (id, projectId, siteName, address, contactPerson, contactPhone, permitNumber)
@@ -2663,27 +2684,41 @@ export function getAllProjects(companyId?: string): Project[] {
     ? `SELECT * FROM projects WHERE isDeleted = 0 AND companyId = '${companyId}' ORDER BY projectCode;`
     : `SELECT * FROM projects WHERE isDeleted = 0 ORDER BY projectCode;`;
   const res = dbInstance.exec(sql);
-  if (!res.length) return [];
-  return res[0].values.map(v => ({
-    id: String(v[0]),
-    projectCode: String(v[1]),
-    name: String(v[2]),
-    ownerName: String(v[3]),
-    ownerTaxId: String(v[4] || ''),
-    contractAmount: Number(v[5] || 0),
-    budgetAmount: Number(v[6] || 0),
-    committedCost: Number(v[7] || 0),
-    actualCost: Number(v[8] || 0),
-    startDate: String(v[9] || ''),
-    endDate: String(v[10] || ''),
-    status: v[11] as Project['status'],
-    isLocked: Boolean(v[12]),
-    companyId: String(v[13]),
-    isDeleted: Boolean(v[14]),
-    version: Number(v[15]),
-    createdAt: String(v[16]),
-    updatedAt: String(v[17]),
-  }));
+  if (!res.length || !res[0].values) return [];
+  const cols = res[0].columns;
+  const colMap = new Map<string, number>();
+  cols.forEach((c, idx) => colMap.set(c, idx));
+  const getVal = (row: any[], col: string) => {
+    const idx = colMap.get(col);
+    return idx !== undefined ? row[idx] : undefined;
+  };
+
+  return res[0].values.map(v => {
+    const pId = String(getVal(v, 'id') || '');
+    return {
+      id: pId,
+      projectCode: String(getVal(v, 'projectCode') || ''),
+      name: String(getVal(v, 'name') || ''),
+      ownerName: String(getVal(v, 'ownerName') || ''),
+      ownerTaxId: String(getVal(v, 'ownerTaxId') || ''),
+      buildingType: getVal(v, 'buildingType') ? String(getVal(v, 'buildingType')) : undefined,
+      workScope: getVal(v, 'workScope') ? String(getVal(v, 'workScope')) : undefined,
+      contractAmount: Number(getVal(v, 'contractAmount') || 0),
+      budgetAmount: Number(getVal(v, 'budgetAmount') || 0),
+      committedCost: Number(getVal(v, 'committedCost') || 0),
+      actualCost: Number(getVal(v, 'actualCost') || 0),
+      startDate: String(getVal(v, 'startDate') || ''),
+      endDate: String(getVal(v, 'endDate') || ''),
+      status: (getVal(v, 'status') || 'ACTIVE') as Project['status'],
+      isLocked: Boolean(getVal(v, 'isLocked')),
+      companyId: String(getVal(v, 'companyId') || ''),
+      budgetPartners: getProjectBudgetPartners(pId),
+      isDeleted: Boolean(getVal(v, 'isDeleted')),
+      version: Number(getVal(v, 'version') || 1),
+      createdAt: String(getVal(v, 'createdAt') || ''),
+      updatedAt: String(getVal(v, 'updatedAt') || ''),
+    };
+  });
 }
 
 // ⚡ 一鍵極速建立專案案場 (支援進貨模糊比對就地建檔與未來案場模組共用)
@@ -2707,9 +2742,9 @@ export function quickCreateProject(
 
   dbInstance.run(`
     INSERT INTO projects (
-      id, projectCode, name, ownerName, ownerTaxId, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt
+      id, projectCode, name, ownerName, ownerTaxId, buildingType, workScope, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt
     ) VALUES (
-      '${id}', '${projectCode}', '${cleanName.replace(/'/g, "''")}', '${cleanOwner.replace(/'/g, "''")}', '${cleanTaxId.replace(/'/g, "''")}', 0, 0, 0, 0, '${now.slice(0, 10)}', '', 'ACTIVE', 0, '${companyId}', 0, 1, '${now}', '${now}'
+      '${id}', '${projectCode}', '${cleanName.replace(/'/g, "''")}', '${cleanOwner.replace(/'/g, "''")}', '${cleanTaxId.replace(/'/g, "''")}', '集合住宅大樓', '統包新建工程', 0, 0, 0, 0, '${now.slice(0, 10)}', '', 'ACTIVE', 0, '${companyId}', 0, 1, '${now}', '${now}'
     );
   `);
 
@@ -2731,26 +2766,36 @@ export function getProjectById(id: string): Project | null {
   if (!dbInstance) return null;
   const res = dbInstance.exec(`SELECT * FROM projects WHERE id = '${id.replace(/'/g, "''")}' AND isDeleted = 0;`);
   if (!res.length || !res[0].values.length) return null;
+  const cols = res[0].columns;
+  const colMap = new Map<string, number>();
+  cols.forEach((c, idx) => colMap.set(c, idx));
+  const getVal = (row: any[], col: string) => {
+    const idx = colMap.get(col);
+    return idx !== undefined ? row[idx] : undefined;
+  };
   const v = res[0].values[0];
   return {
-    id: String(v[0]),
-    projectCode: String(v[1]),
-    name: String(v[2]),
-    ownerName: String(v[3]),
-    ownerTaxId: String(v[4] || ''),
-    contractAmount: Number(v[5] || 0),
-    budgetAmount: Number(v[6] || 0),
-    committedCost: Number(v[7] || 0),
-    actualCost: Number(v[8] || 0),
-    startDate: String(v[9] || ''),
-    endDate: String(v[10] || ''),
-    status: v[11] as Project['status'],
-    isLocked: Boolean(v[12]),
-    companyId: String(v[13]),
-    isDeleted: Boolean(v[14]),
-    version: Number(v[15]),
-    createdAt: String(v[16]),
-    updatedAt: String(v[17]),
+    id: String(getVal(v, 'id') || ''),
+    projectCode: String(getVal(v, 'projectCode') || ''),
+    name: String(getVal(v, 'name') || ''),
+    ownerName: String(getVal(v, 'ownerName') || ''),
+    ownerTaxId: String(getVal(v, 'ownerTaxId') || ''),
+    buildingType: getVal(v, 'buildingType') ? String(getVal(v, 'buildingType')) : undefined,
+    workScope: getVal(v, 'workScope') ? String(getVal(v, 'workScope')) : undefined,
+    contractAmount: Number(getVal(v, 'contractAmount') || 0),
+    budgetAmount: Number(getVal(v, 'budgetAmount') || 0),
+    committedCost: Number(getVal(v, 'committedCost') || 0),
+    actualCost: Number(getVal(v, 'actualCost') || 0),
+    startDate: String(getVal(v, 'startDate') || ''),
+    endDate: String(getVal(v, 'endDate') || ''),
+    status: (getVal(v, 'status') || 'ACTIVE') as Project['status'],
+    isLocked: Boolean(getVal(v, 'isLocked')),
+    companyId: String(getVal(v, 'companyId') || ''),
+    budgetPartners: getProjectBudgetPartners(String(getVal(v, 'id') || '')),
+    isDeleted: Boolean(getVal(v, 'isDeleted')),
+    version: Number(getVal(v, 'version') || 1),
+    createdAt: String(getVal(v, 'createdAt') || ''),
+    updatedAt: String(getVal(v, 'updatedAt') || ''),
   };
 }
 
@@ -2816,6 +2861,422 @@ export function getProjectSiteByProjectId(projectId: string): ProjectSite | null
   }
 }
 
+// ============================================================================
+// 🏗️ 建造物與業務項目階層分類字典 (大項 -> 小項) 管理函數
+// ============================================================================
+export const DEFAULT_BUILDING_CATEGORY_TREE: BuildingCategoryGroup[] = [
+  {
+    id: 'GRP-BLD',
+    name: '建物類',
+    sortOrder: 1,
+    items: [
+      { id: 'ITM-01', name: '鐵皮倉庫', isActive: true, sortOrder: 1 },
+      { id: 'ITM-02', name: '鋼構建築', isActive: true, sortOrder: 2 },
+      { id: 'ITM-03', name: '農業設施', isActive: true, sortOrder: 3 },
+      { id: 'ITM-04', name: '風雨球場', isActive: true, sortOrder: 4 },
+    ]
+  },
+  {
+    id: 'GRP-OTH',
+    name: '其他',
+    sortOrder: 2,
+    items: [
+      { id: 'ITM-05', name: '鋼梯', isActive: true, sortOrder: 1 },
+      { id: 'ITM-06', name: '屋頂浪板', isActive: true, sortOrder: 2 },
+    ]
+  }
+];
+
+export function getBuildingCategoryTree(): BuildingCategoryGroup[] {
+  if (!dbInstance) return DEFAULT_BUILDING_CATEGORY_TREE;
+  ensureDatabaseIntegrity(dbInstance);
+  try {
+    const res = dbInstance.exec(`SELECT configValue FROM system_configs WHERE configKey = 'BUILDING_CATEGORY_TREE';`);
+    if (res.length && res[0].values.length && res[0].values[0][0]) {
+      const parsed = JSON.parse(String(res[0].values[0][0]));
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('getBuildingCategoryTree failed:', err);
+  }
+  return DEFAULT_BUILDING_CATEGORY_TREE;
+}
+
+export function saveBuildingCategoryTree(tree: BuildingCategoryGroup[], operatorName = '系統管理員'): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const jsonStr = JSON.stringify(tree);
+  dbInstance.run(`
+    INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
+    VALUES ('CFG-BLD-TREE', 'BUILDING_CATEGORY_TREE', '${jsonStr.replace(/'/g, "''")}', '建造物與業務項目階層分類字典 (大項/小項)', 'JSON', '${now.slice(0, 10)}', 0, 1, '${operatorName.replace(/'/g, "''")}', '${now}', '${now}')
+    ON CONFLICT(configKey) DO UPDATE SET
+      configValue = excluded.configValue,
+      version = version + 1,
+      updatedBy = excluded.updatedBy,
+      updatedAt = excluded.updatedAt;
+  `);
+
+  try {
+    logAudit(dbInstance, operatorName, '修改字典', '建造物與業務項目分類', '兩階層分類字典更新', {}, { 分類群組數: tree.length }, operatorName);
+  } catch (_) {}
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// ============================================================================
+// 🏗️ 協力廠商二階段階層分類字典 (第一階層: 工料類別 ➔ 第二階層: 公司名稱)
+// ============================================================================
+export const DEFAULT_SUBCONTRACTOR_CATEGORY_TREE: SubcontractorCategoryGroup[] = [
+  {
+    id: 'CAT-STEEL',
+    category: '鋼材',
+    vendors: [
+      { id: 'V-01', name: '中鋼', isActive: true },
+      { id: 'V-02', name: '東和', isActive: true },
+      { id: 'V-03', name: '豐興', isActive: true },
+      { id: 'V-04', name: '宏國鋼鐵', isActive: true },
+      { id: 'V-05', name: '威致鋼鐵', isActive: true },
+    ]
+  },
+  {
+    id: 'CAT-CONCRETE',
+    category: '混凝土',
+    vendors: [
+      { id: 'V-06', name: '台泥', isActive: true },
+      { id: 'V-07', name: '亞泥', isActive: true },
+      { id: 'V-08', name: '國產建材', isActive: true },
+      { id: 'V-09', name: '力泰水泥', isActive: true },
+    ]
+  },
+  {
+    id: 'CAT-DRAWING',
+    category: '拆圖',
+    vendors: [
+      { id: 'V-10', name: '宏聯結構拆圖', isActive: true },
+      { id: 'V-11', name: '誠業工程拆圖', isActive: true },
+      { id: 'V-12', name: '大成大樣拆圖', isActive: true },
+    ]
+  },
+  {
+    id: 'CAT-SHEET',
+    category: '屋頂浪板',
+    vendors: [
+      { id: 'V-13', name: '燁輝鋼品', isActive: true },
+      { id: 'V-14', name: '盛餘浪板', isActive: true },
+      { id: 'V-15', name: '華新浪板', isActive: true },
+    ]
+  },
+  {
+    id: 'CAT-STRUCTURE',
+    category: '鋼構吊裝',
+    vendors: [
+      { id: 'V-16', name: '春源鋼鐵', isActive: true },
+      { id: 'V-17', name: '中鋼結構', isActive: true },
+      { id: 'V-18', name: '長榮重工', isActive: true },
+    ]
+  },
+  {
+    id: 'CAT-WINDOWS',
+    category: '門窗五金',
+    vendors: [
+      { id: 'V-19', name: '正新鋁門窗', isActive: true },
+      { id: 'V-20', name: '大同鋁業', isActive: true },
+      { id: 'V-21', name: '力霸門窗', isActive: true },
+    ]
+  },
+  {
+    id: 'CAT-MEP',
+    category: '機電消防',
+    vendors: [
+      { id: 'V-22', name: '華城電機', isActive: true },
+      { id: 'V-23', name: '士林電機', isActive: true },
+      { id: 'V-24', name: '大同機電', isActive: true },
+    ]
+  },
+  {
+    id: 'CAT-OTH',
+    category: '其他協力',
+    vendors: [
+      { id: 'V-25', name: '全翔吊車起重', isActive: true },
+      { id: 'V-26', name: '力霸工程行', isActive: true },
+    ]
+  }
+];
+
+export function getSubcontractorCategoryTree(): SubcontractorCategoryGroup[] {
+  if (!dbInstance) return DEFAULT_SUBCONTRACTOR_CATEGORY_TREE;
+  ensureDatabaseIntegrity(dbInstance);
+  try {
+    const res = dbInstance.exec(`SELECT configValue FROM system_configs WHERE configKey = 'SUBCONTRACTOR_CATEGORY_TREE';`);
+    if (res.length && res[0].values.length && res[0].values[0][0]) {
+      const parsed = JSON.parse(String(res[0].values[0][0]));
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('getSubcontractorCategoryTree failed:', err);
+  }
+  return DEFAULT_SUBCONTRACTOR_CATEGORY_TREE;
+}
+
+export function saveSubcontractorCategoryTree(tree: SubcontractorCategoryGroup[], operatorName = '系統管理員'): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const jsonStr = JSON.stringify(tree);
+  dbInstance.run(`
+    INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
+    VALUES ('CFG-SUBCONTRACTOR-TREE', 'SUBCONTRACTOR_CATEGORY_TREE', '${jsonStr.replace(/'/g, "''")}', '協力廠商二階段階層分類字典 (工料類別/公司名稱)', 'JSON', '${now.slice(0, 10)}', 0, 1, '${operatorName.replace(/'/g, "''")}', '${now}', '${now}')
+    ON CONFLICT(configKey) DO UPDATE SET
+      configValue = excluded.configValue,
+      version = version + 1,
+      updatedBy = excluded.updatedBy,
+      updatedAt = excluded.updatedAt;
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+export function addVendorToSubcontractorCategory(categoryName: string, vendorName: string, operatorName = '系統管理員'): SubcontractorCategoryGroup[] {
+  const tree = getSubcontractorCategoryTree();
+  const cat = tree.find(c => c.category === categoryName);
+  const vName = vendorName.trim();
+  if (!vName) return tree;
+
+  if (cat) {
+    if (!cat.vendors.some(v => v.name === vName)) {
+      cat.vendors.push({
+        id: `V-${Date.now().toString().slice(-6)}`,
+        name: vName,
+        isActive: true
+      });
+    }
+  } else {
+    tree.push({
+      id: `CAT-${Date.now().toString().slice(-6)}`,
+      category: categoryName.trim() || '其他協力',
+      vendors: [{ id: `V-${Date.now().toString().slice(-6)}`, name: vName, isActive: true }]
+    });
+  }
+
+  saveSubcontractorCategoryTree(tree, operatorName);
+  return tree;
+}
+
+// ============================================================================
+// 💼 專案案場之預計協力廠商列表 (支援多筆、預估發包金額與工項)
+// ============================================================================
+export function getProjectBudgetPartners(projectId: string): ProjectBudgetPartner[] {
+  if (!dbInstance || !projectId) return [];
+  ensureDatabaseIntegrity(dbInstance);
+  try {
+    const res = dbInstance.exec(`
+      SELECT id, projectId, partnerId, partnerName, workScope, estimatedAmount, notes, createdAt, updatedAt
+      FROM project_budget_partners
+      WHERE projectId = '${projectId.replace(/'/g, "''")}'
+      ORDER BY estimatedAmount DESC, id ASC;
+    `);
+    if (!res.length || !res[0].values) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      projectId: String(v[1]),
+      partnerId: String(v[2]),
+      partnerName: String(v[3] || ''),
+      workScope: String(v[4] || ''),
+      estimatedAmount: Number(v[5] || 0),
+      notes: v[6] ? String(v[6]) : undefined,
+      createdAt: v[7] ? String(v[7]) : undefined,
+      updatedAt: v[8] ? String(v[8]) : undefined,
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+export function saveProjectBudgetPartners(projectId: string, partners: ProjectBudgetPartner[]): void {
+  if (!dbInstance || !projectId) return;
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+
+  dbInstance.run(`DELETE FROM project_budget_partners WHERE projectId = '${projectId.replace(/'/g, "''")}';`);
+
+  for (let i = 0; i < partners.length; i++) {
+    const p = partners[i];
+    const pid = p.id || `PBP-${Date.now().toString().slice(-6)}-${i + 1}`;
+    const pName = (p.partnerName || '').trim();
+    const wScope = (p.workScope || '').trim();
+    const est = Number(p.estimatedAmount) || 0;
+    const n = (p.notes || '').trim();
+
+    dbInstance.run(`
+      INSERT INTO project_budget_partners (id, projectId, partnerId, partnerName, workScope, estimatedAmount, notes, createdAt, updatedAt)
+      VALUES (
+        '${pid}',
+        '${projectId.replace(/'/g, "''")}',
+        '${(p.partnerId || '').replace(/'/g, "''")}',
+        '${pName.replace(/'/g, "''")}',
+        '${wScope.replace(/'/g, "''")}',
+        ${est},
+        ${n ? `'${n.replace(/'/g, "''")}'` : 'NULL'},
+        '${p.createdAt || now}',
+        '${now}'
+      );
+    `);
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// ============================================================================
+// 📊 取得特定案場中特定廠商之進貨、請款與支付統計 (純調取資料，依 projectId + partnerId 隔離)
+// ============================================================================
+export interface ProjectPartnerBillingSummary {
+  projectId: string;
+  partnerId: string;
+  partnerName: string;
+  workScope: string;
+  estimatedAmount: number;
+  totalInboundAmount: number;
+  billedInboundAmount: number;
+  pendingBillingAmount: number; // 待請款金額 (已進貨但尚未請款差額)
+  totalPaidAmount: number; // 已支付給廠商之金額
+  unpaidBalance: number; // 請款待支付餘額
+  receiptCount: number;
+  pendingReceiptCount: number;
+  receipts: InboundReceipt[];
+  statusLabel: 'NOT_DELIVERED' | 'PENDING_BILLING' | 'PENDING_PAYMENT' | 'FULLY_SETTLED';
+  statusText: string;
+}
+
+export function getProjectPartnerBillingSummary(
+  projectId: string,
+  partnerId: string,
+  estimatedAmount: number = 0,
+  workScope: string = '',
+  partnerName: string = ''
+): ProjectPartnerBillingSummary {
+  if (!dbInstance) {
+    return {
+      projectId,
+      partnerId,
+      partnerName,
+      workScope,
+      estimatedAmount,
+      totalInboundAmount: 0,
+      billedInboundAmount: 0,
+      pendingBillingAmount: 0,
+      totalPaidAmount: 0,
+      unpaidBalance: 0,
+      receiptCount: 0,
+      pendingReceiptCount: 0,
+      receipts: [],
+      statusLabel: 'NOT_DELIVERED',
+      statusText: '尚未進料'
+    };
+  }
+
+  // 1. 純從進貨簽收單抓取本案場 + 本廠商所有資料 (排除 VOIDED 作廢)
+  const allReceipts = getAllInboundReceipts({ projectId, vendorId: partnerId });
+  const validReceipts = allReceipts.filter(r => r.status !== 'VOIDED' && !r.isDeleted);
+
+  let totalInboundAmount = 0;
+  let billedInboundAmount = 0;
+  let pendingBillingAmount = 0;
+  let pendingReceiptCount = 0;
+
+  for (const r of validReceipts) {
+    totalInboundAmount += r.totalAmount;
+    if (r.billingStatus === 'BILLED') {
+      billedInboundAmount += r.totalAmount;
+    } else {
+      pendingBillingAmount += r.totalAmount;
+      pendingReceiptCount++;
+    }
+  }
+
+  // 2. 抓取估驗請款資料 (Valuations)
+  let totalValuationAmount = 0;
+  let paidValuationAmount = 0;
+  try {
+    const valRes = dbInstance.exec(`
+      SELECT totalAmount, status FROM valuations
+      WHERE projectId = '${projectId.replace(/'/g, "''")}' 
+        AND subcontractorId = '${partnerId.replace(/'/g, "''")}' 
+        AND isDeleted = 0;
+    `);
+    if (valRes.length && valRes[0].values) {
+      for (const row of valRes[0].values) {
+        const amt = Number(row[0] || 0);
+        const st = String(row[1]);
+        totalValuationAmount += amt;
+        if (st === 'PAID') {
+          paidValuationAmount += amt;
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 3. 抓取應付帳款已支付金額 (Accounts Payable)
+  let apPaidAmount = 0;
+  try {
+    const apRes = dbInstance.exec(`
+      SELECT appliedAmount FROM accounts_payable
+      WHERE vendorId = '${partnerId.replace(/'/g, "''")}'
+        AND (sourceId IN (SELECT id FROM inbound_receipts WHERE projectId = '${projectId.replace(/'/g, "''")}')
+             OR sourceId IN (SELECT id FROM valuations WHERE projectId = '${projectId.replace(/'/g, "''")}'));
+    `);
+    if (apRes.length && apRes[0].values) {
+      for (const row of apRes[0].values) {
+        apPaidAmount += Number(row[0] || 0);
+      }
+    }
+  } catch (_) {}
+
+  const effectiveBilled = Math.max(billedInboundAmount, totalValuationAmount);
+  const effectivePaid = Math.max(paidValuationAmount, apPaidAmount);
+  const unpaidBalance = Math.max(0, effectiveBilled - effectivePaid);
+
+  let statusLabel: ProjectPartnerBillingSummary['statusLabel'] = 'NOT_DELIVERED';
+  let statusText = '尚未進料';
+
+  if (totalInboundAmount === 0 && effectiveBilled === 0) {
+    statusLabel = 'NOT_DELIVERED';
+    statusText = '尚未進料';
+  } else if (pendingBillingAmount > 0) {
+    statusLabel = 'PENDING_BILLING';
+    statusText = `尚有 ${pendingReceiptCount} 筆進貨未請款 (NT$ ${pendingBillingAmount.toLocaleString()})`;
+  } else if (unpaidBalance > 0) {
+    statusLabel = 'PENDING_PAYMENT';
+    statusText = `請款待付款 (NT$ ${unpaidBalance.toLocaleString()})`;
+  } else {
+    statusLabel = 'FULLY_SETTLED';
+    statusText = '全部進貨已結清';
+  }
+
+  return {
+    projectId,
+    partnerId,
+    partnerName: partnerName || (validReceipts[0]?.vendorNameSnapshot || partnerId),
+    workScope,
+    estimatedAmount,
+    totalInboundAmount,
+    billedInboundAmount: effectiveBilled,
+    pendingBillingAmount,
+    totalPaidAmount: effectivePaid,
+    unpaidBalance,
+    receiptCount: validReceipts.length,
+    pendingReceiptCount,
+    receipts: validReceipts,
+    statusLabel,
+    statusText
+  };
+}
+
 // 正式新增案場 (專案代碼一律依據 document_sequence_rules 既定格式自動配發，法人支援未定)
 export function createProjectRecord(
   projectData: Partial<Project>,
@@ -2841,12 +3302,17 @@ export function createProjectRecord(
   const isLocked = projectData.isLocked ? 1 : 0;
   // 支援簽約法人未定 (NULL)
   const companyIdVal = projectData.companyId && projectData.companyId.trim() ? `'${projectData.companyId.trim()}'` : 'NULL';
+  const cleanBuildingType = (projectData.buildingType || '').trim();
+  const cleanWorkScope = (projectData.workScope || '').trim();
 
   dbInstance.run(`
     INSERT INTO projects (
-      id, projectCode, name, ownerName, ownerTaxId, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt
+      id, projectCode, name, ownerName, ownerTaxId, buildingType, workScope, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt
     ) VALUES (
-      '${id}', '${projectCode}', '${cleanName.replace(/'/g, "''")}', '${cleanOwner.replace(/'/g, "''")}', '${cleanOwnerTaxId.replace(/'/g, "''")}', ${contractAmount}, ${budgetAmount}, ${committedCost}, ${actualCost}, '${startDate}', '${endDate}', '${status}', ${isLocked}, ${companyIdVal}, 0, 1, '${now}', '${now}'
+      '${id}', '${projectCode}', '${cleanName.replace(/'/g, "''")}', '${cleanOwner.replace(/'/g, "''")}', '${cleanOwnerTaxId.replace(/'/g, "''")}',
+      ${cleanBuildingType ? `'${cleanBuildingType.replace(/'/g, "''")}'` : 'NULL'},
+      ${cleanWorkScope ? `'${cleanWorkScope.replace(/'/g, "''")}'` : 'NULL'},
+      ${contractAmount}, ${budgetAmount}, ${committedCost}, ${actualCost}, '${startDate}', '${endDate}', '${status}', ${isLocked}, ${companyIdVal}, 0, 1, '${now}', '${now}'
     );
   `);
 
@@ -2875,6 +3341,10 @@ export function createProjectRecord(
     `);
   }
 
+  if (projectData.budgetPartners && projectData.budgetPartners.length > 0) {
+    saveProjectBudgetPartners(id, projectData.budgetPartners);
+  }
+
   logAudit(dbInstance, operatorName, '新增資料', '專案案場工程', cleanName, undefined, { '專案代碼': projectCode, '合約總額': contractAmount, '起造人/業主': cleanOwner, '所屬法人': projectData.companyId || '未定' });
   saveDatabaseSnapshot();
   notifyListeners();
@@ -2898,6 +3368,12 @@ export function updateProjectRecord(
   if (projectData.name !== undefined) updates.push(`name = '${projectData.name.trim().replace(/'/g, "''")}'`);
   if (projectData.ownerName !== undefined) updates.push(`ownerName = '${projectData.ownerName.trim().replace(/'/g, "''")}'`);
   if (projectData.ownerTaxId !== undefined) updates.push(`ownerTaxId = '${projectData.ownerTaxId.trim().replace(/'/g, "''")}'`);
+  if (projectData.buildingType !== undefined) {
+    updates.push(projectData.buildingType && projectData.buildingType.trim() ? `buildingType = '${projectData.buildingType.trim().replace(/'/g, "''")}'` : `buildingType = NULL`);
+  }
+  if (projectData.workScope !== undefined) {
+    updates.push(projectData.workScope && projectData.workScope.trim() ? `workScope = '${projectData.workScope.trim().replace(/'/g, "''")}'` : `workScope = NULL`);
+  }
   if (projectData.companyId !== undefined) {
     updates.push(projectData.companyId && projectData.companyId.trim() ? `companyId = '${projectData.companyId.trim()}'` : `companyId = NULL`);
   }
@@ -2952,6 +3428,10 @@ export function updateProjectRecord(
         );
       `);
     }
+  }
+
+  if (projectData.budgetPartners !== undefined) {
+    saveProjectBudgetPartners(id, projectData.budgetPartners);
   }
 
   logAudit(dbInstance, operatorName, '修改資料', '專案案場工程', existing.name, { '狀態': existing.status }, { '狀態': projectData.status || existing.status });
@@ -5955,13 +6435,83 @@ export function ensureDatabaseIntegrity(db: Database) {
   try { db.run(`ALTER TABLE project_sites ADD COLUMN shopDrawingVendorName TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE project_sites ADD COLUMN landNumber TEXT;`); } catch (e) {}
 
-  // 確保拆圖廠商種子資料存在供選取
+  // 🏛️ 專案案場建物類型與工作內容分類欄位
+  try { db.run(`ALTER TABLE projects ADD COLUMN buildingType TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN workScope TEXT;`); } catch (e) {}
+  try {
+    db.run(`UPDATE projects SET buildingType = '鐵皮倉庫', workScope = '統包新建工程' WHERE id = 'PRJ-01' AND (buildingType IS NULL OR buildingType = '' OR buildingType = '商辦金融大樓');`);
+    db.run(`UPDATE projects SET buildingType = '鋼構建築', workScope = '室內裝修與機電消防工程' WHERE id = 'PRJ-02' AND (buildingType IS NULL OR buildingType = '' OR buildingType = '廠辦與工業廠房');`);
+    db.run(`UPDATE projects SET buildingType = '農業設施', workScope = '連續壁與擋土排樁工程' WHERE id = 'PRJ-03' AND (buildingType IS NULL OR buildingType = '' OR buildingType = '集合住宅大樓');`);
+  } catch (e) {}
+
+  // 🏛️ 確保 project_budget_partners 表與索引存在
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS project_budget_partners (
+        id TEXT PRIMARY KEY,
+        projectId TEXT NOT NULL,
+        partnerId TEXT NOT NULL,
+        partnerName TEXT NOT NULL,
+        workScope TEXT NOT NULL,
+        estimatedAmount REAL DEFAULT 0,
+        notes TEXT,
+        createdAt TEXT,
+        updatedAt TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_budget_partners_prj ON project_budget_partners (projectId);
+    `);
+  } catch (e) {}
+
+  // 🏛️ 初始化預設建物業務類型兩階層字典 (若尚未存在)
+  try {
+    const cfgRes = db.exec(`SELECT configValue FROM system_configs WHERE configKey = 'BUILDING_CATEGORY_TREE';`);
+    if (!cfgRes.length || !cfgRes[0].values.length) {
+      const defaultTreeJson = JSON.stringify(DEFAULT_BUILDING_CATEGORY_TREE);
+      db.run(`
+        INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
+        VALUES ('CFG-BLD-TREE', 'BUILDING_CATEGORY_TREE', '${defaultTreeJson.replace(/'/g, "''")}', '建造物與業務項目階層分類字典 (大項/小項)', 'JSON', '2026-01-01', 0, 1, '系統初始', '2026-01-01', '2026-01-01');
+      `);
+    }
+  } catch (e) {}
+
+  // 🏛️ 若預計協力廠商表為空，為示範專案 PRJ-01 植入示範資料 (宏國 300 萬, 台泥 50 萬, 宏聯拆圖 80 萬)
+  try {
+    const bpCount = db.exec(`SELECT count(*) FROM project_budget_partners;`);
+    if (!bpCount.length || Number(bpCount[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO project_budget_partners (id, projectId, partnerId, partnerName, workScope, estimatedAmount, notes, createdAt, updatedAt)
+        VALUES
+          ('PBP-01', 'PRJ-01', 'BP-01', '宏國實業有限公司', '鋼構加工與主構件供料', 3000000, '主結構柱樑鋼構與吊裝 (甲廠商)', '2026-01-01', '2026-01-01'),
+          ('PBP-02', 'PRJ-01', 'BP-04', '台灣水泥預拌股份有限公司', '預拌混凝土 (4000psi/5000psi)', 500000, '基礎筏基與各層灌漿供料 (乙廠商)', '2026-01-01', '2026-01-01'),
+          ('PBP-03', 'PRJ-01', 'BP-07', '宏聯結構工程拆圖顧問有限公司', '施工大樣圖與構件拆圖', 800000, '施工製造詳圖繪製送審 (丙廠商)', '2026-01-01', '2026-01-01'),
+          ('PBP-04', 'PRJ-02', 'BP-08', '大有營建工程施工拆圖事務所有限公司', '無塵室結構拆圖', 650000, '特殊管線穿樑檢討', '2026-01-01', '2026-01-01');
+      `);
+    }
+  } catch (e) {}
+
+  // 確保拆圖廠商種子資料存在供選取 (包含宏聯、大有、誠業等專業拆圖顧問)
   try {
     const bp07Check = db.exec(`SELECT count(*) FROM business_partners WHERE id = 'BP-07';`);
     if (!bp07Check.length || Number(bp07Check[0].values[0][0]) === 0) {
       db.run(`
         INSERT INTO business_partners (id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson, phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer, hasInvoice, paymentTermsDays, isHighRisk, currentScore, status, companyId, isDeleted, version, createdAt, updatedAt)
         VALUES ('BP-07', 'SUB-003', '宏聯結構工程拆圖顧問有限公司', '54321678', 'CORPORATION', 'SUBCONTRACTOR', 0, 1, '專業技術顧問與測量設計', '拆圖廠商 / 施工大樣圖拆圖', 'G123456789', '黃宏達 技師', '黃宏達', '02-2345-6789', 'detail@honglian.com.tw', '台北市中山區南京東路三段28號', '台北富邦銀行', '012', '012001998877', '宏聯結構工程拆圖顧問有限公司', 'COMPANY', 1, 30, 0, 95, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01')
+        ON CONFLICT(id) DO NOTHING;
+      `);
+    }
+    const bp08Check = db.exec(`SELECT count(*) FROM business_partners WHERE id = 'BP-08';`);
+    if (!bp08Check.length || Number(bp08Check[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO business_partners (id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson, phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer, hasInvoice, paymentTermsDays, isHighRisk, currentScore, status, companyId, isDeleted, version, createdAt, updatedAt)
+        VALUES ('BP-08', 'SUB-004', '大有營建工程施工拆圖事務所有限公司', '67891234', 'CORPORATION', 'SUBCONTRACTOR', 0, 1, '專業技術顧問與測量設計', '拆圖廠商 / 施工大樣圖拆圖', 'H123456789', '林大有 技師', '林大有', '02-8765-4321', 'cad@dayou-draw.com.tw', '新北市板橋區文化路二段100號', '國泰世華銀行', '013', '013009988112', '大有營建工程施工拆圖事務所有限公司', 'COMPANY', 1, 30, 0, 93, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01')
+        ON CONFLICT(id) DO NOTHING;
+      `);
+    }
+    const bp09Check = db.exec(`SELECT count(*) FROM business_partners WHERE id = 'BP-09';`);
+    if (!bp09Check.length || Number(bp09Check[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO business_partners (id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson, phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer, hasInvoice, paymentTermsDays, isHighRisk, currentScore, status, companyId, isDeleted, version, createdAt, updatedAt)
+        VALUES ('BP-09', 'SUB-005', '誠業結構技師事務所 (拆圖部)', '43218765', 'CORPORATION', 'SUBCONTRACTOR', 0, 1, '專業技術顧問與測量設計', '拆圖廠商 / 建築結構大樣拆圖', 'A129876543', '陳誠業 技師', '陳誠業', '02-2700-1122', 'chen@chengye-str.com.tw', '台北市大安區信義路四段88號', '玉山商業銀行', '808', '808001122334', '誠業結構技師事務所', 'COMPANY', 1, 30, 0, 94, 'ACTIVE', 'COMP-01', 0, 1, '2026-01-01', '2026-01-01')
         ON CONFLICT(id) DO NOTHING;
       `);
     }

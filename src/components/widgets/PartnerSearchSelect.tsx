@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   Check,
@@ -54,12 +55,19 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
   const [searchTerm, setSearchTerm] = useState(value);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [isQuickCreateOpen, setIsQuickCreateOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number; placeAbove: boolean }>({
+    top: 0,
+    left: 0,
+    width: 300,
+    placeAbove: false
+  });
 
   // 快速建檔表單狀態
   const [newPartnerName, setNewPartnerName] = useState('');
   const [newPartnerType, setNewPartnerType] = useState<'CUSTOMER' | 'VENDOR'>(
     quickCreateDefaultType || (partnerTypeFilter === 'CUSTOMER' ? 'CUSTOMER' : 'VENDOR')
   );
+  const [newIsAlsoVendor, setNewIsAlsoVendor] = useState(false); // 業主是否兼具廠商身分
   const [newTaxId, setNewTaxId] = useState('');
   const [newContactPerson, setNewContactPerson] = useState('');
   const [newPhone, setNewPhone] = useState('');
@@ -96,10 +104,47 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
     setSearchTerm(value || '');
   }, [value, selectedPartnerId, partners]);
 
+  const updateCoords = () => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const dropdownHeight = 320;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const placeAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+    const popoverWidth = Math.max(340, rect.width);
+    let leftPos = rect.left;
+    if (leftPos + popoverWidth > window.innerWidth - 12) {
+      leftPos = Math.max(12, window.innerWidth - popoverWidth - 12);
+    }
+    setCoords({
+      top: placeAbove ? rect.top - 4 : rect.bottom + 4,
+      left: leftPos,
+      width: popoverWidth,
+      placeAbove
+    });
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      updateCoords();
+      const handleScrollOrResize = () => updateCoords();
+      window.addEventListener('resize', handleScrollOrResize);
+      window.addEventListener('scroll', handleScrollOrResize, true);
+      return () => {
+        window.removeEventListener('resize', handleScrollOrResize);
+        window.removeEventListener('scroll', handleScrollOrResize, true);
+      };
+    }
+  }, [isOpen]);
+
   // 點選外部自動關閉下拉選單
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as HTMLElement;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        !target.closest('.floating-partner-dropdown')
+      ) {
         setIsOpen(false);
       }
     };
@@ -107,7 +152,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  // 根據條件即時篩選商業夥伴
+  // 根據條件即時篩選商業夥伴（嚴格排除無關類別雜訊）
   const filteredPartners = useMemo(() => {
     const query = (searchTerm || '').trim().toLowerCase();
 
@@ -122,23 +167,25 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
       } else if (partnerTypeFilter === 'SUBCONTRACTOR') {
         if (p.type !== 'SUBCONTRACTOR') return false;
       } else if (partnerTypeFilter === 'SHOP_DRAWING') {
+        // 嚴格過濾拆圖協力廠商：只保留具備拆圖專業業務之廠商，排除預拌混泥土、土方、鋼構等無拆圖業務廠商，杜絕雜訊
         const isShop =
           (p.serviceCategorySub && p.serviceCategorySub.includes('拆圖')) ||
-          (p.serviceCategoryMain && p.serviceCategoryMain.includes('專業技術顧問')) ||
-          (p.name && (p.name.includes('拆圖') || p.name.includes('繪圖') || p.name.includes('結構')));
-        // 若指定 SHOP_DRAWING，可優先匹配，但不嚴格排他（仍保留所有廠商可供切換選取）
+          (p.serviceCategoryMain && p.serviceCategoryMain.includes('拆圖')) ||
+          (p.serviceCategories && p.serviceCategories.some(c => (c.main && c.main.includes('拆圖')) || (c.sub && c.sub.includes('拆圖')))) ||
+          (p.name && (p.name.includes('拆圖') || p.name.includes('大樣圖')));
+        if (!isShop) return false;
       }
 
-      // 2. 自訂分類篩選 (如：拆圖)
+      // 2. 自訂分類篩選 (如：拆圖) - 嚴格排除非此類別之廠商雜訊
       if (categoryFilter) {
         const catStr = [
           p.serviceCategoryMain || '',
           p.serviceCategorySub || '',
-          ...(p.serviceCategories || []),
+          ...(p.serviceCategories || []).map(c => `${c.main || ''} ${c.sub || ''}`),
           p.name
-        ].join(' ');
-        if (!catStr.toLowerCase().includes(categoryFilter.toLowerCase())) {
-          // 不完全排除，但排序降權
+        ].join(' ').toLowerCase();
+        if (!catStr.includes(categoryFilter.toLowerCase())) {
+          return false;
         }
       }
 
@@ -195,11 +242,12 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
     setNewContactPerson('');
     setNewPhone('');
     setNewAddress('');
+    setNewIsAlsoVendor(false);
     setNewCategory(
       quickCreateDefaultCategory ||
       (partnerTypeFilter === 'SHOP_DRAWING'
         ? '專業技術顧問與測量設計 / 拆圖廠商 / 施工大樣圖拆圖'
-        : partnerTypeFilter === 'CUSTOMER' ? '業主建設' : '協力包商')
+        : partnerTypeFilter === 'CUSTOMER' ? '業主建設開發' : '協力包商')
     );
     setNewPartnerType(
       quickCreateDefaultType || (partnerTypeFilter === 'CUSTOMER' ? 'CUSTOMER' : 'VENDOR')
@@ -219,10 +267,16 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
 
     try {
       const isCust = newPartnerType === 'CUSTOMER';
-      const isVend = newPartnerType === 'VENDOR';
+      const isVend = newPartnerType === 'VENDOR' || (isCust && newIsAlsoVendor);
+      const partnerFinalType: BusinessPartner['type'] = isCust && newIsAlsoVendor
+        ? 'BOTH'
+        : (isCust ? 'CUSTOMER' : 'VENDOR');
+
       const bpCode = isCust
         ? `CUST-${Date.now().toString().slice(-4)}`
-        : `VEND-${Date.now().toString().slice(-4)}`;
+        : (partnerTypeFilter === 'SHOP_DRAWING'
+          ? `SUB-DRAW-${Date.now().toString().slice(-4)}`
+          : `VEND-${Date.now().toString().slice(-4)}`);
 
       const newPartner: BusinessPartner = {
         id: `BP-QUICK-${Date.now().toString().slice(-6)}`,
@@ -230,11 +284,15 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
         name: newPartnerName.trim(),
         taxId: newTaxId.trim(),
         entityType: 'CORPORATION',
-        type: isCust ? 'CUSTOMER' : 'VENDOR',
+        type: partnerFinalType,
         isCustomer: isCust,
         isVendor: isVend,
-        serviceCategoryMain: isVend ? (newCategory.includes('/') ? newCategory.split('/')[0].trim() : '專業工程') : undefined,
-        serviceCategorySub: newCategory.trim() || (isCust ? '業主客戶' : '工程協力廠商'),
+        serviceCategoryMain: isVend
+          ? (partnerTypeFilter === 'SHOP_DRAWING'
+            ? '專業技術顧問與測量設計'
+            : (newCategory.includes('/') ? newCategory.split('/')[0].trim() : '專業工程'))
+          : undefined,
+        serviceCategorySub: newCategory.trim() || (isCust ? '業主建設' : '工程協力廠商'),
         representative: newContactPerson.trim(),
         contactPerson: newContactPerson.trim(),
         phone: newPhone.trim(),
@@ -340,9 +398,19 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
         <p className="text-[10px] text-slate-500 mt-1">{helperText}</p>
       )}
 
-      {/* 即時搜尋下拉浮動清單 (Autocomplete Dropdown) */}
-      {isOpen && !disabled && (
-        <div className="absolute z-50 left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-slate-200 max-h-72 flex flex-col overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100">
+      {/* 即時搜尋下拉浮動清單 (Autocomplete Dropdown - 懸浮式 Portal 徹底避免被任何外層表格或滾動區域截斷) */}
+      {isOpen && !disabled && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: coords.placeAbove ? 'auto' : `${coords.top}px`,
+            bottom: coords.placeAbove ? `${window.innerHeight - coords.top}px` : 'auto',
+            left: `${coords.left}px`,
+            width: `${coords.width}px`,
+            zIndex: 99999
+          }}
+          className="floating-partner-dropdown bg-white rounded-xl shadow-2xl border border-indigo-200 max-h-80 flex flex-col overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100 text-xs"
+        >
           {/* 頂部標題與結果筆數 */}
           <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] text-slate-600 shrink-0">
             <span className="font-semibold flex items-center gap-1">
@@ -466,7 +534,8 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
               </button>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 快速新增客戶/廠商資料彈窗 (Quick Create Partner Modal) */}
@@ -476,15 +545,35 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
             {/* Modal Header */}
             <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center">
-                  <Sparkles className="w-4 h-4" />
+                <div className={`w-7 h-7 rounded-lg text-white flex items-center justify-center ${
+                  partnerTypeFilter === 'CUSTOMER'
+                    ? 'bg-emerald-600'
+                    : partnerTypeFilter === 'SHOP_DRAWING'
+                    ? 'bg-purple-600'
+                    : 'bg-indigo-600'
+                }`}>
+                  {partnerTypeFilter === 'CUSTOMER' ? (
+                    <Building2 className="w-4 h-4" />
+                  ) : partnerTypeFilter === 'SHOP_DRAWING' ? (
+                    <DraftingCompass className="w-4 h-4" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-800">
-                    快速登記新夥伴資料
+                    {partnerTypeFilter === 'CUSTOMER'
+                      ? '快速登記新業主 / 客戶（合約甲方）'
+                      : partnerTypeFilter === 'SHOP_DRAWING'
+                      ? '快速登記新拆圖協力廠商'
+                      : '快速登記新夥伴資料'}
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    立即寫入商業夥伴主檔資料庫，並自動帶入當前表單欄位
+                    {partnerTypeFilter === 'CUSTOMER'
+                      ? '確定對接為本案場業主單位，立即建立業主主檔；日後亦可指派兼具廠商身分'
+                      : partnerTypeFilter === 'SHOP_DRAWING'
+                      ? '專業技術顧問與施工大樣圖拆圖業務，建立後直接歸入拆圖類別'
+                      : '立即寫入商業夥伴主檔資料庫，並自動帶入當前表單欄位'}
                   </p>
                 </div>
               </div>
@@ -506,39 +595,75 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                 </div>
               )}
 
-              {/* 夥伴身分分類 Toggle */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
-                  夥伴業務型態 <span className="text-rose-500">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setNewPartnerType('CUSTOMER')}
-                    className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      newPartnerType === 'CUSTOMER'
-                        ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Building2 className="w-3.5 h-3.5" />
-                    <span>客戶 / 業主單位 (合約發票開立對象)</span>
-                  </button>
+              {/* 夥伴身分分類 Toggle / 專屬情境指示 */}
+              {partnerTypeFilter === 'CUSTOMER' ? (
+                <div className="space-y-2">
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 flex items-center justify-between text-xs text-emerald-800">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span className="font-bold">對象業務型態：案場業主客戶 (CUSTOMER)</span>
+                    </div>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-mono font-bold">合約甲方 / 發票買受人</span>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setNewPartnerType('VENDOR')}
-                    className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      newPartnerType === 'VENDOR'
-                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <DraftingCompass className="w-3.5 h-3.5" />
-                    <span>合作廠商 (拆圖顧問/分包/材料商)</span>
-                  </button>
+                  {/* 業主兼具廠商勾選框 (符合使用者提問：業主是否兼廠商又是另一件事) */}
+                  <label className="flex items-start gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100/70 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={newIsAlsoVendor}
+                      onChange={(e) => setNewIsAlsoVendor(e.target.checked)}
+                      className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-800 text-[11px]">兼具協力廠商身分（雙重身分 BOTH）</span>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        預設純為業主。若此業主單位同時或未來亦有供料、代工或發包承包業務，勾選後日後亦可在採購發包與進貨模組中選取。
+                      </p>
+                    </div>
+                  </label>
                 </div>
-              </div>
+              ) : partnerTypeFilter === 'SHOP_DRAWING' ? (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-2.5 flex items-center justify-between text-xs text-purple-800">
+                  <div className="flex items-center gap-2">
+                    <DraftingCompass className="w-4 h-4 text-purple-600 shrink-0" />
+                    <span className="font-bold">對象業務型態：拆圖協力廠商 (SUBCONTRACTOR)</span>
+                  </div>
+                  <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-mono font-bold">專業拆圖 / 施工大樣圖顧問</span>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
+                    夥伴業務型態 <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewPartnerType('CUSTOMER')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        newPartnerType === 'CUSTOMER'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>客戶 / 業主單位 (合約發票開立對象)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setNewPartnerType('VENDOR')}
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        newPartnerType === 'VENDOR'
+                          ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20'
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <DraftingCompass className="w-3.5 h-3.5" />
+                      <span>合作廠商 (拆圖顧問/分包/材料商)</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* 夥伴全銜 */}
               <div>

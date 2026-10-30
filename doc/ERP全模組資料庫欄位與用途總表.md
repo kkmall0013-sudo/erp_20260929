@@ -386,61 +386,91 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 
 ## 專案與案場管理
 
-### Project｜專案主檔
+### Project｜專案案場主檔 (`projects`)
+
+> **實務架構規範**：
+> - 專案代碼一律依據 `document_sequence_rules` 自動配號，禁止手動跳號或改號。
+> - 法人支援未定（`companyId` 可為空字串／`NULL`），待後續合約簽約或請款時指定。
+> - 建造建物類型與承攬工項支援兩階層分類（大項分群、強制僅選第二階小項，避免雜訊）。
+> - 起造人（建照法定主體 A）與合約甲方（發票買受人抬頭 B）支援分離指定，落實營造業真實稅務合約架構。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 專案識別碼。 |
-| `projectCode` | 專案代號，依年月與流水號產生。 |
-| `contractName` | 合約正式名稱，用於開票及憑證勾稽。 |
-| `internalName` | 內部俗稱，供工務及現場溝通。 |
-| `status` | 專案狀態：草稿、規劃、執行、保固或結案。 |
-| `managementContractAmount` | 管理帳真實合約金額，用於成本與利潤分析。 |
-| `taxInvoiceAmount` | 稅務帳官方開票總額；不是稅額本身。 |
-| `clientId` | 業主／客戶商業夥伴 ID。 |
-| `shipToId` | 收貨方商業夥伴 ID；可與簽約業主不同。 |
-| `billToId` | 發票開立方商業夥伴 ID。 |
-| `payerId` | 實際付款方商業夥伴 ID。 |
-| `referrerName` | 介紹人／推薦人名稱，作為後續分潤追蹤節點。 |
-| `retentionMethod` | 保留款計算方式：按期、尾期、手動或不適用。 |
-| `retentionRate` | 合約預設保留款比例。 |
-| `retentionCapAmount` | 保留款累計上限。 |
-| `retentionReleaseDate` | 預計退還保固款日期。 |
-| `contractDate` | 合約簽訂日。 |
-| `estStartDate`、`actStartDate` | 預計及實際開工日。 |
-| `estEndDate`、`actEndDate` | 預計及實際完工日。 |
-| `warrantyStartDate`、`warrantyEndDate` | 保固起訖日。 |
-| `parentId` | WBS 上層專案 ID，建立主案、期別及 VO 階層。 |
-| `isDeleted` | 軟刪除標記。 |
-| `version` | 樂觀鎖版本。 |
+| `id` | 專案唯一識別碼（如 `PRJ-01`）。 |
+| `projectCode` | 專案正式代碼（依編碼規則自動配號，如 `PRJ-2026-001`，唯讀主鍵）。 |
+| `name` | 專案案場工程全銜（如「台北信義 A21 頂級商辦大樓新建工程」）。 |
+| `ownerName` | 合約發票甲方全銜／發票買受人全銜（開立發票抬頭 B）。 |
+| `ownerTaxId` | 業主統一編號（8 碼加權模數檢驗，調用共用小程式即時驗證）。 |
+| `buildingType` | 建造建物類型（關聯兩階層分類字典 `BUILDING_CATEGORY_TREE`，強制選第二階小項，如「鐵皮倉庫」、「鋼構建築」、「風雨球場」等）。 |
+| `workScope` | 工作內容／承攬性質（如「統包新建工程」、「主體結構工程」、「精裝修工程」等）。 |
+| `contractAmount` | 合約承攬總額（含稅，新台幣元）。 |
+| `budgetAmount` | 目標工程預算（新台幣元，供成本控管與執行率計算）。 |
+| `committedCost` | 累計已承諾／發包成本。 |
+| `actualCost` | 累計已發生成本（進料簽收過帳與工程款累計支出）。 |
+| `startDate` | 開工日期（`YYYY-MM-DD`）。 |
+| `endDate` | 完工日期（進行中為空字串）。 |
+| `status` | 工程狀態：`PLANNING`（規劃籌備）、`ACTIVE`（施工中）、`COMPLETED`（已完工驗收）、`LOCKED`（已結算封存）。 |
+| `isLocked` | 是否結算封存鎖定（`0` 或 `1`）。 |
+| `companyId` | 所屬簽約承攬公司法人 ID（乙方，支援尚未確定 `NULL`）。 |
+| `isDeleted` | 軟刪除標記（`0` 或 `1`）。 |
+| `version` | 樂觀鎖版本號（預設 `1`，異動自動 `+1`）。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### ProjectMember｜專案成員
+---
+
+### ProjectSite｜工區現地與執照法定主體主檔 (`project_sites`)
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 成員關聯識別碼。 |
-| `projectId` | 所屬專案 ID。 |
-| `userId` | 成員使用者 ID。 |
-| `roleInProject` | 專案職務，如 PM、工地主任、會計。 |
-| `isDeleted` | 軟刪除標記。 |
-| `version` | 樂觀鎖版本。 |
-| `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+| `id` | 現地工區識別碼（如 `SITE-01`）。 |
+| `projectId` | 所屬專案案場 ID（外鍵關聯 `projects.id`）。 |
+| `siteName` | 工區別名／現地名稱（預設同工程全銜）。 |
+| `address` | 施工現址（工區工地真實地址）。 |
+| `contactPerson` | 工地主任姓名。 |
+| `contactPhone` | 工地現場聯絡電話。 |
+| `permitNumber` | 建造執照字號（如「(114)北市建字第00234號」）。 |
+| `developerName` | 執照法定起造人全銜（建物所有權／投資地主 A）。 |
+| `architect` | 設計監造人（建築師事務所／結構技師全銜）。 |
+| `constructor` | 承造人（營造廠全銜／專任工程人員）。 |
+| `shopDrawingVendorId` | 專業拆圖協力廠商 ID（向下相容商業夥伴）。 |
+| `shopDrawingVendorName` | 拆圖協力廠商名稱快照（結構大樣圖、鋼筋拆圖）。 |
+| `landNumber` | 基地座落地號（如「南港段一小段 123-1 地號等 3 筆」）。 |
 
-### ProjectBudget｜專案預算
+---
+
+### ProjectBudgetPartner｜專案預計協力廠商與發包預算清冊 (`project_budget_partners`)
+
+> **架構定位**：**【叫料預算掛載 ＆ 進貨請款對帳連動水池】**。
+> - 案場確認後叫料時將協力廠商掛上，支援多筆資料（例如：甲廠商 300 萬、乙廠商 50 萬、丙廠商 80 萬）。
+> - **二階段式選單**：第一階為工料類別（鋼材、混凝土、拆圖等），第二階為公司名稱（中鋼、東和、台泥等），僅需公司名稱，不需填寫繁複細節。
+> - **懸浮式 Portal 選單**：選單獨立掛載至 `document.body`，徹底根除被表格橫向捲動截斷的問題。
+> - **進貨請款連動防漏**：唯讀安全調取該案場之材料進貨簽收單與計價單，即時呈現「預估金額、累計進貨、已請款金額、⚠️ **待請款差額（已進貨未請款）**、已支付金額」，直接解決協力廠商忘記請款與查帳困難之痛點！
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 預算資料識別碼。 |
-| `projectId` | 所屬專案 ID。 |
-| `estimatedMaterialCost` | 預估純料成本；採購超支檢核基準。 |
-| `estimatedLaborCost` | 預估人工／發包成本。 |
-| `estimatedExpenses` | 預估工地管理及雜支。 |
-| `isDeleted` | 軟刪除標記。 |
-| `version` | 樂觀鎖版本。 |
-| `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+| `id` | 預計協力廠商記錄識別碼（如 `PBP-01`）。 |
+| `projectId` | 所屬專案案場 ID（外鍵關聯 `projects.id`，複合索引）。 |
+| `partnerId` | 商業夥伴主檔 ID（選填，若有綁定主檔）。 |
+| `partnerName` | 協力廠商公司名稱（第二階公司名稱，如「中鋼」、「東和」、「台泥」）。 |
+| `workScope` | 承攬工料內容／工項（第一階工料類別，如「鋼材」、「混凝土」、「拆圖」）。 |
+| `estimatedAmount` | 案場預估發包／採購金額（新台幣元）。 |
+| `notes` | 備註說明（發包階段、叫料批次說明等）。 |
+| `createdAt`、`updatedAt` | 建立及最近更新時間戳記。 |
 
-**規格提及、模型待補：**資金帳實收／實付與差額歸屬科目尚無本模組模型；`isRetentionOverridden`（實際扣款不同於建議值時供後端稽核）僅出現在估驗 Zod，沒有 Project 欄位；`calcRetentionAmount`、`actualRetentionAmount` 是交易驗證輸入；保固費用 `WARRANTY_EXPENSE` 有分類要求，但沒有費用明細模型承載。
+> **索引規範**：`CREATE INDEX IF NOT EXISTS idx_budget_partners_project ON project_budget_partners (projectId, estimatedAmount DESC);`
+
+---
+
+### BuildingCategoryTree & SubcontractorCategoryTree｜自訂階層字典設定 (`system_configs`)
+
+1. **`BUILDING_CATEGORY_TREE`**：
+   - 建造物與承攬工作內容自訂兩階層字典（大項 ➔ 小項）。
+   - 預設包含【建物類】（鐵皮倉庫、鋼構建築、農業設施、風雨球場）與【其他】（鋼梯、屋頂浪板）。
+   - 支援專屬管理介面自由增刪、修改、啟用/停用；選單以 `<optgroup>` 強制限制僅能選第二階小項。
+2. **`SUBCONTRACTOR_CATEGORY_TREE`**：
+   - 協力廠商二階段階層字典（第一階工料類別 ➔ 第二階公司名稱）。
+   - 預設工料大項：鋼材（中鋼、東和、豐興、宏國、威致）、混凝土（台泥、亞泥、國產、力泰）、拆圖（宏聯結構拆圖、誠業工程拆圖、大成大樣拆圖）、屋頂浪板（燁輝鋼品、盛餘浪板、華新浪板）、鋼構吊裝、門窗五金、機電消防、其他協力。
+   - 懸浮式 Portal 即時二階點選，支援即時新增廠商與類別。
 
 ## 合作夥伴、料件與防弊內控
 

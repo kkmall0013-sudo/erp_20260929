@@ -215,6 +215,8 @@ export interface Project {
   name: string;
   ownerName: string;
   ownerTaxId: string;
+  buildingType?: string; // 建造建物類型 (如: 集合住宅大樓, 商辦金融大樓, 廠辦與工業廠房...)
+  workScope?: string; // 工作內容 / 承攬性質 (如: 統包新建工程, 建築結構主體工程, 連續壁與擋土排樁工程...)
   contractAmount: number;
   budgetAmount: number;
   committedCost: number;
@@ -224,6 +226,7 @@ export interface Project {
   status: 'PLANNING' | 'ACTIVE' | 'LOCKED' | 'COMPLETED';
   isLocked: boolean;
   companyId: string;
+  budgetPartners?: ProjectBudgetPartner[]; // 預計協力廠商列表 (支援多筆、預估金額與進貨請款連動)
   isDeleted: boolean;
   version: number;
   createdAt: string;
@@ -241,9 +244,48 @@ export interface ProjectSite {
   developerName?: string; // 起造人全銜 (業主/起造人代表人)
   architect?: string; // 設計監造人 (建築師事務所 / 結構技師)
   constructor?: string; // 承造人 (營造廠全銜 / 專任工程人員)
-  shopDrawingVendorId?: string; // 拆圖廠商 ID (商業夥伴)
+  shopDrawingVendorId?: string; // 拆圖廠商 ID (商業夥伴 - 向下相容保留)
   shopDrawingVendorName?: string; // 拆圖廠商全銜快照
   landNumber?: string; // 基地座落地號
+}
+
+export interface BuildingCategoryItem {
+  id: string;
+  name: string; // 第二階層小項名稱 (如: 鐵皮倉庫, 鋼構建築, 農業設施, 鋼梯, 屋頂浪板...)
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface BuildingCategoryGroup {
+  id: string;
+  name: string; // 第一階層大項名稱 (如: 建物類, 其他...)
+  sortOrder: number;
+  items: BuildingCategoryItem[];
+}
+
+// 🏛️ 協力廠商二階段階層字典 (第一階層: 工料類別 ➔ 第二階層: 廠商公司名稱)
+export interface SubcontractorVendorItem {
+  id: string;
+  name: string; // 公司名稱 (例如: 中鋼, 東和, 豐興, 台泥, 宏聯結構拆圖...)
+  isActive?: boolean;
+}
+
+export interface SubcontractorCategoryGroup {
+  id: string;
+  category: string; // 第一階層: 工料類別 (例如: 鋼材, 混凝土, 拆圖, 屋頂浪板, 門窗五金, 鋼構吊裝, 機電消防, 其他...)
+  vendors: SubcontractorVendorItem[];
+}
+
+export interface ProjectBudgetPartner {
+  id: string;
+  projectId: string;
+  partnerId: string;
+  partnerName: string;
+  workScope: string; // 預計承攬工項 / 供應料別 (如: 鋼構加工, 鋼筋供料, 模板工程, 施工拆圖...)
+  estimatedAmount: number; // 案場預估發包/採購金額 (NT$)
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ProjectWBS {
