@@ -91,7 +91,9 @@ import {
   savePartnerChequeRecord,
   deletePartnerChequeRecord,
   savePartnerBusinessCard,
-  deletePartnerBusinessCard
+  deletePartnerBusinessCard,
+  getSubcontractorCategoryTree,
+  addVendorToSubcontractorCategory
 } from '../db/sqlite';
 
 import { useAuth } from '../context/AuthContext';
@@ -100,8 +102,10 @@ import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget
 import { TaiwanBankPickerWidget } from './widgets/TaiwanBankPickerWidget';
 import { MediaPreviewLightbox, MediaPreviewItem } from './widgets/MediaPreviewLightbox';
 import { ChequeDetailModal } from './widgets/ChequeDetailModal';
-import { MiniAppsWorkspace } from './MiniAppsWorkspace';
 import { AttachmentUploader } from './attachments/AttachmentUploader';
+import { SubcontractorCategoryManagerModal } from './partners/SubcontractorCategoryManagerModal';
+import { ClientUpgradeVendorModal } from './partners/ClientUpgradeVendorModal';
+import { PartnerImportModal } from './partners/PartnerImportModal';
 
 interface BusinessPartnerWorkspaceProps {
   onNotify?: (message: string) => void;
@@ -154,6 +158,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
 }) => {
   const { currentUser, isSuperadmin, can } = useAuth();
   const canWrite = isSuperadmin || can('PARTNERS', 'write');
+  const canManageCategories = isSuperadmin || currentUser?.role === 'BOSS' || Boolean(currentUser?.canManageSystemConfigs) || currentUser?.role === 'ADMIN';
 
   // 資料列表狀態
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
@@ -219,13 +224,37 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
     y: number;
   } | null>(null);
 
-  // 通用小程式專區彈窗
-  const [isMiniAppsModalOpen, setIsMiniAppsModalOpen] = useState(false);
+  // 廠商二階專業分類管理彈窗 (權限: Admin/指定人員)
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+
+  // 業主轉合作廠商補填彈窗
+  const [upgradeClientTarget, setUpgradeClientTarget] = useState<BusinessPartner | null>(null);
+
+  // 批次匯入 CSV 彈窗
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
+  // 廠商專業分類樹狀結構 (支援動態載入自訂字典)
+  const [categoryTree, setCategoryTree] = useState(ENGINEERING_CATEGORIES);
 
   // 載入資料庫
   const reloadData = () => {
     const list = getAllBusinessPartners();
     setPartners(list);
+    try {
+      const tree = getSubcontractorCategoryTree();
+      if (tree && tree.length > 0) {
+        const mapped = tree.map(cg => ({
+          mainCategory: cg.category,
+          subCategories: (cg.vendors || []).filter(v => v.isActive !== false).map(v => v.name)
+        }));
+        // 若有自訂分類則優先套用
+        if (mapped.length > 0) {
+          setCategoryTree(mapped);
+        }
+      }
+    } catch {
+      // 保留預設值
+    }
   };
 
   useEffect(() => {
@@ -245,9 +274,9 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
   // 工項大類細項連動
   const currentSubCategories = useMemo(() => {
     if (!selectedMainCategory || selectedMainCategory === 'ALL') return [];
-    const group = ENGINEERING_CATEGORIES.find(g => g.mainCategory === selectedMainCategory);
+    const group = categoryTree.find(g => g.mainCategory === selectedMainCategory);
     return group ? group.subCategories : [];
-  }, [selectedMainCategory]);
+  }, [selectedMainCategory, categoryTree]);
 
   // 縣市行政區連動
   const currentDistricts = useMemo(() => {
@@ -556,27 +585,33 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
     if (!editingPartner) return;
 
     if (!editingPartner.name.trim()) {
-      showToast('⚠️ 請填寫夥伴名稱 / 公司全稱！');
+      showToast('⚠️ 請填寫夥伴名稱 / 業主姓名！');
       return;
     }
 
-    if (!editingPartner.taxId.trim()) {
-      showToast('⚠️ 請填寫公司統一編號或身分證字號！');
+    const isClientOnly = editingPartner.isCustomer && !editingPartner.isVendor;
+    const isInd = editingPartner.isIndividual || editingPartner.entityType === 'NATURAL_PERSON';
+
+    // 合作廠商強制填寫統編或負責人身分證；個人業主免強制填寫身分證
+    if (!isClientOnly && !editingPartner.taxId.trim()) {
+      showToast('⚠️ 合作廠商必須填寫公司統一編號或負責人身分證字號！');
       return;
     }
 
-    // 檢核統編/身分證防呆
-    if (editingPartner.entityType === 'NATURAL_PERSON') {
-      const v = validateTaiwanNationalId(editingPartner.taxId);
-      if (!v.isValid) {
-        showToast(`⚠️ 身分證字號格式不符：${v.message}`);
-        return;
-      }
-    } else {
-      const v = validateTaiwanTaxId(editingPartner.taxId);
-      if (!v.isValid) {
-        showToast(`⚠️ 公司統一編號檢核不符：${v.message}`);
-        return;
+    // 若有填寫，則執行校驗
+    if (editingPartner.taxId.trim()) {
+      if (isInd) {
+        const v = validateTaiwanNationalId(editingPartner.taxId.trim());
+        if (!v.isValid) {
+          showToast(`⚠️ 身分證字號格式不符：${v.message}`);
+          return;
+        }
+      } else {
+        const v = validateTaiwanTaxId(editingPartner.taxId.trim());
+        if (!v.isValid) {
+          showToast(`⚠️ 公司統一編號檢核不符：${v.message}`);
+          return;
+        }
       }
     }
 
@@ -586,6 +621,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
       const primaryAddr = editingPartner.addresses?.[0];
       const partnerToSave = {
         ...editingPartner,
+        isIndividual: isInd,
         address: primaryAddr?.fullAddress || editingPartner.address
       };
 
@@ -596,6 +632,79 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
     } catch (err: any) {
       showToast('❌ 儲存失敗：' + (err.message || '未知錯誤'));
     }
+  };
+
+  // 匯出目前篩選清單至 CSV (UTF-8 with BOM 保證 Excel 開啟不亂碼)
+  const handleExportCsv = () => {
+    if (filteredPartners.length === 0) {
+      showToast('⚠️ 目前清單無資料可供匯出');
+      return;
+    }
+
+    const headers = [
+      '夥伴代碼',
+      '全銜/姓名',
+      '業務型態',
+      '實體性質',
+      '是否為個人',
+      '統一編號/身分證',
+      '主要聯絡人',
+      '聯絡電話',
+      '電子信箱',
+      '通訊地址',
+      '第一階工料大類',
+      '第二階細部工項',
+      '金融機構代碼',
+      '金融機構名稱',
+      '銀行帳號',
+      '帳戶戶名',
+      '付款天數',
+      '高風險管制',
+      '風險原因'
+    ];
+
+    const rows = filteredPartners.map(p => {
+      const typeLabel = p.type === 'CUSTOMER' ? '業主客戶' : p.type === 'BOTH' ? '雙重身分(業主暨廠商)' : '合作廠商';
+      const entityLabel = p.isIndividual || p.entityType === 'NATURAL_PERSON' ? '自然人' : '公司法人';
+      const primaryAddr = p.addresses?.[0]?.fullAddress || p.address || '';
+      const primaryContact = p.contacts?.[0]?.name || p.contactPerson || '';
+      const primaryPhone = p.contacts?.[0]?.phone || p.contacts?.[0]?.mobile || p.phone || '';
+
+      return [
+        `"${p.bpCode}"`,
+        `"${(p.name || '').replace(/"/g, '""')}"`,
+        `"${typeLabel}"`,
+        `"${entityLabel}"`,
+        `"${p.isIndividual ? '是' : '否'}"`,
+        `"${p.taxId || ''}"`,
+        `"${primaryContact.replace(/"/g, '""')}"`,
+        `"${primaryPhone}"`,
+        `"${p.email || ''}"`,
+        `"${primaryAddr.replace(/"/g, '""')}"`,
+        `"${(p.categoryMain || p.serviceCategoryMain || '').replace(/"/g, '""')}"`,
+        `"${(p.categorySub || p.serviceCategorySub || '').replace(/"/g, '""')}"`,
+        `"${p.bankCode || ''}"`,
+        `"${(p.bankName || '').replace(/"/g, '""')}"`,
+        `"${p.bankAccount ? `\t${p.bankAccount}` : ''}"`,
+        `"${(p.bankAccountName || p.name).replace(/"/g, '""')}"`,
+        `"${p.paymentTermsDays || 30}"`,
+        `"${p.isHighRisk ? '是' : '否'}"`,
+        `"${(p.riskReason || '').replace(/"/g, '""')}"`
+      ].join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.map(h => `"${h}"`).join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const tabName = activeTab === 'CLIENTS' ? '業主客戶名冊' : '合作廠商工班名冊';
+    link.setAttribute('download', `${tabName}_匯出_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`✓ 已成功匯出 ${filteredPartners.length} 筆資料為 CSV！`);
   };
 
   // 執行刪除商業夥伴 (軟刪除或僅移除業主身分)
@@ -876,28 +985,54 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
               </div>
               <div>
                 <h2 className="text-base font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                  <span>商業夥伴主檔管理</span>
+                  <span>聯絡明細 (商業夥伴)</span>
                   <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
-                    CRM & SRM 雙軌主檔
+                    業主 · 廠商 · 工班 · 技師通訊錄
                   </span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  整合業主客戶、協力發包廠商、多地址郵遞區號選單、支票往來票期時效、名片交換管理
+                  整合個人與法人業主、協力發包廠商、二階工料分類、郵遞區號選單與匯入匯出
                 </p>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* 開啟小程式專區按鈕 */}
+            {/* 廠商二階專業工料字典管理 (Admin / 授權人員) */}
+            {canManageCategories && (
+              <button
+                type="button"
+                onClick={() => setIsCategoryManagerOpen(true)}
+                className="px-3.5 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                title="維護廠商第一階工料大類與第二階專業細項字典 (管理員專屬)"
+              >
+                <Layers className="w-4 h-4 text-amber-600" />
+                <span>專業分類管理</span>
+              </button>
+            )}
+
+            {/* 批次匯入 CSV */}
+            {canWrite && (
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(true)}
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                title="批次自 CSV 試算表匯入業主或廠商通訊名冊"
+              >
+                <Upload className="w-4 h-4 text-slate-600" />
+                <span>批次匯入</span>
+              </button>
+            )}
+
+            {/* 匯出 CSV */}
             <button
               type="button"
-              onClick={() => setIsMiniAppsModalOpen(true)}
-              className="px-3 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-transform active:scale-95"
-              title="查看及測試通用小程式（地址選單、統編身分證檢核、金融機構速查器）"
+              onClick={handleExportCsv}
+              className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+              title="將目前名單匯出為 CSV 試算表 (含 UTF-8 with BOM)"
             >
-              <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>🛠️ 通用小程式專區</span>
+              <Download className="w-4 h-4 text-slate-600" />
+              <span>匯出 CSV</span>
             </button>
 
             {/* 一鍵引薦變業主按鈕 (僅在業主名冊頁籤顯示) */}
@@ -908,7 +1043,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                   setVendorSearchTerm('');
                   setIsConvertModalOpen(true);
                 }}
-                className="px-3.5 py-2 rounded-xl border border-amber-300 bg-amber-50/80 hover:bg-amber-100 text-amber-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs active:scale-95"
+                className="px-3.5 py-2 rounded-xl border border-amber-300 bg-amber-50/80 hover:bg-amber-100 text-amber-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs active:scale-95 cursor-pointer"
                 title="從既有合作廠商快速轉換或引薦為業主"
               >
                 <ArrowRightLeft className="w-4 h-4 text-amber-600" />
@@ -921,7 +1056,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
               <button
                 type="button"
                 onClick={handleOpenCreatePartner}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-transform active:scale-95"
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-transform active:scale-95 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 <span>{activeTab === 'CLIENTS' ? '新增業主資料' : '新增合作廠商'}</span>
@@ -1045,7 +1180,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
               className="w-full text-xs py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700"
             >
               <option value="ALL">全部工項 (不限)</option>
-              {ENGINEERING_CATEGORIES.map(g => (
+              {categoryTree.map(g => (
                 <option key={g.mainCategory} value={g.mainCategory}>
                   {g.mainCategory}
                 </option>
@@ -1404,6 +1539,18 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                               </button>
                             )}
 
+                            {/* 業主升級/兼任合作廠商 (補填廠商資料) */}
+                            {activeTab === 'CLIENTS' && !p.isVendor && canWrite && (
+                              <button
+                                type="button"
+                                onClick={() => setUpgradeClientTarget(p)}
+                                className="p-1 rounded text-amber-600 hover:text-amber-800 hover:bg-amber-50 transition-colors"
+                                title="兼具合作廠商：啟動補填廠商工料分類與銀行帳戶流程"
+                              >
+                                <HardHat className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+
                             {/* 編輯 */}
                             {canWrite && (
                               <button
@@ -1645,6 +1792,19 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                           <Contact className="w-3.5 h-3.5" />
                         </button>
                       )}
+                      {/* 業主兼任合作廠商 */}
+                      {activeTab === 'CLIENTS' && !p.isVendor && canWrite && (
+                        <button
+                          type="button"
+                          onClick={() => setUpgradeClientTarget(p)}
+                          className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold flex items-center gap-1 border border-amber-300"
+                          title="啟動補填廠商工料分類與銀行帳戶流程"
+                        >
+                          <HardHat className="w-3.5 h-3.5 text-amber-600" />
+                          <span>兼任廠商</span>
+                        </button>
+                      )}
+
                       {canWrite && (
                         <button
                           type="button"
@@ -1710,221 +1870,297 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
             </div>
 
             {/* Modal Tabs Bar */}
-            <div className="px-6 bg-slate-50 border-b border-slate-200 flex items-center gap-1 overflow-x-auto shrink-0">
-              {[
-                { key: 'BASIC', label: '1. 基本身分與風控', icon: Building2 },
-                { key: 'CATEGORY', label: '2. 多元工種服務', icon: Layers },
-                { key: 'ADDRESSES', label: '3. 多地址管理 (郵政)', icon: MapPin },
-                { key: 'CONTACTS', label: '4. 聯絡人名冊', icon: Users2 },
-                { key: 'BANK', label: '5. 金融帳戶與存摺', icon: Landmark },
-                { key: 'CHEQUES', label: `6. 支票往來 (${editingPartner.chequeRecords?.length || 0})`, icon: Receipt },
-                { key: 'CARDS', label: `7. 名片管理 (${editingPartner.businessCards?.length || 0})`, icon: Contact },
-                { key: 'VAULT', label: '8. 無紙化金庫與圖說', icon: FolderLock }
-              ].map(tab => {
-                const Icon = tab.icon;
-                const isActive = activeEditorTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setActiveEditorTab(tab.key as any)}
-                    className={`py-3 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-                      isActive
-                        ? 'border-indigo-600 text-indigo-600'
-                        : 'border-transparent text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {(() => {
+              const isClientOnly = Boolean(editingPartner.isCustomer && !editingPartner.isVendor);
+              const modalTabs = [
+                { key: 'BASIC', label: isClientOnly ? '1. 基本身分與業主資料' : '1. 基本身分與風控', icon: Building2 },
+                ...(isClientOnly ? [] : [{ key: 'CATEGORY', label: '2. 多元工種服務', icon: Layers }]),
+                { key: 'ADDRESSES', label: isClientOnly ? '2. 通訊與案場地址' : '3. 多地址管理 (郵政)', icon: MapPin },
+                { key: 'CONTACTS', label: isClientOnly ? '3. 聯絡人名冊' : '4. 聯絡人名冊', icon: Users2 },
+                ...(isClientOnly ? [] : [
+                  { key: 'BANK', label: '5. 金融帳戶與存摺', icon: Landmark },
+                  { key: 'CHEQUES', label: `6. 支票往來 (${editingPartner.chequeRecords?.length || 0})`, icon: Receipt },
+                ]),
+                { key: 'CARDS', label: isClientOnly ? `4. 名片管理 (${editingPartner.businessCards?.length || 0})` : `7. 名片管理 (${editingPartner.businessCards?.length || 0})`, icon: Contact },
+                { key: 'VAULT', label: isClientOnly ? '5. 無紙化金庫與圖說' : '8. 無紙化金庫與圖說', icon: FolderLock }
+              ];
+
+              return (
+                <div className="px-6 bg-slate-50 border-b border-slate-200 flex items-center gap-1 overflow-x-auto shrink-0">
+                  {modalTabs.map(tab => {
+                    const Icon = tab.icon;
+                    const isActive = activeEditorTab === tab.key;
+                    return (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setActiveEditorTab(tab.key as any)}
+                        className={`py-3 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                          isActive
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto space-y-5 flex-1">
               {/* TAB 1: 基本身分與風控 */}
-              {activeEditorTab === 'BASIC' && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        實體組織型態 (法人別)
-                      </label>
-                      <div className="flex items-center gap-4 mt-2">
-                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="entityType"
-                            checked={editingPartner.entityType !== 'NATURAL_PERSON'}
-                            onChange={() =>
-                              setEditingPartner({ ...editingPartner, entityType: 'CORPORATION' })
-                            }
-                            className="text-indigo-600"
-                          />
-                          <span>公司法人 (營利事業)</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="entityType"
-                            checked={editingPartner.entityType === 'NATURAL_PERSON'}
-                            onChange={() =>
-                              setEditingPartner({ ...editingPartner, entityType: 'NATURAL_PERSON' })
-                            }
-                            className="text-indigo-600"
-                          />
-                          <span>自然人 (工班師傅/地主)</span>
-                        </label>
-                      </div>
-                    </div>
+              {activeEditorTab === 'BASIC' && (() => {
+                const isClientOnly = Boolean(editingPartner.isCustomer && !editingPartner.isVendor);
+                const isPerson = Boolean(editingPartner.entityType === 'NATURAL_PERSON' || editingPartner.isIndividual);
+                const isTaxRequired = !(editingPartner.isCustomer && isPerson);
 
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        業務身分定義
-                      </label>
-                      <div className="flex items-center gap-4 mt-2">
-                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                return (
+                  <div className="space-y-4">
+                    {/* 業主名冊專屬說明橫幅 */}
+                    {isClientOnly && (
+                      <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl flex items-center justify-between text-xs gap-3">
+                        <div className="flex items-center gap-2">
+                          <Users2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <div>
+                            <span className="font-bold text-indigo-950">業主名冊專屬精簡版面</span>
+                            <span className="text-[11px] text-indigo-700 block">
+                              業主無須填寫工班專業工種與金融存摺帳戶。個人業主亦免強制填寫身分證字號。日後若有代採購或出工發包，可隨時「兼任廠商」補填。
+                            </span>
+                          </div>
+                        </div>
+                        <label className="flex items-center gap-2 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg shadow-2xs cursor-pointer font-bold text-indigo-900 shrink-0">
                           <input
                             type="checkbox"
-                            checked={Boolean(editingPartner.isCustomer)}
-                            onChange={e =>
-                              setEditingPartner({ ...editingPartner, isCustomer: e.target.checked })
-                            }
+                            checked={Boolean(editingPartner.isIndividual)}
+                            onChange={e => {
+                              const checked = e.target.checked;
+                              setEditingPartner({
+                                ...editingPartner,
+                                isIndividual: checked,
+                                entityType: checked ? 'NATURAL_PERSON' : editingPartner.entityType
+                              });
+                            }}
                             className="rounded text-indigo-600"
                           />
-                          <span>業主 (客戶 / 發包方)</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(editingPartner.isVendor)}
-                            onChange={e =>
-                              setEditingPartner({ ...editingPartner, isVendor: e.target.checked })
-                            }
-                            className="rounded text-indigo-600"
-                          />
-                          <span>合作廠商 (協力包商 / 材料商)</span>
+                          <span>個人自建/自住業主 (免身分證)</span>
                         </label>
                       </div>
-                    </div>
-                  </div>
-
-                  {/* 名稱與統編驗證機小程式 */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        夥伴名稱 / 公司全稱 <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={editingPartner.name}
-                        onChange={e => setEditingPartner({ ...editingPartner, name: e.target.value })}
-                        placeholder="例：國產建材實業股份有限公司"
-                        className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 font-bold"
-                      />
-                    </div>
-
-                    <div>
-                      {/* 直接調用統編/身分證字號檢核小程式 */}
-                      <TaiwanIdTaxValidatorWidget
-                        type={editingPartner.entityType === 'NATURAL_PERSON' ? 'NATIONAL_ID' : 'TAX_ID'}
-                        value={editingPartner.taxId}
-                        onChange={val => setEditingPartner({ ...editingPartner, taxId: val })}
-                        label={editingPartner.entityType === 'NATURAL_PERSON' ? '身分證字號 (10 碼)' : '公司統一編號 (8 碼)'}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  {/* 負責人身分與手續費負擔 */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        負責人姓名
-                      </label>
-                      <input
-                        type="text"
-                        value={editingPartner.representative || ''}
-                        onChange={e =>
-                          setEditingPartner({ ...editingPartner, representative: e.target.value })
-                        }
-                        placeholder="公司代表人"
-                        className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        手續費/匯費負擔方 (營造內控)
-                      </label>
-                      <select
-                        value={editingPartner.bankFeePayer || 'COMPANY'}
-                        onChange={e =>
-                          setEditingPartner({
-                            ...editingPartner,
-                            bankFeePayer: e.target.value as any
-                          })
-                        }
-                        className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg font-bold"
-                      >
-                        <option value="COMPANY">🏢 公司自行吸收 (請款 100 全額匯 100)</option>
-                        <option value="PARTNER">👤 廠商自付 (匯款時內扣 30 元手續費)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        付款條件天數 (票期)
-                      </label>
-                      <select
-                        value={editingPartner.paymentTermsDays || 30}
-                        onChange={e =>
-                          setEditingPartner({
-                            ...editingPartner,
-                            paymentTermsDays: Number(e.target.value)
-                          })
-                        }
-                        className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg font-bold"
-                      >
-                        <option value={0}>0 天 (即期給付)</option>
-                        <option value={30}>30 天 (次月付款)</option>
-                        <option value={45}>45 天</option>
-                        <option value={60}>60 天 (二個月票期)</option>
-                        <option value={90}>90 天 (三個月票期)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* 風險控管 */}
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(editingPartner.isHighRisk)}
-                        onChange={e =>
-                          setEditingPartner({ ...editingPartner, isHighRisk: e.target.checked })
-                        }
-                        className="rounded text-red-600 focus:ring-red-500"
-                      />
-                      <span className="text-xs font-bold text-red-700">
-                        列為高風險管制夥伴 (停權 / 警示 / 請款凍結)
-                      </span>
-                    </label>
-                    {editingPartner.isHighRisk && (
-                      <input
-                        type="text"
-                        value={editingPartner.riskReason || ''}
-                        onChange={e =>
-                          setEditingPartner({ ...editingPartner, riskReason: e.target.value })
-                        }
-                        placeholder="請述明風險原因（例：曾有工程逾期爭議紀錄，發包或計價前需副總核准）..."
-                        className="w-full text-xs p-2 bg-white border border-red-300 rounded-lg text-red-900"
-                      />
                     )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          實體組織型態 (法人別)
+                        </label>
+                        <div className="flex items-center gap-4 mt-2">
+                          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="entityType"
+                              checked={editingPartner.entityType !== 'NATURAL_PERSON' && !editingPartner.isIndividual}
+                              onChange={() =>
+                                setEditingPartner({
+                                  ...editingPartner,
+                                  entityType: 'CORPORATION',
+                                  isIndividual: false
+                                })
+                              }
+                              className="text-indigo-600"
+                            />
+                            <span>公司法人 (營利事業)</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="entityType"
+                              checked={editingPartner.entityType === 'NATURAL_PERSON' || Boolean(editingPartner.isIndividual)}
+                              onChange={() =>
+                                setEditingPartner({
+                                  ...editingPartner,
+                                  entityType: 'NATURAL_PERSON',
+                                  isIndividual: Boolean(editingPartner.isCustomer)
+                                })
+                              }
+                              className="text-indigo-600"
+                            />
+                            <span>自然人 (個人業主/工班師傅)</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          業務身分定義
+                        </label>
+                        <div className="flex items-center gap-4 mt-2">
+                          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(editingPartner.isCustomer)}
+                              onChange={e =>
+                                setEditingPartner({ ...editingPartner, isCustomer: e.target.checked })
+                              }
+                              className="rounded text-indigo-600"
+                            />
+                            <span>業主 (客戶 / 發包方)</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(editingPartner.isVendor)}
+                              onChange={e =>
+                                setEditingPartner({ ...editingPartner, isVendor: e.target.checked })
+                              }
+                              className="rounded text-indigo-600"
+                            />
+                            <span>合作廠商 (協力包商 / 材料商)</span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 名稱與統編驗證機小程式 */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          夥伴名稱 / 公司全稱 <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={editingPartner.name}
+                          onChange={e => setEditingPartner({ ...editingPartner, name: e.target.value })}
+                          placeholder={isPerson ? "例：王小明 (個人業主/工班代表)" : "例：國產建材實業股份有限公司"}
+                          className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500/20 font-bold"
+                        />
+                      </div>
+
+                      <div>
+                        {/* 直接調用統編/身分證字號檢核小程式 (個人業主選填) */}
+                        <TaiwanIdTaxValidatorWidget
+                          type={isPerson ? 'NATIONAL_ID' : 'TAX_ID'}
+                          value={editingPartner.taxId || ''}
+                          onChange={val => setEditingPartner({ ...editingPartner, taxId: val })}
+                          label={
+                            isPerson
+                              ? isTaxRequired
+                                ? '身分證字號 (10 碼)'
+                                : '身分證字號 (個人業主選填，免強制)'
+                              : '公司統一編號 (8 碼)'
+                          }
+                          required={isTaxRequired}
+                        />
+                      </div>
+                    </div>
+
+                    {/* 負責人身分與收付款約定 */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          {isPerson ? '業主/聯絡代表姓名' : '負責人姓名'}
+                        </label>
+                        <input
+                          type="text"
+                          value={editingPartner.representative || ''}
+                          onChange={e =>
+                            setEditingPartner({ ...editingPartner, representative: e.target.value })
+                          }
+                          placeholder={isPerson ? '填寫聯絡代表' : '公司代表人'}
+                          className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          {isClientOnly ? '付款方式約定' : '手續費/匯費負擔方 (營造內控)'}
+                        </label>
+                        {isClientOnly ? (
+                          <select
+                            value={editingPartner.bankFeePayer || 'COMPANY'}
+                            onChange={e =>
+                              setEditingPartner({
+                                ...editingPartner,
+                                bankFeePayer: e.target.value as any
+                              })
+                            }
+                            className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg font-bold"
+                          >
+                            <option value="COMPANY">🏦 銀行匯款轉帳 (公庫入帳)</option>
+                            <option value="PARTNER">💵 支票或現金交付</option>
+                          </select>
+                        ) : (
+                          <select
+                            value={editingPartner.bankFeePayer || 'COMPANY'}
+                            onChange={e =>
+                              setEditingPartner({
+                                ...editingPartner,
+                                bankFeePayer: e.target.value as any
+                              })
+                            }
+                            className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg font-bold"
+                          >
+                            <option value="COMPANY">🏢 公司自行吸收 (請款 100 全額匯 100)</option>
+                            <option value="PARTNER">👤 廠商自付 (匯款時內扣 30 元手續費)</option>
+                          </select>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          {isClientOnly ? '請款收款天數' : '付款條件天數 (票期)'}
+                        </label>
+                        <select
+                          value={editingPartner.paymentTermsDays || 30}
+                          onChange={e =>
+                            setEditingPartner({
+                              ...editingPartner,
+                              paymentTermsDays: Number(e.target.value)
+                            })
+                          }
+                          className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg font-bold"
+                        >
+                          <option value={0}>0 天 (即期給付)</option>
+                          <option value={30}>30 天 (月結 30 天)</option>
+                          <option value={45}>45 天</option>
+                          <option value={60}>60 天 (二個月票期)</option>
+                          <option value={90}>90 天 (三個月票期)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* 風險控管 */}
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(editingPartner.isHighRisk)}
+                          onChange={e =>
+                            setEditingPartner({ ...editingPartner, isHighRisk: e.target.checked })
+                          }
+                          className="rounded text-red-600 focus:ring-red-500"
+                        />
+                        <span className="text-xs font-bold text-red-700">
+                          列為高風險管制夥伴 (停權 / 警示 / 請款凍結)
+                        </span>
+                      </label>
+                      {editingPartner.isHighRisk && (
+                        <input
+                          type="text"
+                          value={editingPartner.riskReason || ''}
+                          onChange={e =>
+                            setEditingPartner({ ...editingPartner, riskReason: e.target.value })
+                          }
+                          placeholder="請述明風險原因（例：曾有工程逾期爭議紀錄，發包或計價前需副總核准）..."
+                          className="w-full text-xs p-2 bg-white border border-red-300 rounded-lg text-red-900"
+                        />
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* TAB 2: 多元工種服務類別 */}
               {activeEditorTab === 'CATEGORY' && (
@@ -1946,10 +2182,10 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                         第一階：主要專業工項大類
                       </label>
                       <select
-                        value={editingPartner.serviceCategoryMain || '泥作裝修工程'}
+                        value={editingPartner.serviceCategoryMain || (categoryTree[0]?.mainCategory || '泥作裝修工程')}
                         onChange={e => {
                           const main = e.target.value;
-                          const group = ENGINEERING_CATEGORIES.find(g => g.mainCategory === main);
+                          const group = categoryTree.find(g => g.mainCategory === main);
                           setEditingPartner({
                             ...editingPartner,
                             serviceCategoryMain: main,
@@ -1958,7 +2194,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                         }}
                         className="w-full text-xs font-bold p-2 bg-white border border-slate-300 rounded-lg"
                       >
-                        {ENGINEERING_CATEGORIES.map(g => (
+                        {categoryTree.map(g => (
                           <option key={g.mainCategory} value={g.mainCategory}>
                             {g.mainCategory}
                           </option>
@@ -1978,8 +2214,8 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                         className="w-full text-xs font-bold p-2 bg-white border border-slate-300 rounded-lg"
                       >
                         {(
-                          ENGINEERING_CATEGORIES.find(
-                            g => g.mainCategory === (editingPartner.serviceCategoryMain || '泥作裝修工程')
+                          categoryTree.find(
+                            g => g.mainCategory === (editingPartner.serviceCategoryMain || categoryTree[0]?.mainCategory || '泥作裝修工程')
                           )?.subCategories || []
                         ).map(sub => (
                           <option key={sub} value={sub}>
@@ -3422,32 +3658,44 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
       )}
 
       {/* ======================================================== */}
-      {/* 彈窗 7：通用小程式專區全螢幕展示視窗 */}
+      {/* 彈窗 7：專業工項二階分類樹狀字典管理 (Admin / Boss / Superadmin 特許) */}
       {/* ======================================================== */}
-      {isMiniAppsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in">
-          <div className="bg-white w-full max-w-6xl rounded-2xl shadow-2xl border border-slate-200 flex flex-col h-[90vh] overflow-hidden">
-            <div className="px-6 py-3 bg-slate-900 text-white flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-300" />
-                <h3 className="text-sm font-bold text-white">
-                  通用小程式專區與元件庫 (Mini-Apps Hub)
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsMiniAppsModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <MiniAppsWorkspace onNotify={onNotify} />
-            </div>
-          </div>
-        </div>
-      )}
+      <SubcontractorCategoryManagerModal
+        isOpen={isCategoryManagerOpen}
+        onClose={() => setIsCategoryManagerOpen(false)}
+        onSaved={() => {
+          reloadData();
+          showToast('✓ 廠商專業分類字典已更新！');
+        }}
+        currentUser={currentUser}
+      />
+
+      {/* ======================================================== */}
+      {/* 彈窗 8：業主轉合作廠商引導彈窗 (補齊專業工種與銀行帳戶) */}
+      {/* ======================================================== */}
+      <ClientUpgradeVendorModal
+        isOpen={Boolean(upgradeClientTarget)}
+        client={upgradeClientTarget}
+        onClose={() => setUpgradeClientTarget(null)}
+        onSuccess={(updated) => {
+          reloadData();
+          showToast(`✓ 已成功將「${updated.name}」升級為合作廠商！`);
+        }}
+        currentUser={currentUser}
+      />
+
+      {/* ======================================================== */}
+      {/* 彈窗 9：批次名冊 CSV 匯入 */}
+      {/* ======================================================== */}
+      <PartnerImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={() => {
+          reloadData();
+          showToast('✓ 批次名冊資料已成功匯入！');
+        }}
+        currentUser={currentUser}
+      />
 
       {/* ======================================================== */}
       {/* 彈窗 8：全螢幕高解析度 Lightbox (呼叫 MediaPreviewLightbox 小程式) */}

@@ -3007,20 +3007,63 @@ export const DEFAULT_SUBCONTRACTOR_CATEGORY_TREE: SubcontractorCategoryGroup[] =
 ];
 
 export function getSubcontractorCategoryTree(): SubcontractorCategoryGroup[] {
-  if (!dbInstance) return DEFAULT_SUBCONTRACTOR_CATEGORY_TREE;
+  let tree: SubcontractorCategoryGroup[] = DEFAULT_SUBCONTRACTOR_CATEGORY_TREE;
+  if (!dbInstance) return tree;
   ensureDatabaseIntegrity(dbInstance);
   try {
     const res = dbInstance.exec(`SELECT configValue FROM system_configs WHERE configKey = 'SUBCONTRACTOR_CATEGORY_TREE';`);
     if (res.length && res[0].values.length && res[0].values[0][0]) {
       const parsed = JSON.parse(String(res[0].values[0][0]));
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        tree = parsed;
       }
     }
   } catch (err) {
     console.error('getSubcontractorCategoryTree failed:', err);
   }
-  return DEFAULT_SUBCONTRACTOR_CATEGORY_TREE;
+
+  // 🌟 動態融合 business_partners 中已建立之實際合作廠商 (SSoT 單一事實來源)
+  try {
+    const bpRes = dbInstance.exec(`
+      SELECT id, name, categoryMain, serviceCategoryMain 
+      FROM business_partners 
+      WHERE isVendor = 1 AND isDeleted = 0;
+    `);
+    if (bpRes.length && bpRes[0].values) {
+      // 深拷貝樹狀結構避免直接修改引用
+      tree = tree.map(group => ({
+        ...group,
+        vendors: [...group.vendors]
+      }));
+
+      for (const row of bpRes[0].values) {
+        const bpId = String(row[0]);
+        const bpName = String(row[1] || '').trim();
+        const mainCat = String(row[2] || row[3] || '').trim();
+        if (!bpName || !mainCat) continue;
+
+        let targetGroup = tree.find(g => g.category === mainCat);
+        if (!targetGroup) {
+          targetGroup = {
+            id: `CAT-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+            category: mainCat,
+            vendors: []
+          };
+          tree.push(targetGroup);
+        }
+
+        if (!targetGroup.vendors.some(v => v.name === bpName)) {
+          targetGroup.vendors.push({
+            id: bpId,
+            name: bpName,
+            isActive: true
+          });
+        }
+      }
+    }
+  } catch (_) {}
+
+  return tree;
 }
 
 export function saveSubcontractorCategoryTree(tree: SubcontractorCategoryGroup[], operatorName = '系統管理員'): void {
@@ -3599,7 +3642,8 @@ export function getAllBusinessPartners(): BusinessPartner[] {
       serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson,
       phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
       hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
-      isDeleted, version, createdAt, updatedAt, serviceCategories
+      isDeleted, version, createdAt, updatedAt, serviceCategories,
+      isIndividual, categoryMain, categorySub
     FROM business_partners
     WHERE isDeleted = 0
     ORDER BY bpCode;
@@ -3789,12 +3833,15 @@ export function getAllBusinessPartners(): BusinessPartner[] {
       name: String(v[2]),
       taxId: String(v[3]),
       entityType: (v[4] as BusinessPartner['entityType']) || 'CORPORATION',
+      isIndividual: v[34] !== null && v[34] !== undefined ? Boolean(v[34]) : ((v[4] as any) === 'NATURAL_PERSON'),
       type: bType,
       isCustomer: isCust,
       isVendor: isVend,
       convertedFromVendorId: v[8] ? String(v[8]) : undefined,
       serviceCategoryMain: v[9] ? String(v[9]) : undefined,
       serviceCategorySub: v[10] ? String(v[10]) : undefined,
+      categoryMain: v[35] ? String(v[35]) : (v[9] ? String(v[9]) : undefined),
+      categorySub: v[36] ? String(v[36]) : (v[10] ? String(v[10]) : undefined),
       serviceCategories: parsedServiceCategories,
       ownerIdNumber: v[11] ? String(v[11]) : undefined,
       representative: v[12] ? String(v[12]) : undefined,
@@ -3883,7 +3930,7 @@ export function saveBusinessPartner(
       serviceCategoryMain, serviceCategorySub, serviceCategories, ownerIdNumber, representative, contactPerson,
       phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
       hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
-      isDeleted, version, createdAt, updatedAt
+      isDeleted, version, createdAt, updatedAt, isIndividual, categoryMain, categorySub
     ) VALUES (
       '${targetId}',
       '${targetCode.replace(/'/g, "''")}',
@@ -3918,7 +3965,10 @@ export function saveBusinessPartner(
       0,
       ${(partner.version || 1) + 1},
       '${partner.createdAt || now}',
-      '${now}'
+      '${now}',
+      ${partner.isIndividual || partner.entityType === 'NATURAL_PERSON' ? 1 : 0},
+      ${partner.categoryMain || partner.serviceCategoryMain ? `'${(partner.categoryMain || partner.serviceCategoryMain || '').replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.categorySub || partner.serviceCategorySub ? `'${(partner.categorySub || partner.serviceCategorySub || '').replace(/'/g, "''")}'` : 'NULL'}
     )
     ON CONFLICT(id) DO UPDATE SET
       bpCode = excluded.bpCode,
@@ -3932,6 +3982,9 @@ export function saveBusinessPartner(
       serviceCategoryMain = excluded.serviceCategoryMain,
       serviceCategorySub = excluded.serviceCategorySub,
       serviceCategories = excluded.serviceCategories,
+      categoryMain = excluded.categoryMain,
+      categorySub = excluded.categorySub,
+      isIndividual = excluded.isIndividual,
       ownerIdNumber = excluded.ownerIdNumber,
       representative = excluded.representative,
       contactPerson = excluded.contactPerson,
@@ -4069,6 +4122,124 @@ export function saveBusinessPartner(
   notifyListeners();
 
   return getBusinessPartnerById(targetId) || partner;
+}
+
+// 📦 批次匯入商業夥伴 / 通訊錄 (支援業主、合作廠商、下包工班)
+export function batchImportBusinessPartners(
+  partners: Partial<BusinessPartner>[],
+  operatorName: string = '系統管理員'
+): { imported: number; updated: number; errors: string[] } {
+  if (!dbInstance) throw new Error('資料庫尚未就緒');
+  let imported = 0;
+  let updated = 0;
+  const errors: string[] = [];
+
+  const existingAll = getAllBusinessPartners();
+  const existingMap = new Map<string, BusinessPartner>();
+  for (const ep of existingAll) {
+    if (ep.taxId) existingMap.set(ep.taxId, ep);
+    existingMap.set(ep.name.trim().toLowerCase(), ep);
+  }
+
+  for (let i = 0; i < partners.length; i++) {
+    const row = partners[i];
+    const cleanName = (row.name || '').trim();
+    if (!cleanName) continue;
+
+    try {
+      // 檢查是否已存在 (依統編或全名)
+      const existing = (row.taxId ? existingMap.get(row.taxId) : null) || existingMap.get(cleanName.toLowerCase());
+
+      const isCust = row.type === 'CUSTOMER' || row.type === 'BOTH' || Boolean(row.isCustomer);
+      const isVend = row.type === 'VENDOR' || row.type === 'SUBCONTRACTOR' || row.type === 'BOTH' || Boolean(row.isVendor);
+
+      const targetId = existing ? existing.id : (row.id || `BP-${Date.now().toString().slice(-6)}-${i + 1}`);
+      const targetCode = existing
+        ? existing.bpCode
+        : (row.bpCode || (isCust ? `CUST-${(existingAll.length + imported + 1).toString().padStart(4, '0')}` : `VEND-${(existingAll.length + imported + 1).toString().padStart(4, '0')}`));
+
+      const partnerToSave: BusinessPartner = {
+        id: targetId,
+        bpCode: targetCode,
+        name: cleanName,
+        taxId: (row.taxId || '').trim(),
+        entityType: row.isIndividual ? 'NATURAL_PERSON' : (row.entityType || 'CORPORATION'),
+        isIndividual: Boolean(row.isIndividual),
+        type: (isCust && isVend) ? 'BOTH' : (isCust ? 'CUSTOMER' : 'VENDOR'),
+        isCustomer: isCust,
+        isVendor: isVend,
+        contactPerson: row.contactPerson || cleanName,
+        phone: row.phone || '',
+        email: row.email || '',
+        address: row.address || '100 臺北市中正區',
+        serviceCategoryMain: row.categoryMain || row.serviceCategoryMain || (isVend ? '一般協力廠商' : undefined),
+        serviceCategorySub: row.categorySub || row.serviceCategorySub || (isVend ? '材料工項' : undefined),
+        categoryMain: row.categoryMain || row.serviceCategoryMain,
+        categorySub: row.categorySub || row.serviceCategorySub,
+        bankName: row.bankName || (row.bankCode ? '銀行' : ''),
+        bankCode: row.bankCode || '',
+        bankAccount: row.bankAccount || '',
+        bankAccountName: row.bankAccountName || cleanName,
+        bankFeePayer: row.bankFeePayer || 'COMPANY',
+        hasInvoice: row.hasInvoice !== false,
+        paymentTermsDays: row.paymentTermsDays || 30,
+        isHighRisk: Boolean(row.isHighRisk),
+        currentScore: row.currentScore ?? 85,
+        status: row.status || 'ACTIVE',
+        companyId: row.companyId || 'COMP-01',
+        isDeleted: false,
+        version: existing ? (existing.version || 1) + 1 : 1,
+        createdAt: existing?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        addresses: [
+          {
+            id: `PADDR-${Date.now()}-${i + 1}`,
+            partnerId: targetId,
+            addressType: 'COMMUNICATION',
+            label: '主要通訊地址',
+            fullAddress: row.address || '100 臺北市中正區',
+            isDeleted: false
+          }
+        ],
+        contacts: [
+          {
+            id: `PCON-${Date.now()}-${i + 1}`,
+            partnerId: targetId,
+            contactType: 'PRIMARY',
+            name: row.contactPerson || cleanName,
+            title: '主要聯絡人',
+            phone: row.phone || '',
+            mobile: row.phone || '',
+            isDeleted: false
+          }
+        ],
+        bankAccounts: row.bankAccount ? [
+          {
+            id: `BACC-${Date.now()}-${i + 1}`,
+            bpId: targetId,
+            bankCode: row.bankCode || '004',
+            bankName: row.bankName || '臺灣銀行',
+            accountNumber: row.bankAccount,
+            accountName: row.bankAccountName || cleanName,
+            isPrimary: true
+          }
+        ] : []
+      };
+
+      saveBusinessPartner(partnerToSave, operatorName);
+      if (existing) {
+        updated++;
+      } else {
+        imported++;
+      }
+    } catch (err: any) {
+      errors.push(`第 ${i + 1} 筆「${cleanName}」匯入異常: ${err.message || err}`);
+    }
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return { imported, updated, errors };
 }
 
 // 軟刪除商業夥伴
@@ -6426,6 +6597,11 @@ export function ensureDatabaseIntegrity(db: Database) {
   try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN receivedDate TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN statutoryExpiryDate TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE partner_cheque_records ADD COLUMN chequeFiles TEXT;`); } catch (e) {}
+
+  // 🏛️ 商業夥伴個人身分與工料專業分類欄位
+  try { db.run(`ALTER TABLE business_partners ADD COLUMN isIndividual INTEGER DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE business_partners ADD COLUMN categoryMain TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE business_partners ADD COLUMN categorySub TEXT;`); } catch (e) {}
 
   // 🏛️ 專案案場工區現地法規欄位更新 (起造人、監造人、承造人、拆圖廠商、座落地號)
   try { db.run(`ALTER TABLE project_sites ADD COLUMN developerName TEXT;`); } catch (e) {}

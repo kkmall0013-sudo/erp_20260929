@@ -407,12 +407,15 @@ export interface BusinessPartner {
   name: string;
   taxId: string; // 8 碼公司統編 或 10 碼自然人身分證號
   entityType?: 'CORPORATION' | 'NATURAL_PERSON'; // 公司法人 vs 自然人 (地主/工班師傅)
+  isIndividual?: boolean; // 是否為個人自然人 (個人業主不強制填身分證)
   type: 'CUSTOMER' | 'VENDOR' | 'SUBCONTRACTOR' | 'BOTH';
   isCustomer?: boolean; // 具備業主 (客戶/發包方) 身分
   isVendor?: boolean; // 具備合作廠商 (協力包商/材料商) 身分
   convertedFromVendorId?: string; // 若此業主由合作廠商「一鍵引薦轉換加入變業主」，記錄來源廠商 ID (SSoT)
   serviceCategoryMain?: string; // 合作廠商主要工項大類 (主要)
   serviceCategorySub?: string; // 合作廠商主要工項子類 (主要)
+  categoryMain?: string; // 第一階工料大類 (對接案場工程發包字典)
+  categorySub?: string; // 第二階專業工項 (對接案場工程發包字典)
   serviceCategories?: PartnerServiceCategoryItem[]; // 支援加入多項多元工種清單！
   ownerIdNumber?: string; // 負責人身分證字號 (防弊/防換殼)
   representative?: string; // 負責人姓名

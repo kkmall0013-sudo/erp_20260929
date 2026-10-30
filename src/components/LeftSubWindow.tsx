@@ -63,7 +63,7 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
   }[] = [
     { id: 'DASHBOARD', label: '營運儀表', icon: LayoutDashboard },
     { id: 'PROJECTS', label: '案場工程', icon: FolderGit2, badgeCount: 3 },
-    { id: 'PARTNERS', label: '廠商工班', icon: Users2 },
+    { id: 'PARTNERS', label: '聯絡明細', icon: Users2 },
     { id: 'QUOTATIONS', label: '報價預算', icon: FileSpreadsheet },
     { id: 'INBOUND', label: '進貨管理', icon: Truck, badgeCount: 4 },
     { id: 'VALUATIONS', label: '估驗請款', icon: HardHat },
