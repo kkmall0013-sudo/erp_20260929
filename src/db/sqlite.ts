@@ -2676,6 +2676,22 @@ export function getAllProjects(companyId?: string): Project[] {
       `);
       saveDatabaseSnapshot();
     }
+
+    // 確保有內部廠務專屬專案主幹 (PRJ-INTERNAL: 廠內自用 / 廠務支出)
+    const checkInternal = dbInstance.exec(`SELECT count(*) FROM projects WHERE id = 'PRJ-INTERNAL';`);
+    if (checkInternal.length && Number(checkInternal[0].values[0][0]) === 0) {
+      dbInstance.run(`
+        INSERT INTO projects (id, projectCode, name, ownerName, ownerTaxId, buildingType, workScope, contractAmount, budgetAmount, committedCost, actualCost, startDate, endDate, status, isLocked, companyId, isDeleted, version, createdAt, updatedAt)
+        VALUES ('PRJ-INTERNAL', 'PRJ-INTERNAL', '廠內自用 (廠務/公共備料/機具車輛)', '內部廠區', '00000000', '廠務資產', '廠內車輛機具維護與廠務備料', 0, 0, 0, 0, '2026-01-01', '2030-12-31', 'ACTIVE', 0, 'COMP-01', 0, 1, '2026-01-01', '2026-01-01');
+      `);
+      saveDatabaseSnapshot();
+    }
+
+    // 清理誤建的幽靈專案 (如 358 或以資產名義誤建在 projects 表的資料)
+    dbInstance.run(`
+      DELETE FROM projects 
+      WHERE name = '358' OR projectCode = '358' OR name LIKE '廠內貨車%' OR name LIKE 'PC-200%' OR name LIKE '總廠廠務%' OR name LIKE '廠內堆高機%' OR name LIKE '廠內公務%';
+    `);
   } catch (err) {
     // ignore
   }

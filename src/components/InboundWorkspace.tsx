@@ -39,7 +39,7 @@ import {
   List,
   RotateCcw
 } from 'lucide-react';
-import { ExcelInboundGridModal } from './inbound/ExcelInboundGridModal';
+import { ExcelInboundGridModal, loadStoredInternalAssets, InternalAsset } from './inbound/ExcelInboundGridModal';
 import {
   InboundReceipt,
   InboundReceiptItem,
@@ -98,6 +98,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
   const [receipts, setReceipts] = useState<InboundReceipt[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [vendors, setVendors] = useState<BusinessPartner[]>([]);
+  const [internalAssets, setInternalAssets] = useState<InternalAsset[]>(() => loadStoredInternalAssets());
 
   // 顯示模式：清單檢視 (LIST) vs 廠商階層目錄檢視 (HIERARCHY)
   const [viewMode, setViewMode] = useState<'LIST' | 'HIERARCHY'>('LIST');
@@ -119,6 +120,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
 
   // 📊 Excel 試算表極速打單工作台 Modal
   const [isExcelGridModalOpen, setIsExcelGridModalOpen] = useState<boolean>(false);
+  const [initialDraftToLoad, setInitialDraftToLoad] = useState<InboundReceipt | null>(null);
 
   // 📝 單筆進貨簽收單 建立 / 編輯 Modal 控制
   const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
@@ -166,6 +168,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       setProjects(prjs);
       const vends = getAllBusinessPartners().filter(b => b.isVendor || b.type === 'VENDOR' || b.type === 'BOTH');
       setVendors(vends);
+      setInternalAssets(loadStoredInternalAssets());
     } catch (e) {
       console.error('載入進貨資料失敗', e);
     }
@@ -835,12 +838,20 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
           <div className="flex flex-wrap items-center gap-2.5">
             {/* 📊 Excel 試算表極速打單模式 (主要入口) */}
             <button
-              onClick={() => setIsExcelGridModalOpen(true)}
+              onClick={() => {
+                setInitialDraftToLoad(null);
+                setIsExcelGridModalOpen(true);
+              }}
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-              title="仿 Excel 試算表快速鍵連續打單，支援案場與廠商下拉拉選、輸入3自動推薦3310、新廠商登記與 CSV 匯出匯入"
+              title="仿 Excel 試算表快速鍵連續打單，支援多草稿暫存切換、輸入3自動推薦3310、新廠商登記與正式過帳"
             >
               <FileSpreadsheet className="w-4 h-4" />
               <span>📊 極速進貨打單 (工作台)</span>
+              {stats.draftCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 bg-amber-400 text-slate-900 font-black rounded-full text-[10px]" title={`目前有 ${stats.draftCount} 筆待處理草稿`}>
+                  草稿 {stats.draftCount}
+                </span>
+              )}
             </button>
 
             {/* 新增單筆進貨簽收單 */}
@@ -899,7 +910,16 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
             </div>
           </div>
 
-          <div className="p-3 bg-amber-50/70 rounded-lg border border-amber-200">
+          {/* 現場草稿暫存單卡片 (點擊切換草稿篩選，支援載入極速打單) */}
+          <div 
+            onClick={() => setStatusFilter(statusFilter === 'DRAFT' ? 'ALL' : 'DRAFT')}
+            className={`p-3 rounded-lg border cursor-pointer transition-all ${
+              statusFilter === 'DRAFT'
+                ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-300 shadow-sm'
+                : 'bg-amber-50/70 hover:bg-amber-100/70 border-amber-200'
+            }`}
+            title="點擊篩選顯示所有草稿單，可載入極速打單工作台編輯"
+          >
             <div className="text-[11px] text-amber-800 font-medium flex items-center justify-between">
               <span>現場草稿暫存單</span>
               <Edit className="w-3.5 h-3.5 text-amber-600" />
@@ -910,8 +930,8 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
               </span>
               <span className="text-[11px] text-amber-700 font-medium">筆草稿</span>
             </div>
-            <div className="text-[10px] text-amber-700 truncate mt-0.5">
-              可隨時單獨修改補登
+            <div className="text-[10px] text-amber-700 truncate mt-0.5 font-medium">
+              {statusFilter === 'DRAFT' ? '✓ 篩選草稿中 (點擊還原)' : '點擊篩選 · 可載入極速打單'}
             </div>
           </div>
 
@@ -1289,6 +1309,20 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                                         </td>
                                         <td className="py-2 px-3 text-center whitespace-nowrap">
                                           <div className="flex items-center justify-center gap-1">
+                                            {canWrite && r.status === 'DRAFT' && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setInitialDraftToLoad(r);
+                                                  setIsExcelGridModalOpen(true);
+                                                }}
+                                                className="px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-xs border border-amber-300 flex items-center gap-0.5 cursor-pointer transition-colors"
+                                                title="載入至仿 Excel 極速打單工作台連續編輯"
+                                              >
+                                                <FileSpreadsheet className="w-3 h-3 text-amber-600" />
+                                                <span>極速打單</span>
+                                              </button>
+                                            )}
                                             {canWrite && r.billingStatus !== 'BILLED' && (
                                               <button
                                                 type="button"
@@ -1523,6 +1557,21 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                             onClick={e => e.stopPropagation()}
                           >
                             <div className="flex items-center justify-end gap-1.5">
+                              {/* 草稿載入極速打單按鈕 */}
+                              {canWrite && r.status === 'DRAFT' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInitialDraftToLoad(r);
+                                    setIsExcelGridModalOpen(true);
+                                  }}
+                                  className="px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold text-xs border border-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="載入至極速打單工作台連續編輯"
+                                >
+                                  <FileSpreadsheet className="w-3 h-3 text-amber-600" />
+                                  <span>極速打單</span>
+                                </button>
+                              )}
                               {/* 單獨點選修改按鈕 */}
                               {canWrite && r.billingStatus !== 'BILLED' && (
                                 <button
@@ -1661,15 +1710,43 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                   </label>
                   <select
                     value={formData.projectId}
-                    onChange={e => setFormData({ ...formData, projectId: e.target.value })}
+                    onChange={e => {
+                      const val = e.target.value;
+                      const matchedAsset = internalAssets.find(a => a.id === val);
+                      if (matchedAsset) {
+                        setFormData({
+                          ...formData,
+                          projectId: val,
+                          projectNameSnapshot: matchedAsset.name,
+                          projectCodeSnapshot: matchedAsset.code,
+                        } as any);
+                      } else {
+                        const prj = projects.find(p => p.id === val);
+                        setFormData({
+                          ...formData,
+                          projectId: val,
+                          projectNameSnapshot: prj?.name,
+                          projectCodeSnapshot: prj?.projectCode,
+                        } as any);
+                      }
+                    }}
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
                   >
-                    <option value="">請選擇專案案場</option>
-                    {projects.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.projectCode})
-                      </option>
-                    ))}
+                    <option value="">請選擇專案案場或廠內資產</option>
+                    <optgroup label="🏗️ 施工工程案場">
+                      {projects.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.projectCode})
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="🚚 廠內自用 / 車輛資產與公共儲備">
+                      {internalAssets.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.code})
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
                 </div>
 
@@ -2282,7 +2359,10 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       {/* 📊 Excel 試算表極速打單工作台 Modal */}
       <ExcelInboundGridModal
         isOpen={isExcelGridModalOpen}
-        onClose={() => setIsExcelGridModalOpen(false)}
+        onClose={() => {
+          setIsExcelGridModalOpen(false);
+          setInitialDraftToLoad(null);
+        }}
         onSaved={() => {
           loadData();
           if (onDataChanged) onDataChanged();
@@ -2290,6 +2370,8 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
         triggerToast={triggerToast}
         currentUserFullName={currentUser?.fullName || '現場工程師'}
         canApprove={canApprove}
+        initialDraftToLoad={initialDraftToLoad}
+        onClearInitialDraft={() => setInitialDraftToLoad(null)}
       />
     </div>
   );
