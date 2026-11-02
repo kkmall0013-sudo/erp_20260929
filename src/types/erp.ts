@@ -263,16 +263,22 @@ export interface BuildingCategoryGroup {
   items: BuildingCategoryItem[];
 }
 
-// 🏛️ 協力廠商二階段階層字典 (第一階層: 工料類別 ➔ 第二階層: 廠商公司名稱)
+// 🏛️ 協力廠商二階段階層字典 (第一階層: 工料類別 ➔ 第二階層: 已建檔廠商公司名稱)
 export interface SubcontractorVendorItem {
-  id: string;
-  name: string; // 公司名稱 (例如: 中鋼, 東和, 豐興, 台泥, 宏聯結構拆圖...)
+  id: string; // 廠商 ID (對應 business_partners)
+  name: string; // 公司名稱
+  bpCode?: string; // 廠商編號 (如: VEND-001)
+  categorySub?: string; // 叫料項目 / 供應料件規格備註 (例如: 專供 H 型鋼、C 型鋼、板材裁切加工)
+  categoryTags?: string[]; // 此廠商擁有的所有工料分類標籤 (支援多角化)
+  contactPerson?: string; // 聯絡窗口
+  phone?: string; // 電話
+  mobile?: string; // 行動電話
   isActive?: boolean;
 }
 
 export interface SubcontractorCategoryGroup {
   id: string;
-  category: string; // 第一階層: 工料類別 (例如: 鋼材, 混凝土, 拆圖, 屋頂浪板, 門窗五金, 鋼構吊裝, 機電消防, 其他...)
+  category: string; // 第一階層: 工料類別 (例如: 鋼材, 屋頂浪板, 螺絲五金, 混凝土, 拆圖, 鋼構吊裝, 門窗五金, 機電消防, 泥作裝修, 其他...)
   vendors: SubcontractorVendorItem[];
 }
 
@@ -414,8 +420,9 @@ export interface BusinessPartner {
   convertedFromVendorId?: string; // 若此業主由合作廠商「一鍵引薦轉換加入變業主」，記錄來源廠商 ID (SSoT)
   serviceCategoryMain?: string; // 合作廠商主要工項大類 (主要)
   serviceCategorySub?: string; // 合作廠商主要工項子類 (主要)
-  categoryMain?: string; // 第一階工料大類 (對接案場工程發包字典)
-  categorySub?: string; // 第二階專業工項 (對接案場工程發包字典)
+  categoryMain?: string; // 第一階工料大類 (主要)
+  categorySub?: string; // 第二階專業工項 / 叫料規格備註 (對接案場工程發包字典)
+  categoryTags?: string[]; // 支援加入 2 種以上工料分類標籤 (例如: ['鋼材', '螺絲五金', '屋頂浪板'])
   serviceCategories?: PartnerServiceCategoryItem[]; // 支援加入多項多元工種清單！
   ownerIdNumber?: string; // 負責人身分證字號 (防弊/防換殼)
   representative?: string; // 負責人姓名

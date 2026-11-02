@@ -307,6 +307,7 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
           serviceCategorySub: r.categorySub || (isVend ? '材料工項' : undefined),
           categoryMain: r.categoryMain,
           categorySub: r.categorySub,
+          categoryTags: r.categoryMain ? [r.categoryMain] : (isVend ? ['一般協力廠商'] : []),
           bankName: r.bankName,
           bankCode: r.bankCode,
           bankAccount: r.bankAccount,

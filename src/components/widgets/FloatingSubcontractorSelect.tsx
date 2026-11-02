@@ -146,11 +146,18 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
   // 當前選中的大項類別
   const currentCategory = tree.find(c => c.id === selectedCatId) || tree[0];
 
-  // 搜尋過濾：若有打字，同時在所有大項與小項廠商中搜尋
+  // 搜尋過濾：若有打字，同時在所有大項與小項廠商名稱、叫料料件備註(categorySub)、編號中搜尋
   const filteredVendorsBySearch = searchTerm.trim()
     ? tree.flatMap(cat =>
         cat.vendors
-          .filter(v => v.name.toLowerCase().includes(searchTerm.trim().toLowerCase()))
+          .filter(v => {
+            const term = searchTerm.trim().toLowerCase();
+            return (
+              v.name.toLowerCase().includes(term) ||
+              (v.categorySub && v.categorySub.toLowerCase().includes(term)) ||
+              (v.bpCode && v.bpCode.toLowerCase().includes(term))
+            );
+          })
           .map(v => ({ ...v, categoryName: cat.category }))
       )
     : [];
@@ -235,7 +242,7 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                   <Layers className="w-3.5 h-3.5 text-indigo-600" />
                   <span>二階協力廠商選單</span>
                   <span className="text-[10px] text-slate-400 font-normal">
-                    (① 點選工料類別 ➔ ② 點選公司名稱)
+                    (① 點選工料類別 ➔ ② 點選建檔廠商)
                   </span>
                 </div>
                 <button
@@ -255,7 +262,7 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                   autoFocus
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="快速搜尋公司名稱 (如: 中鋼、東和、台泥、宏聯)..."
+                  placeholder="搜尋公司或叫料料件 (如: H型鋼、螺絲、鐵材行)..."
                   className="w-full pl-8 pr-3 py-1 bg-white border border-slate-300 rounded-md text-slate-800 text-xs focus:ring-1 focus:ring-indigo-500 outline-none"
                 />
                 {searchTerm && (
@@ -279,14 +286,14 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                 </div>
                 {filteredVendorsBySearch.length === 0 ? (
                   <div className="py-6 text-center text-slate-400 text-xs">
-                    查無符合「{searchTerm}」之廠商公司
+                    查無符合「{searchTerm}」之廠商或叫料項目
                     <div className="mt-2">
                       <button
                         type="button"
                         onClick={() => handleSelectVendor(searchTerm.trim(), currentCategory?.category || '其他協力')}
                         className="px-3 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-semibold cursor-pointer border border-indigo-200"
                       >
-                        直接使用「{searchTerm.trim()}」為公司名稱
+                        直接使用「{searchTerm.trim()}」為廠商名稱
                       </button>
                     </div>
                   </div>
@@ -298,10 +305,18 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                       onClick={() => handleSelectVendor(item.name, item.categoryName)}
                       className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer group"
                     >
-                      <span className="font-semibold text-slate-800 group-hover:text-indigo-700">
-                        {item.name}
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-800">
+                      <div className="min-w-0 pr-2">
+                        <div className="font-semibold text-slate-800 group-hover:text-indigo-700 flex items-center gap-1.5">
+                          <span>{item.name}</span>
+                          {item.bpCode && <span className="text-[10px] text-slate-400 font-mono">({item.bpCode})</span>}
+                        </div>
+                        {item.categorySub && (
+                          <div className="text-[10px] text-amber-700 truncate mt-0.5">
+                            供料規格: {item.categorySub}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-800 shrink-0">
                         {item.categoryName}
                       </span>
                     </button>
@@ -314,7 +329,7 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                 {/* 左欄：第一階層 - 工料類別 */}
                 <div className="col-span-2 bg-slate-50/80 border-r border-slate-200 overflow-y-auto p-1.5 space-y-1">
                   <div className="text-[10px] font-bold text-slate-500 px-2 py-1">
-                    第一階：類別
+                    第一階：工料大類
                   </div>
                   {tree.map(cat => {
                     const isSelected = cat.id === (currentCategory?.id);
@@ -380,11 +395,11 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                   )}
                 </div>
 
-                {/* 右欄：第二階層 - 公司名稱清單 */}
+                {/* 右欄：第二階層 - 已建檔合作廠商清單 */}
                 <div className="col-span-3 overflow-y-auto p-2 flex flex-col justify-between">
                   <div className="space-y-1">
                     <div className="text-[10px] font-bold text-slate-500 px-1 py-0.5 flex items-center justify-between">
-                      <span>第二階：【{currentCategory?.category || '未選'}】公司名稱</span>
+                      <span>【{currentCategory?.category || '未選'}】已建檔廠商</span>
                       <span className="text-[9px] text-slate-400">點選立即選定</span>
                     </div>
 
@@ -403,27 +418,40 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                                   : 'hover:bg-slate-50 border border-transparent hover:border-slate-200 text-slate-800'
                               }`}
                             >
-                              <span className="truncate">{v.name}</span>
-                              {isPicked && <Check className="w-3.5 h-3.5 text-indigo-600" />}
+                              <div className="min-w-0 pr-1 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate font-semibold">{v.name}</span>
+                                  {v.bpCode && <span className="text-[9px] text-slate-400 font-mono">({v.bpCode})</span>}
+                                </div>
+                                {v.categorySub && (
+                                  <div className="text-[10px] text-amber-700 truncate mt-0.5">
+                                    {v.categorySub}
+                                  </div>
+                                )}
+                              </div>
+                              {isPicked && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
                             </button>
                           );
                         })}
                       </div>
                     ) : (
-                      <div className="py-6 text-center text-slate-400 text-xs">
-                        目前此類別尚無預設公司名稱
+                      <div className="py-6 text-center text-slate-400 text-xs leading-relaxed">
+                        【{currentCategory?.category || ''}】目前尚無已建檔廠商
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          可於下方直接手動輸入，或至聯絡明細名冊歸類
+                        </div>
                       </div>
                     )}
                   </div>
 
-                  {/* 快速新增此類別廠商輸入框 */}
+                  {/* 快速新增此類別廠商輸入格 */}
                   <div className="pt-2 border-t border-slate-100 mt-2">
                     <form onSubmit={handleAddNewVendor} className="flex gap-1">
                       <input
                         type="text"
                         value={newVendorInput}
                         onChange={(e) => setNewVendorInput(e.target.value)}
-                        placeholder={`＋ 新增【${currentCategory?.category || ''}】廠商...`}
+                        placeholder={`＋ 直接輸入廠商名稱...`}
                         className="flex-1 px-2 py-1 bg-slate-50 border border-slate-300 rounded text-xs text-slate-800 focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
                       />
                       <button
@@ -431,7 +459,7 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                         disabled={!newVendorInput.trim()}
                         className="px-2.5 py-1 bg-indigo-600 disabled:bg-slate-300 text-white rounded text-xs font-semibold cursor-pointer shrink-0"
                       >
-                        新增
+                        選定
                       </button>
                     </form>
                   </div>

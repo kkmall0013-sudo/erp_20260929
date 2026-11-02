@@ -94,6 +94,7 @@ export const ClientUpgradeVendorModal: React.FC<ClientUpgradeVendorModalProps> =
         serviceCategorySub: workScopeSub.trim(),
         categoryMain: workScopeMain.trim(),
         categorySub: workScopeSub.trim(),
+        categoryTags: [workScopeMain.trim()],
         taxId: taxId.trim(),
         bankCode: bankCode.trim(),
         bankName: bankName.trim(),

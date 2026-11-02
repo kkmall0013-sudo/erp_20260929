@@ -476,6 +476,10 @@ function initializeTables(db: Database) {
       companyId TEXT,
       isDeleted INTEGER DEFAULT 0,
       version INTEGER DEFAULT 1,
+      isIndividual INTEGER DEFAULT 0,
+      categoryMain TEXT,
+      categorySub TEXT,
+      categoryTags TEXT DEFAULT '[]',
       createdAt TEXT,
       updatedAt TEXT
     );
@@ -2943,152 +2947,133 @@ export function saveBuildingCategoryTree(tree: BuildingCategoryGroup[], operator
 }
 
 // ============================================================================
-// 🏗️ 協力廠商二階段階層分類字典 (第一階層: 工料類別 ➔ 第二階層: 公司名稱)
+// 🏗️ 協力廠商二階段階層分類字典 (第一階層: 工料大類 ➔ 第二階層: 實際建檔合作廠商)
 // ============================================================================
 export const DEFAULT_SUBCONTRACTOR_CATEGORY_TREE: SubcontractorCategoryGroup[] = [
-  {
-    id: 'CAT-STEEL',
-    category: '鋼材',
-    vendors: [
-      { id: 'V-01', name: '中鋼', isActive: true },
-      { id: 'V-02', name: '東和', isActive: true },
-      { id: 'V-03', name: '豐興', isActive: true },
-      { id: 'V-04', name: '宏國鋼鐵', isActive: true },
-      { id: 'V-05', name: '威致鋼鐵', isActive: true },
-    ]
-  },
-  {
-    id: 'CAT-CONCRETE',
-    category: '混凝土',
-    vendors: [
-      { id: 'V-06', name: '台泥', isActive: true },
-      { id: 'V-07', name: '亞泥', isActive: true },
-      { id: 'V-08', name: '國產建材', isActive: true },
-      { id: 'V-09', name: '力泰水泥', isActive: true },
-    ]
-  },
-  {
-    id: 'CAT-DRAWING',
-    category: '拆圖',
-    vendors: [
-      { id: 'V-10', name: '宏聯結構拆圖', isActive: true },
-      { id: 'V-11', name: '誠業工程拆圖', isActive: true },
-      { id: 'V-12', name: '大成大樣拆圖', isActive: true },
-    ]
-  },
-  {
-    id: 'CAT-SHEET',
-    category: '屋頂浪板',
-    vendors: [
-      { id: 'V-13', name: '燁輝鋼品', isActive: true },
-      { id: 'V-14', name: '盛餘浪板', isActive: true },
-      { id: 'V-15', name: '華新浪板', isActive: true },
-    ]
-  },
-  {
-    id: 'CAT-STRUCTURE',
-    category: '鋼構吊裝',
-    vendors: [
-      { id: 'V-16', name: '春源鋼鐵', isActive: true },
-      { id: 'V-17', name: '中鋼結構', isActive: true },
-      { id: 'V-18', name: '長榮重工', isActive: true },
-    ]
-  },
-  {
-    id: 'CAT-WINDOWS',
-    category: '門窗五金',
-    vendors: [
-      { id: 'V-19', name: '正新鋁門窗', isActive: true },
-      { id: 'V-20', name: '大同鋁業', isActive: true },
-      { id: 'V-21', name: '力霸門窗', isActive: true },
-    ]
-  },
-  {
-    id: 'CAT-MEP',
-    category: '機電消防',
-    vendors: [
-      { id: 'V-22', name: '華城電機', isActive: true },
-      { id: 'V-23', name: '士林電機', isActive: true },
-      { id: 'V-24', name: '大同機電', isActive: true },
-    ]
-  },
-  {
-    id: 'CAT-OTH',
-    category: '其他協力',
-    vendors: [
-      { id: 'V-25', name: '全翔吊車起重', isActive: true },
-      { id: 'V-26', name: '力霸工程行', isActive: true },
-    ]
-  }
+  { id: 'CAT-STEEL', category: '鋼材', vendors: [] },
+  { id: 'CAT-SHEET', category: '屋頂浪板', vendors: [] },
+  { id: 'CAT-HARDWARE', category: '螺絲五金', vendors: [] },
+  { id: 'CAT-CONCRETE', category: '混凝土', vendors: [] },
+  { id: 'CAT-DRAWING', category: '拆圖', vendors: [] },
+  { id: 'CAT-STRUCTURE', category: '鋼構吊裝', vendors: [] },
+  { id: 'CAT-WINDOWS', category: '門窗五金', vendors: [] },
+  { id: 'CAT-MEP', category: '機電消防', vendors: [] },
+  { id: 'CAT-MASONRY', category: '泥作裝修', vendors: [] },
+  { id: 'CAT-OTH', category: '其他協力', vendors: [] }
 ];
 
 export function getSubcontractorCategoryTree(): SubcontractorCategoryGroup[] {
-  let tree: SubcontractorCategoryGroup[] = DEFAULT_SUBCONTRACTOR_CATEGORY_TREE;
-  if (!dbInstance) return tree;
-  ensureDatabaseIntegrity(dbInstance);
-  try {
-    const res = dbInstance.exec(`SELECT configValue FROM system_configs WHERE configKey = 'SUBCONTRACTOR_CATEGORY_TREE';`);
-    if (res.length && res[0].values.length && res[0].values[0][0]) {
-      const parsed = JSON.parse(String(res[0].values[0][0]));
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        tree = parsed;
+  // 1. 取得第一階工料大類清單 (從 system_configs 或預設範本)
+  let categoryList: { id: string; category: string }[] = DEFAULT_SUBCONTRACTOR_CATEGORY_TREE.map(c => ({
+    id: c.id,
+    category: c.category
+  }));
+
+  if (dbInstance) {
+    ensureDatabaseIntegrity(dbInstance);
+    try {
+      const res = dbInstance.exec(`SELECT configValue FROM system_configs WHERE configKey = 'SUBCONTRACTOR_CATEGORY_TREE';`);
+      if (res.length && res[0].values.length && res[0].values[0][0]) {
+        const parsed = JSON.parse(String(res[0].values[0][0]));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // 僅採用類別定義，絕對不採納未建檔之靜態虛假公司名冊
+          categoryList = parsed
+            .map((item: any, idx: number) => ({
+              id: item.id || `CAT-${idx + 1}`,
+              category: String(item.category || '').trim()
+            }))
+            .filter((c: any) => Boolean(c.category));
+        }
       }
+    } catch (err) {
+      console.error('getSubcontractorCategoryTree category loading failed:', err);
     }
-  } catch (err) {
-    console.error('getSubcontractorCategoryTree failed:', err);
   }
 
-  // 🌟 動態融合 business_partners 中已建立之實際合作廠商 (SSoT 單一事實來源)
-  try {
-    const bpRes = dbInstance.exec(`
-      SELECT id, name, categoryMain, serviceCategoryMain 
-      FROM business_partners 
-      WHERE isVendor = 1 AND isDeleted = 0;
-    `);
-    if (bpRes.length && bpRes[0].values) {
-      // 深拷貝樹狀結構避免直接修改引用
-      tree = tree.map(group => ({
-        ...group,
-        vendors: [...group.vendors]
-      }));
+  // 2. 🌟 嚴格綁定 business_partners 實際建檔之合作廠商 (SSoT 單一事實來源)
+  const realVendorsMap = new Map<string, SubcontractorVendorItem[]>();
+  categoryList.forEach(c => realVendorsMap.set(c.category, []));
 
-      for (const row of bpRes[0].values) {
-        const bpId = String(row[0]);
-        const bpName = String(row[1] || '').trim();
-        const mainCat = String(row[2] || row[3] || '').trim();
-        if (!bpName || !mainCat) continue;
+  if (dbInstance) {
+    try {
+      const bpRes = dbInstance.exec(`
+        SELECT id, bpCode, name, categoryMain, serviceCategoryMain, categorySub, serviceCategorySub, contactPerson, phone, status, categoryTags 
+        FROM business_partners 
+        WHERE isVendor = 1 AND isDeleted = 0
+        ORDER BY bpCode ASC, name ASC;
+      `);
+      if (bpRes.length && bpRes[0].values) {
+        for (const row of bpRes[0].values) {
+          const bpId = String(row[0] || '');
+          const bpCode = String(row[1] || '');
+          const bpName = String(row[2] || '').trim();
+          const catMain = String(row[3] || row[4] || '').trim();
+          const catSub = String(row[5] || row[6] || '').trim();
+          const contact = String(row[7] || '').trim();
+          const phone = String(row[8] || '').trim();
+          const status = String(row[9] || 'ACTIVE');
+          const rawTags = row[10] ? String(row[10]) : '';
 
-        let targetGroup = tree.find(g => g.category === mainCat);
-        if (!targetGroup) {
-          targetGroup = {
-            id: `CAT-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-            category: mainCat,
-            vendors: []
-          };
-          tree.push(targetGroup);
-        }
+          if (!bpName) continue;
 
-        if (!targetGroup.vendors.some(v => v.name === bpName)) {
-          targetGroup.vendors.push({
+          // 🌟 解析多角化經營之多重工料標籤
+          let tags: string[] = [];
+          if (rawTags) {
+            try {
+              const parsed = JSON.parse(rawTags);
+              if (Array.isArray(parsed)) tags = parsed.map(s => String(s).trim()).filter(Boolean);
+            } catch (_) {}
+          }
+          if (tags.length === 0 && catMain) {
+            tags = [catMain];
+          }
+
+          const vendorItem: SubcontractorVendorItem = {
             id: bpId,
+            bpCode: bpCode,
             name: bpName,
-            isActive: true
-          });
+            categorySub: catSub,
+            categoryTags: tags,
+            contactPerson: contact,
+            phone: phone,
+            isActive: status !== 'SUSPENDED'
+          };
+
+          // 🌟 廠商為主體：將此廠商掛載至他所經營的每一個工料標籤下！
+          for (const tag of tags) {
+            if (!realVendorsMap.has(tag)) {
+              const newCatId = `CAT-${Date.now().toString().slice(-4)}-${Math.random().toString(36).substring(2, 5)}`;
+              categoryList.push({ id: newCatId, category: tag });
+              realVendorsMap.set(tag, []);
+            }
+            realVendorsMap.get(tag)!.push(vendorItem);
+          }
         }
       }
+    } catch (err) {
+      console.error('Failed to link business_partners to subcontractor categories:', err);
     }
-  } catch (_) {}
+  }
 
-  return tree;
+  return categoryList.map(c => ({
+    id: c.id,
+    category: c.category,
+    vendors: realVendorsMap.get(c.category) || []
+  }));
 }
 
 export function saveSubcontractorCategoryTree(tree: SubcontractorCategoryGroup[], operatorName = '系統管理員'): void {
   if (!dbInstance) throw new Error('資料庫尚未初始化');
   const now = new Date().toISOString();
-  const jsonStr = JSON.stringify(tree);
+  // 儲存類別架構時，僅保存第一階類別定義，避免污染
+  const categoriesOnly = tree.map(c => ({
+    id: c.id,
+    category: c.category.trim()
+  }));
+  const jsonStr = JSON.stringify(categoriesOnly);
   dbInstance.run(`
     INSERT INTO system_configs (id, configKey, configValue, description, valueType, validFrom, isDeleted, version, updatedBy, createdAt, updatedAt)
-    VALUES ('CFG-SUBCONTRACTOR-TREE', 'SUBCONTRACTOR_CATEGORY_TREE', '${jsonStr.replace(/'/g, "''")}', '協力廠商二階段階層分類字典 (工料類別/公司名稱)', 'JSON', '${now.slice(0, 10)}', 0, 1, '${operatorName.replace(/'/g, "''")}', '${now}', '${now}')
+    VALUES ('CFG-SUBCONTRACTOR-TREE', 'SUBCONTRACTOR_CATEGORY_TREE', '${jsonStr.replace(/'/g, "''")}', '協力廠商二階段階層分類字典 (工料大類)', 'JSON', '${now.slice(0, 10)}', 0, 1, '${operatorName.replace(/'/g, "''")}', '${now}', '${now}')
     ON CONFLICT(configKey) DO UPDATE SET
       configValue = excluded.configValue,
       version = version + 1,
@@ -3100,30 +3085,197 @@ export function saveSubcontractorCategoryTree(tree: SubcontractorCategoryGroup[]
   notifyListeners();
 }
 
+// 🌟 將已建檔之合作廠商指派至特定工料大類（支援多角化：追加標籤而不覆蓋原有經營標籤）
+export function assignVendorToCategory(vendorId: string, categoryName: string, categorySub?: string): boolean {
+  if (!dbInstance || !vendorId) return false;
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+  const cleanCat = categoryName.trim();
+  if (!cleanCat) return false;
+
+  // 讀取既有 categoryTags
+  let currentTags: string[] = [];
+  try {
+    const res = dbInstance.exec(`SELECT categoryTags, categoryMain FROM business_partners WHERE id = '${vendorId}';`);
+    if (res.length && res[0].values.length) {
+      const raw = res[0].values[0][0];
+      const catMain = res[0].values[0][1];
+      if (raw) {
+        try {
+          const p = JSON.parse(String(raw));
+          if (Array.isArray(p)) currentTags = p.map(s => String(s).trim()).filter(Boolean);
+        } catch (_) {}
+      }
+      if (currentTags.length === 0 && catMain) {
+        currentTags = [String(catMain).trim()];
+      }
+    }
+  } catch (_) {}
+
+  if (!currentTags.includes(cleanCat)) {
+    currentTags.push(cleanCat);
+  }
+
+  const tagsJson = JSON.stringify(currentTags);
+  const primaryCat = currentTags[0] || cleanCat;
+  const subClause = categorySub !== undefined && categorySub.trim() !== ''
+    ? `, categorySub = '${categorySub.trim().replace(/'/g, "''")}', serviceCategorySub = '${categorySub.trim().replace(/'/g, "''")}'`
+    : '';
+
+  dbInstance.run(`
+    UPDATE business_partners 
+    SET categoryTags = '${tagsJson.replace(/'/g, "''")}',
+        categoryMain = '${primaryCat.replace(/'/g, "''")}',
+        serviceCategoryMain = '${primaryCat.replace(/'/g, "''")}',
+        updatedAt = '${now}'
+        ${subClause}
+    WHERE id = '${vendorId}';
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🌟 將合作廠商自特定分類標籤移出 (支援單一標籤移除，不影響其擁有的其他標籤)
+export function removeVendorFromCategory(vendorId: string, categoryNameToRemove?: string): boolean {
+  if (!dbInstance || !vendorId) return false;
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+
+  if (categoryNameToRemove) {
+    const cleanRemove = categoryNameToRemove.trim();
+    let currentTags: string[] = [];
+    try {
+      const res = dbInstance.exec(`SELECT categoryTags, categoryMain FROM business_partners WHERE id = '${vendorId}';`);
+      if (res.length && res[0].values.length) {
+        const raw = res[0].values[0][0];
+        const catMain = res[0].values[0][1];
+        if (raw) {
+          try {
+            const p = JSON.parse(String(raw));
+            if (Array.isArray(p)) currentTags = p.map(s => String(s).trim()).filter(Boolean);
+          } catch (_) {}
+        }
+        if (currentTags.length === 0 && catMain) {
+          currentTags = [String(catMain).trim()];
+        }
+      }
+    } catch (_) {}
+
+    currentTags = currentTags.filter(t => t !== cleanRemove);
+    const tagsJson = JSON.stringify(currentTags);
+    const primaryCat = currentTags[0] || null;
+
+    dbInstance.run(`
+      UPDATE business_partners 
+      SET categoryTags = '${tagsJson.replace(/'/g, "''")}',
+          categoryMain = ${primaryCat ? `'${primaryCat.replace(/'/g, "''")}'` : 'NULL'},
+          serviceCategoryMain = ${primaryCat ? `'${primaryCat.replace(/'/g, "''")}'` : 'NULL'},
+          updatedAt = '${now}'
+      WHERE id = '${vendorId}';
+    `);
+  } else {
+    // 若未指定單一標籤，清空全部分類標籤
+    dbInstance.run(`
+      UPDATE business_partners 
+      SET categoryTags = '[]',
+          categoryMain = NULL,
+          serviceCategoryMain = NULL,
+          updatedAt = '${now}'
+      WHERE id = '${vendorId}';
+    `);
+  }
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🌟 批次更新廠商之工料經營標籤清單 (Tags) 與規格備註
+export function updateVendorCategoryTags(vendorId: string, tags: string[], categorySub?: string): boolean {
+  if (!dbInstance || !vendorId) return false;
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+  const cleanTags = Array.from(new Set(tags.map(s => s.trim()).filter(Boolean)));
+  const tagsJson = JSON.stringify(cleanTags);
+  const primaryCat = cleanTags[0] || null;
+  const subClause = categorySub !== undefined
+    ? `, categorySub = '${categorySub.trim().replace(/'/g, "''")}', serviceCategorySub = '${categorySub.trim().replace(/'/g, "''")}'`
+    : '';
+
+  dbInstance.run(`
+    UPDATE business_partners 
+    SET categoryTags = '${tagsJson.replace(/'/g, "''")}',
+        categoryMain = ${primaryCat ? `'${primaryCat.replace(/'/g, "''")}'` : 'NULL'},
+        serviceCategoryMain = ${primaryCat ? `'${primaryCat.replace(/'/g, "''")}'` : 'NULL'},
+        updatedAt = '${now}'
+        ${subClause}
+    WHERE id = '${vendorId}';
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🌟 更新廠商之細部叫料項目 / 規格備註 (例如: 專供 H 型鋼、C 型鋼、螺絲五金)
+export function updateVendorCategorySub(vendorId: string, categorySub: string): boolean {
+  if (!dbInstance || !vendorId) return false;
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+  const cleanSub = categorySub.trim();
+
+  dbInstance.run(`
+    UPDATE business_partners 
+    SET categorySub = '${cleanSub.replace(/'/g, "''")}',
+        serviceCategorySub = '${cleanSub.replace(/'/g, "''")}',
+        updatedAt = '${now}'
+    WHERE id = '${vendorId}';
+  `);
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🌟 重新命名工料大類 (同步更新所有歸屬於該類別的已建檔廠商)
+export function renameSubcontractorCategory(oldCategoryName: string, newCategoryName: string, operatorName = '系統管理員'): void {
+  if (!dbInstance) return;
+  ensureDatabaseIntegrity(dbInstance);
+  const now = new Date().toISOString();
+  const oldClean = oldCategoryName.trim();
+  const newClean = newCategoryName.trim();
+  if (!oldClean || !newClean || oldClean === newClean) return;
+
+  // 1. 同步更新 business_partners
+  dbInstance.run(`
+    UPDATE business_partners 
+    SET categoryMain = '${newClean.replace(/'/g, "''")}',
+        serviceCategoryMain = '${newClean.replace(/'/g, "''")}',
+        updatedAt = '${now}'
+    WHERE categoryMain = '${oldClean.replace(/'/g, "''")}' OR serviceCategoryMain = '${oldClean.replace(/'/g, "''")}';
+  `);
+
+  // 2. 更新 system_configs
+  const tree = getSubcontractorCategoryTree();
+  const updatedTree = tree.map(c => c.category === oldClean ? { ...c, category: newClean } : c);
+  saveSubcontractorCategoryTree(updatedTree, operatorName);
+}
+
 export function addVendorToSubcontractorCategory(categoryName: string, vendorName: string, operatorName = '系統管理員'): SubcontractorCategoryGroup[] {
+  // 此函數保留向下相容，檢查或自動確保大類存在
   const tree = getSubcontractorCategoryTree();
   const cat = tree.find(c => c.category === categoryName);
-  const vName = vendorName.trim();
-  if (!vName) return tree;
-
-  if (cat) {
-    if (!cat.vendors.some(v => v.name === vName)) {
-      cat.vendors.push({
-        id: `V-${Date.now().toString().slice(-6)}`,
-        name: vName,
-        isActive: true
-      });
-    }
-  } else {
+  if (!cat) {
     tree.push({
       id: `CAT-${Date.now().toString().slice(-6)}`,
       category: categoryName.trim() || '其他協力',
-      vendors: [{ id: `V-${Date.now().toString().slice(-6)}`, name: vName, isActive: true }]
+      vendors: []
     });
+    saveSubcontractorCategoryTree(tree, operatorName);
   }
-
-  saveSubcontractorCategoryTree(tree, operatorName);
-  return tree;
+  return getSubcontractorCategoryTree();
 }
 
 // ============================================================================
@@ -3659,7 +3811,7 @@ export function getAllBusinessPartners(): BusinessPartner[] {
       phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
       hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
       isDeleted, version, createdAt, updatedAt, serviceCategories,
-      isIndividual, categoryMain, categorySub
+      isIndividual, categoryMain, categorySub, categoryTags
     FROM business_partners
     WHERE isDeleted = 0
     ORDER BY bpCode;
@@ -3855,9 +4007,22 @@ export function getAllBusinessPartners(): BusinessPartner[] {
       isVendor: isVend,
       convertedFromVendorId: v[8] ? String(v[8]) : undefined,
       serviceCategoryMain: v[9] ? String(v[9]) : undefined,
-      serviceCategorySub: v[10] ? String(v[10]) : undefined,
       categoryMain: v[35] ? String(v[35]) : (v[9] ? String(v[9]) : undefined),
       categorySub: v[36] ? String(v[36]) : (v[10] ? String(v[10]) : undefined),
+      categoryTags: (() => {
+        let tags: string[] = [];
+        if (v[37]) {
+          try {
+            const raw = JSON.parse(String(v[37]));
+            if (Array.isArray(raw)) tags = raw.map(s => String(s).trim()).filter(Boolean);
+          } catch (_) {}
+        }
+        if (tags.length === 0 && (v[35] || v[9])) {
+          const fallback = String(v[35] || v[9] || '').trim();
+          if (fallback) tags = [fallback];
+        }
+        return tags;
+      })(),
       serviceCategories: parsedServiceCategories,
       ownerIdNumber: v[11] ? String(v[11]) : undefined,
       representative: v[12] ? String(v[12]) : undefined,
@@ -3939,6 +4104,12 @@ export function saveBusinessPartner(
   const bankAccount = primaryBank ? primaryBank.accountNumber : (partner.bankAccount || '');
   const bankAccountName = primaryBank ? primaryBank.accountName : (partner.bankAccountName || partner.name);
 
+  // 整理多角化分類標籤
+  const tagsToSave = Array.isArray(partner.categoryTags) && partner.categoryTags.length > 0
+    ? Array.from(new Set(partner.categoryTags.map(s => String(s).trim()).filter(Boolean)))
+    : (partner.categoryMain ? [partner.categoryMain.trim()] : []);
+  const primaryCategory = tagsToSave[0] || partner.categoryMain || partner.serviceCategoryMain || '';
+
   // 1. 寫入主檔 (UPSERT)
   dbInstance.run(`
     INSERT INTO business_partners (
@@ -3946,7 +4117,7 @@ export function saveBusinessPartner(
       serviceCategoryMain, serviceCategorySub, serviceCategories, ownerIdNumber, representative, contactPerson,
       phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
       hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
-      isDeleted, version, createdAt, updatedAt, isIndividual, categoryMain, categorySub
+      isDeleted, version, createdAt, updatedAt, isIndividual, categoryMain, categorySub, categoryTags
     ) VALUES (
       '${targetId}',
       '${targetCode.replace(/'/g, "''")}',
@@ -3957,7 +4128,7 @@ export function saveBusinessPartner(
       ${partner.isCustomer ? 1 : 0},
       ${partner.isVendor ? 1 : 0},
       ${partner.convertedFromVendorId ? `'${partner.convertedFromVendorId.replace(/'/g, "''")}'` : 'NULL'},
-      ${partner.serviceCategoryMain ? `'${partner.serviceCategoryMain.replace(/'/g, "''")}'` : 'NULL'},
+      ${primaryCategory ? `'${primaryCategory.replace(/'/g, "''")}'` : 'NULL'},
       ${partner.serviceCategorySub ? `'${partner.serviceCategorySub.replace(/'/g, "''")}'` : 'NULL'},
       ${partner.serviceCategories && partner.serviceCategories.length > 0 ? `'${JSON.stringify(partner.serviceCategories).replace(/'/g, "''")}'` : 'NULL'},
       ${partner.ownerIdNumber ? `'${partner.ownerIdNumber.replace(/'/g, "''")}'` : 'NULL'},
@@ -3983,8 +4154,9 @@ export function saveBusinessPartner(
       '${partner.createdAt || now}',
       '${now}',
       ${partner.isIndividual || partner.entityType === 'NATURAL_PERSON' ? 1 : 0},
-      ${partner.categoryMain || partner.serviceCategoryMain ? `'${(partner.categoryMain || partner.serviceCategoryMain || '').replace(/'/g, "''")}'` : 'NULL'},
-      ${partner.categorySub || partner.serviceCategorySub ? `'${(partner.categorySub || partner.serviceCategorySub || '').replace(/'/g, "''")}'` : 'NULL'}
+      ${primaryCategory ? `'${primaryCategory.replace(/'/g, "''")}'` : 'NULL'},
+      ${partner.categorySub || partner.serviceCategorySub ? `'${(partner.categorySub || partner.serviceCategorySub || '').replace(/'/g, "''")}'` : 'NULL'},
+      '${JSON.stringify(tagsToSave).replace(/'/g, "''")}'
     )
     ON CONFLICT(id) DO UPDATE SET
       bpCode = excluded.bpCode,
@@ -4000,6 +4172,7 @@ export function saveBusinessPartner(
       serviceCategories = excluded.serviceCategories,
       categoryMain = excluded.categoryMain,
       categorySub = excluded.categorySub,
+      categoryTags = excluded.categoryTags,
       isIndividual = excluded.isIndividual,
       ownerIdNumber = excluded.ownerIdNumber,
       representative = excluded.representative,
@@ -6618,6 +6791,7 @@ export function ensureDatabaseIntegrity(db: Database) {
   try { db.run(`ALTER TABLE business_partners ADD COLUMN isIndividual INTEGER DEFAULT 0;`); } catch (e) {}
   try { db.run(`ALTER TABLE business_partners ADD COLUMN categoryMain TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE business_partners ADD COLUMN categorySub TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE business_partners ADD COLUMN categoryTags TEXT DEFAULT '[]';`); } catch (e) {}
 
   // 🏛️ 專案案場工區現地法規欄位更新 (起造人、監造人、承造人、拆圖廠商、座落地號)
   try { db.run(`ALTER TABLE project_sites ADD COLUMN developerName TEXT;`); } catch (e) {}

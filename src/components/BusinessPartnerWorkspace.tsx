@@ -295,9 +295,11 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
       if (riskFilter === 'NORMAL' && p.isHighRisk) return false;
       if (riskFilter === 'HIGH_RISK' && !p.isHighRisk) return false;
 
-      // 工項大類篩選 (業主曾接案工項 vs 廠商服務工項)
+      // 工項大類/分類標籤篩選 (業主曾接案工項 vs 廠商工料大類標籤)
       if (selectedMainCategory !== 'ALL') {
         const hasMain =
+          (p.categoryTags || []).includes(selectedMainCategory) ||
+          p.categoryMain === selectedMainCategory ||
           p.serviceCategoryMain === selectedMainCategory ||
           (p.serviceCategories || []).some(c => c.main === selectedMainCategory);
         if (!hasMain) return false;
@@ -306,6 +308,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
       // 細項工種篩選
       if (selectedSubCategory !== 'ALL') {
         const hasSub =
+          p.categorySub === selectedSubCategory ||
           p.serviceCategorySub === selectedSubCategory ||
           (p.serviceCategories || []).some(c => c.sub === selectedSubCategory);
         if (!hasSub) return false;
@@ -345,7 +348,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
         if (p.businessCards && p.businessCards.length > 0) return false;
       }
 
-      // 關鍵字搜尋 (全欄位深層比對)
+      // 關鍵字搜尋 (全欄位深層比對，支援分類標籤、料件規格、統編、負責人、電話等)
       if (searchTerm.trim()) {
         const q = searchTerm.trim().toLowerCase();
         const inCode = p.bpCode.toLowerCase().includes(q);
@@ -356,6 +359,12 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
         const inAddress = p.address.toLowerCase().includes(q);
         const inOwner = (p.representative || '').toLowerCase().includes(q);
         const inBank = (p.bankName || '').toLowerCase().includes(q);
+        const inTags =
+          (p.categoryTags || []).some(t => t.toLowerCase().includes(q)) ||
+          (p.categoryMain || '').toLowerCase().includes(q) ||
+          (p.serviceCategoryMain || '').toLowerCase().includes(q) ||
+          (p.categorySub || '').toLowerCase().includes(q) ||
+          (p.serviceCategorySub || '').toLowerCase().includes(q);
         const inCategories = (p.serviceCategories || []).some(
           c => c.main.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q)
         );
@@ -381,6 +390,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
           !inAddress &&
           !inOwner &&
           !inBank &&
+          !inTags &&
           !inCategories &&
           !inCheque &&
           !inCards
@@ -439,20 +449,25 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
       ? `CUST-${(clientsCount + 1).toString().padStart(4, '0')}`
       : `VEND-${(vendorsCount + 1).toString().padStart(4, '0')}`;
 
+    const defaultVendorCategory = categoryTree[0]?.mainCategory || '鋼材';
+
     const newPartner: BusinessPartner = {
       id: newId,
       bpCode: newCode,
       name: '',
       taxId: '',
-      entityType: 'CORPORATION',
+      entityType: isClientMode ? 'NATURAL_PERSON' : 'CORPORATION',
+      isIndividual: isClientMode,
       type: isClientMode ? 'CUSTOMER' : 'VENDOR',
       isCustomer: isClientMode,
       isVendor: !isClientMode,
-      serviceCategoryMain: '泥作裝修工程',
-      serviceCategorySub: '粉刷打底工',
-      serviceCategories: [
-        { id: `CAT-${Date.now()}-1`, main: '泥作裝修工程', sub: '粉刷打底工' }
-      ],
+      categoryMain: !isClientMode ? defaultVendorCategory : undefined,
+      categorySub: '',
+      serviceCategoryMain: !isClientMode ? defaultVendorCategory : '泥作裝修工程',
+      serviceCategorySub: '',
+      serviceCategories: !isClientMode ? [
+        { id: `CAT-${Date.now()}-1`, main: defaultVendorCategory, sub: '' }
+      ] : [],
       representative: '',
       contactPerson: '',
       phone: '',
@@ -584,6 +599,12 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
   const handleSavePartner = () => {
     if (!editingPartner) return;
 
+    // 業務身分強制約束：至少須勾選一項（業主或合作廠商）
+    if (!editingPartner.isCustomer && !editingPartner.isVendor) {
+      showToast('⚠️ 業務身分至少須勾選一項（業主或合作廠商），不可全部取消！');
+      return;
+    }
+
     if (!editingPartner.name.trim()) {
       showToast('⚠️ 請填寫夥伴名稱 / 業主姓名！');
       return;
@@ -617,15 +638,33 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
 
     try {
       const operator = currentUser?.fullName || '系統管理員';
-      // 同步主要地址
+      // 同步主要地址與廠商分類標籤
       const primaryAddr = editingPartner.addresses?.[0];
+      const tags = (editingPartner.categoryTags && editingPartner.categoryTags.length > 0)
+        ? editingPartner.categoryTags
+        : (editingPartner.categoryMain ? [editingPartner.categoryMain] : [categoryTree[0]?.mainCategory || '鋼材']);
+      const fallbackCat = tags[0];
+
       const partnerToSave = {
         ...editingPartner,
         isIndividual: isInd,
+        categoryTags: editingPartner.isVendor ? tags : editingPartner.categoryTags,
+        categoryMain: editingPartner.isVendor ? fallbackCat : editingPartner.categoryMain,
+        serviceCategoryMain: editingPartner.isVendor ? fallbackCat : editingPartner.serviceCategoryMain,
         address: primaryAddr?.fullAddress || editingPartner.address
       };
 
       saveBusinessPartner(partnerToSave, operator);
+
+      // 🌟 二階段廠商分類聯動：若為合作廠商，將其自動登錄至所有對應工料分類標籤字典，供案場工程模組快速叫貨
+      if (partnerToSave.isVendor && partnerToSave.name) {
+        for (const tag of tags) {
+          try {
+            addVendorToSubcontractorCategory(tag, partnerToSave.name, operator);
+          } catch (_) {}
+        }
+      }
+
       reloadData();
       setIsEditorOpen(false);
       showToast(`🎉 成功儲存商業夥伴主檔：${editingPartner.name}`);
@@ -1169,7 +1208,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
             />
           </div>
 
-          {/* 工項大類篩選 (業主接案工項 vs 廠商工種) */}
+          {/* 廠商分類 (第一階工料大類) 篩選 */}
           <div>
             <select
               value={selectedMainCategory}
@@ -1179,10 +1218,12 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
               }}
               className="w-full text-xs py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700"
             >
-              <option value="ALL">全部工項 (不限)</option>
+              <option value="ALL">
+                {activeTab === 'VENDORS' ? '全部廠商分類 (不限)' : '全部工項 (不限)'}
+              </option>
               {categoryTree.map(g => (
                 <option key={g.mainCategory} value={g.mainCategory}>
-                  {g.mainCategory}
+                  {activeTab === 'VENDORS' ? `🏷️ ${g.mainCategory}` : g.mainCategory}
                 </option>
               ))}
             </select>
@@ -1237,6 +1278,59 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
             </select>
           </div>
         </div>
+
+        {/* 廠商多角化分類標籤快速篩選橫條 (以廠商為主體，點選標籤即時篩選) */}
+        {activeTab === 'VENDORS' && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5 scrollbar-thin">
+            <span className="text-[11px] text-amber-950 font-bold shrink-0 flex items-center gap-1">
+              <Tag className="w-3.5 h-3.5 text-amber-600" />
+              <span>產品標籤篩選：</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedMainCategory('ALL')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-bold shrink-0 transition-colors cursor-pointer ${
+                selectedMainCategory === 'ALL'
+                  ? 'bg-amber-600 text-white shadow-2xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+              }`}
+            >
+              全部廠商 ({partners.filter(p => p.isVendor).length})
+            </button>
+            {categoryTree.map(cat => {
+              const count = partners.filter(
+                p =>
+                  p.isVendor &&
+                  ((p.categoryTags || []).includes(cat.mainCategory) ||
+                    p.categoryMain === cat.mainCategory ||
+                    p.serviceCategoryMain === cat.mainCategory)
+              ).length;
+              const isSelected = selectedMainCategory === cat.mainCategory;
+              return (
+                <button
+                  key={cat.mainCategory}
+                  type="button"
+                  onClick={() => setSelectedMainCategory(isSelected ? 'ALL' : cat.mainCategory)}
+                  className={`text-xs px-2.5 py-1 rounded-lg font-bold shrink-0 transition-colors flex items-center gap-1 cursor-pointer ${
+                    isSelected
+                      ? 'bg-amber-600 text-white shadow-2xs'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+                  }`}
+                  title={`點選快速檢視標記有「${cat.mainCategory}」之廠商 (${count}家)`}
+                >
+                  <span>🏷️ {cat.mainCategory}</span>
+                  <span
+                    className={`text-[10px] px-1 py-0.2 rounded-full ${
+                      isSelected ? 'bg-amber-700 text-white' : 'bg-amber-200/80 text-amber-950 font-mono'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* 筆數與狀態小工具列 */}
         <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5">
@@ -1296,7 +1390,9 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                     <th className="py-2.5 px-3 w-24">夥伴編號</th>
                     <th className="py-2.5 px-3 min-w-[180px]">夥伴名稱 / 身分</th>
                     <th className="py-2.5 px-3 w-32">統一編號</th>
-                    <th className="py-2.5 px-3 min-w-[150px]">服務工種 / 接案項目</th>
+                    <th className="py-2.5 px-3 min-w-[160px]">
+                      {activeTab === 'VENDORS' ? '第一階分類 / 專長' : '接案工項 / 服務項目'}
+                    </th>
                     <th className="py-2.5 px-3 w-28">負責人 / 窗口</th>
                     <th className="py-2.5 px-3 w-32">主要電話</th>
                     <th className="py-2.5 px-3 min-w-[200px]">通訊地址 (拆分)</th>
@@ -1368,28 +1464,49 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                           </div>
                         </td>
 
-                        {/* 多工種標籤 */}
+                        {/* 廠商分類標籤與工項規格 */}
                         <td className="py-2.5 px-3">
-                          <div className="flex items-center gap-1 flex-wrap max-w-[200px]">
-                            {(p.serviceCategories && p.serviceCategories.length > 0
-                              ? p.serviceCategories
-                              : [{ id: '1', main: p.serviceCategoryMain || '一般工項', sub: p.serviceCategorySub || '' }]
-                            )
-                              .slice(0, 2)
-                              .map((c, i) => (
-                                <span
-                                  key={c.id || i}
-                                  className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-medium truncate max-w-[120px]"
-                                  title={`${c.main} ${c.sub ? `› ${c.sub}` : ''}`}
+                          <div className="flex items-center gap-1 flex-wrap max-w-[220px]">
+                            {(() => {
+                              const tags =
+                                p.categoryTags && p.categoryTags.length > 0
+                                  ? p.categoryTags
+                                  : p.categoryMain || p.serviceCategoryMain
+                                  ? [p.categoryMain || p.serviceCategoryMain!]
+                                  : [];
+
+                              return tags.map((tag, tIdx) => (
+                                <button
+                                  key={tIdx}
+                                  type="button"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setSelectedMainCategory(tag === selectedMainCategory ? 'ALL' : tag);
+                                  }}
+                                  className={`text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5 shadow-2xs shrink-0 cursor-pointer transition-colors ${
+                                    selectedMainCategory === tag
+                                      ? 'bg-amber-600 text-white'
+                                      : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                                  }`}
+                                  title={`點擊快速篩選標籤「${tag}」 (再次點擊取消)`}
                                 >
-                                  {c.sub || c.main}
-                                </span>
-                              ))}
-                            {(p.serviceCategories?.length || 0) > 2 && (
-                              <span className="text-[10px] text-indigo-600 font-bold">
-                                +{(p.serviceCategories?.length || 0) - 2}
+                                  🏷️ {tag}
+                                </button>
+                              ));
+                            })()}
+                            {p.categorySub || p.serviceCategorySub ? (
+                              <span
+                                className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-medium truncate max-w-[120px]"
+                                title={`細部專長/叫料項目：${p.categorySub || p.serviceCategorySub}`}
+                              >
+                                {p.categorySub || p.serviceCategorySub}
                               </span>
-                            )}
+                            ) : null}
+                            {(!p.categoryTags || p.categoryTags.length === 0) &&
+                              !(p.categoryMain || p.serviceCategoryMain) &&
+                              !(p.categorySub || p.serviceCategorySub) && (
+                                <span className="text-[10px] text-slate-400">-</span>
+                              )}
                           </div>
                         </td>
 
@@ -1712,18 +1829,42 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                       </div>
 
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-slate-400 text-[11px]">工項：</span>
-                        {(p.serviceCategories && p.serviceCategories.length > 0
-                          ? p.serviceCategories
-                          : [{ id: '1', main: p.serviceCategoryMain || '一般工項', sub: p.serviceCategorySub || '' }]
-                        ).map((c, i) => (
+                        <span className="text-slate-400 text-[11px]">{p.isVendor ? '分類標籤：' : '工項：'}</span>
+                        {(() => {
+                          const tags =
+                            p.categoryTags && p.categoryTags.length > 0
+                              ? p.categoryTags
+                              : p.categoryMain || p.serviceCategoryMain
+                              ? [p.categoryMain || p.serviceCategoryMain!]
+                              : [];
+
+                          return tags.map((tag, tIdx) => (
+                            <button
+                              key={tIdx}
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setSelectedMainCategory(tag === selectedMainCategory ? 'ALL' : tag);
+                              }}
+                              className={`text-[10px] px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5 transition-colors cursor-pointer ${
+                                selectedMainCategory === tag
+                                  ? 'bg-amber-600 text-white'
+                                  : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                              }`}
+                              title={`點擊快速篩選標籤「${tag}」`}
+                            >
+                              🏷️ {tag}
+                            </button>
+                          ));
+                        })()}
+                        {p.categorySub || p.serviceCategorySub ? (
                           <span
-                            key={c.id || i}
                             className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-medium"
+                            title={`細部專長/叫料項目：${p.categorySub || p.serviceCategorySub}`}
                           >
-                            {c.sub || c.main}
+                            {p.categorySub || p.serviceCategorySub}
                           </span>
-                        ))}
+                        ) : null}
                       </div>
 
                       <div className="flex items-center gap-2 text-slate-600">
@@ -1994,16 +2135,28 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
 
                       <div>
                         <label className="block text-xs font-bold text-slate-700 mb-1">
-                          業務身分定義
+                          業務身分定義 <span className="text-red-500">* (至少須勾選一項)</span>
                         </label>
                         <div className="flex items-center gap-4 mt-2">
                           <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
                             <input
                               type="checkbox"
                               checked={Boolean(editingPartner.isCustomer)}
-                              onChange={e =>
-                                setEditingPartner({ ...editingPartner, isCustomer: e.target.checked })
-                              }
+                              onChange={e => {
+                                const newChecked = e.target.checked;
+                                if (!newChecked && !editingPartner.isVendor) {
+                                  showToast('⚠️ 業務身分至少須勾選一項（業主或合作廠商），不可全部取消！');
+                                  return;
+                                }
+                                const nextIsCust = newChecked;
+                                const nextIsVend = Boolean(editingPartner.isVendor);
+                                const nextType = (nextIsCust && nextIsVend) ? 'BOTH' : (nextIsCust ? 'CUSTOMER' : 'VENDOR');
+                                setEditingPartner({
+                                  ...editingPartner,
+                                  isCustomer: nextIsCust,
+                                  type: nextType
+                                });
+                              }}
                               className="rounded text-indigo-600"
                             />
                             <span>業主 (客戶 / 發包方)</span>
@@ -2012,9 +2165,22 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                             <input
                               type="checkbox"
                               checked={Boolean(editingPartner.isVendor)}
-                              onChange={e =>
-                                setEditingPartner({ ...editingPartner, isVendor: e.target.checked })
-                              }
+                              onChange={e => {
+                                const newChecked = e.target.checked;
+                                if (!newChecked && !editingPartner.isCustomer) {
+                                  showToast('⚠️ 業務身分至少須勾選一項（業主或合作廠商），不可全部取消！');
+                                  return;
+                                }
+                                const nextIsVend = newChecked;
+                                const nextIsCust = Boolean(editingPartner.isCustomer);
+                                const nextType = (nextIsCust && nextIsVend) ? 'BOTH' : (nextIsCust ? 'CUSTOMER' : 'VENDOR');
+                                setEditingPartner({
+                                  ...editingPartner,
+                                  isVendor: nextIsVend,
+                                  type: nextType,
+                                  categoryMain: nextIsVend ? (editingPartner.categoryMain || categoryTree[0]?.mainCategory || '鋼材') : editingPartner.categoryMain
+                                });
+                              }}
                               className="rounded text-indigo-600"
                             />
                             <span>合作廠商 (協力包商 / 材料商)</span>
@@ -2022,6 +2188,145 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                         </div>
                       </div>
                     </div>
+
+                    {/* 合作廠商二階段架構：廠商多角化分類標籤 (以廠商為主體) */}
+                    {editingPartner.isVendor && (
+                      <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                            <Layers className="w-4 h-4 text-amber-700" />
+                            <span>廠商工料分類標籤 (多角化多標籤)</span>
+                            <span className="text-red-500">*</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setIsCategoryManagerOpen(true)}
+                            className="text-[11px] text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer flex items-center gap-1"
+                          >
+                            <Edit className="w-3 h-3" />
+                            <span>管理分類字典</span>
+                          </button>
+                        </div>
+
+                        {/* 標籤清單與即時加入標籤區塊 */}
+                        <div className="space-y-2">
+                          {(() => {
+                            const currentTags =
+                              editingPartner.categoryTags && editingPartner.categoryTags.length > 0
+                                ? editingPartner.categoryTags
+                                : [editingPartner.categoryMain || categoryTree[0]?.mainCategory || '鋼材'];
+
+                            return (
+                              <div className="flex items-center gap-1.5 flex-wrap p-2 bg-white border border-amber-300 rounded-lg min-h-[44px]">
+                                {currentTags.map((tag, tIdx) => (
+                                  <span
+                                    key={tIdx}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold shadow-2xs group"
+                                  >
+                                    <span>🏷️ {tag}</span>
+                                    {currentTags.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const newTags = currentTags.filter((_, idx) => idx !== tIdx);
+                                          setEditingPartner({
+                                            ...editingPartner,
+                                            categoryTags: newTags,
+                                            categoryMain: newTags[0] || '',
+                                            serviceCategoryMain: newTags[0] || ''
+                                          });
+                                        }}
+                                        className="text-amber-700 hover:text-rose-600 rounded-full p-0.5 hover:bg-amber-200 transition-colors ml-0.5"
+                                        title="移除此分類標籤"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </span>
+                                ))}
+
+                                {/* 下拉清單：自現有字典快速添加新標籤 */}
+                                <select
+                                  value=""
+                                  onChange={e => {
+                                    if (!e.target.value) return;
+                                    const selected = e.target.value;
+                                    if (!currentTags.includes(selected)) {
+                                      const updated = [...currentTags, selected];
+                                      setEditingPartner({
+                                        ...editingPartner,
+                                        categoryTags: updated,
+                                        categoryMain: updated[0],
+                                        serviceCategoryMain: updated[0]
+                                      });
+                                    }
+                                  }}
+                                  className="text-xs py-1 px-2 bg-amber-50 border border-dashed border-amber-400 rounded text-amber-900 font-semibold cursor-pointer hover:bg-amber-100 transition-colors"
+                                >
+                                  <option value="">＋ 新增字典標籤...</option>
+                                  {categoryTree
+                                    .filter(g => !currentTags.includes(g.mainCategory))
+                                    .map(g => (
+                                      <option key={g.mainCategory} value={g.mainCategory}>
+                                        🏷️ {g.mainCategory}
+                                      </option>
+                                    ))}
+                                </select>
+
+                                {/* 鍵入自訂標籤 (按 Enter 或失焦即加入) */}
+                                <input
+                                  type="text"
+                                  placeholder="+ 自訂標籤 (Enter)..."
+                                  className="text-xs py-1 px-2 bg-slate-50 border border-slate-200 rounded text-slate-800 placeholder:text-slate-400 w-32 focus:bg-white focus:border-amber-400 focus:outline-none"
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      const val = (e.currentTarget.value || '').trim();
+                                      if (val && !currentTags.includes(val)) {
+                                        const updated = [...currentTags, val];
+                                        setEditingPartner({
+                                          ...editingPartner,
+                                          categoryTags: updated,
+                                          categoryMain: updated[0],
+                                          serviceCategoryMain: updated[0]
+                                        });
+                                        e.currentTarget.value = '';
+                                      }
+                                    }
+                                  }}
+                                />
+                              </div>
+                            );
+                          })()}
+
+                          <div className="flex items-center justify-between text-[11px] text-amber-800">
+                            <span>
+                              💡 多角化經營支援：廠商為主體，可為此廠商標記 2 種以上產品標籤（如同時標記「鋼材」與「螺絲五金」），在案場叫貨或搜尋此標籤時皆能精準查得！
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 叫料項目或料件規格備註 */}
+                        <div>
+                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
+                            叫料項目／供應規格備註（供案場叫料與搜尋精準比對）
+                          </label>
+                          <input
+                            type="text"
+                            value={editingPartner.categorySub || editingPartner.serviceCategorySub || ''}
+                            onChange={e =>
+                              setEditingPartner({
+                                ...editingPartner,
+                                categorySub: e.target.value,
+                                serviceCategorySub: e.target.value
+                              })
+                            }
+                            placeholder="例：專供 H型鋼、C型鋼、板材裁切加工、白鐵自攻螺絲 (輸入規格關鍵字即可搜尋此廠商)"
+                            className="w-full text-xs p-2.5 bg-white border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500/20 text-slate-800"
+                          />
+                        </div>
+                      </div>
+                    )}
 
                     {/* 名稱與統編驗證機小程式 */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
