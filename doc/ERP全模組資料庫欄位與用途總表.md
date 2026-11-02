@@ -393,10 +393,13 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 > - 法人支援未定（`companyId` 可為空字串／`NULL`），待後續合約簽約或請款時指定。
 > - 建造建物類型與承攬工項支援兩階層分類（大項分群、強制僅選第二階小項，避免雜訊）。
 > - 起造人（建照法定主體 A）與合約甲方（發票買受人抬頭 B）支援分離指定，落實營造業真實稅務合約架構。
+> - **單一內部成本中心專案 (`PRJ-INTERNAL`) 與防幽靈案場憲法**：
+>   - 系統常駐一筆不可刪除之單一內部成本專案 `id: 'PRJ-INTERNAL'`、`projectCode: 'PRJ-INTERNAL'`、`name: '廠內自用 (廠務/公共備料/機具車輛)'`。
+>   - **嚴禁幽靈案場污染**：進貨打單、車輛保養維修（如公務貨車 `358-AB`、吊車 `776`）、廠內修繕或儲備物料點收時，一律外鍵收斂至 `PRJ-INTERNAL`，絕不可在背景私自呼叫 `quickCreateProject()` 建立虛假專案。具體車輛或資產全銜儲存於單據快照 `projectNameSnapshot`。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 專案唯一識別碼（如 `PRJ-01`）。 |
+| `id` | 專案唯一識別碼（如 `PRJ-01`，或內部成本中心固定為 `PRJ-INTERNAL`）。 |
 | `projectCode` | 專案正式代碼（依編碼規則自動配號，如 `PRJ-2026-001`，唯讀主鍵）。 |
 | `name` | 專案案場工程全銜（如「台北信義 A21 頂級商辦大樓新建工程」）。 |
 | `ownerName` | 合約發票甲方全銜／發票買受人全銜（開立發票抬頭 B）。 |
@@ -824,23 +827,29 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 
 > **架構定位**：**【現場進貨簽收主表 · A 模式直入案場成本 · 與會計大水池無縫對接】**。
 > 專責記錄材料送達現場之點收事實，直接歸戶案場成本（A 模式）。落實職責分離（Separation of Concerns）：**進貨嚴格不碰發票號碼、不做折讓扣款、不排定付款日**；單據過帳後自動以 `PENDING_BILLING` 狀態沉澱於廠商帳款大水池，待會計月底拉單勾稽。
+> 支援「極速打單工作台 (Excel-like Grid)」、「多草稿抽屜隨時切換與轉正」、「輸入失焦強制正規化 (onBlur Normalization)」，並徹底落實「防幽靈案場污染憲法」。
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 進貨簽收單識別碼 (UUID)。 |
 | `receiptNumber` | 進貨單號（編碼規範: `INB-YYYYMM-0001`，具備 `UNIQUE NOT NULL` 物理鐵壁）。 |
 | `companyId` | 所屬營運法人 ID。 |
-| `projectId` | **歸屬工區案場 ID (A 模式)**：材料送達現場即直接歸戶該專案成本，免去中心庫存倉庫與領料調撥手續。 |
+| `projectId` | **歸屬工區案場 ID (A 模式)**：材料送達現場即直接歸戶該專案成本，免去中心庫存倉庫與領料調撥手續。<br>• **廠內自用收斂**：若為公務車輛維修、廠務修繕、公共常備備料，固定指向單一內部成本中心 `PRJ-INTERNAL`，絕不污染專案主檔。 |
+| `projectNameSnapshot` | **案場工程或廠內資產全銜快照**：若為工程案場則儲存案場全銜（如「3310新建工程」）；若為廠內資產/修繕/備料，儲存標準全銜快照（如「廠內貨車 [358-AB]」、「廠房修繕 (屋頂翻修/地坪/水電)」、「廠內公共儲備庫存 (常備用料)」）。 |
 | `vendorId` | 合作廠商／供應商商業夥伴 ID (Vendor BP ID)。 |
-| `deliveryNoteNumber` | **廠商送貨單號／簽收單號**：現場紙本簽收單之單據號碼，供月底對帳核對憑據。 |
+| `vendorNameSnapshot` | 廠商名稱全銜快照（如「中國鋼鐵股份有限公司」，輸入簡稱失焦自動正規化後寫入）。 |
+| `vendorTaxIdSnapshot` | 廠商統一編號快照（8 碼）。 |
+| `deliveryNoteNumber` | **廠商送貨單號／簽收單號**：現場紙本簽收單之單據號碼，供月底對帳核對憑據。<br>• **打單預設**：極速打單工作台預設**絕對留空**，絕不自動帶入流水號，由現場如實抄錄。 |
 | `receivedDate` | 現場實收簽收日期 (YYYY-MM-DD)。 |
 | `receivedBy` | 現場點收人／簽收同仁姓名快照（如「王主任」）。 |
 | `totalAmount` | 進貨未稅總金額（明細小計合計，作為會計核算基準）。 |
 | `billingStatus` | 請款對帳狀態：<br>• `PENDING_BILLING`：待對帳請款（貨已進、簽收無誤，於廠商大水池中沉澱）。<br>• `BILLED`：已對帳請款（會計已勾選納入應付對帳單）。 |
 | `reconciliationId` | **會計對帳單勾稽外鍵 (Hook)**：未請款為 `NULL`；未來會計對帳單過帳時自動回填所屬 `reconciliationId`，實現雙模組乾淨對接。 |
+| `reconciliationNumber` | 會計對帳單單號快照（未對帳為 `NULL`，對帳過帳後快照保留）。 |
 | `purchaseOrderId` | 對應採購單 ID（選填；首階段優先獨立運作，未來擴充採購模組時無縫關聯）。 |
-| `status` | 單據狀態：`DRAFT`（草稿）、`POSTED`（已過帳入水池）、`VOIDED`（作廢）。 |
+| `status` | 單據狀態：`DRAFT`（草稿抽屜暫存）、`POSTED`（已正式過帳入水池）、`VOIDED`（作廢）。 |
 | `attachmentFileId` | 現場簽收單拍照圖檔／PDF 掃描檔 ID（調用 Vault 附件庫，供會計遠端查核紙本筆跡）。 |
+| `attachmentFileName` | 現場簽收單拍照圖檔原始檔名快照。 |
 | `notes` | 進貨簽收備註（如「水泥防潮堆置工區 A 棟一樓」）。 |
 | `isDeleted` | 軟刪除標記（預設 `0`）。 |
 | `version` | 樂觀鎖版本號（預設 `1`）。 |
@@ -849,6 +858,8 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 > **🛡️ 職責分離憲法鐵律 (Separation of Concerns Safeguard)**：
 > 1. 進貨單嚴格不儲存 `invoiceNumber`（發票號碼）、`taxAmount`（營業稅）、`discountAmount`（折讓金額）、`paymentDueDate`（預計付款日）或票據欄位。
 > 2. 上述財務與發票欄位嚴格歸屬於會計模組之 `AccountsPayableReconciliation`（應付對帳單），確保現場打單最精簡、財務對帳最精確。
+> 3. **防幽靈案場憲法 (Anti-Ghost-Project Constitution)**：極速打單工作台全面禁止呼叫 `quickCreateProject()`。未建檔之新案場必須引導回「案場工程模組」由主管核定建檔；廠內車輛與資產一律收斂至 `PRJ-INTERNAL`。
+> 4. **多草稿抽屜生命週期**：工作台支援儲存多份獨立草稿（`status = 'DRAFT'`），草稿載入編輯後正式過帳立即轉換為 `status = 'POSTED'` 並自動清空工作台，防止歷史單據殘留與重複開單。
 
 ### InboundReceiptItem｜進貨明細 (`inbound_receipt_items` / 原 `goods_receipt_items`)
 
