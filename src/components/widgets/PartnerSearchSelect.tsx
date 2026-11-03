@@ -18,6 +18,7 @@ import {
 import { BusinessPartner } from '../../types/erp';
 import { getAllBusinessPartners, saveBusinessPartner, subscribeToDatabase } from '../../db/sqlite';
 import { validateTaiwanTaxId, validateTaiwanNationalId } from '../../utils/taiwanValidation';
+import { PartnerEditorModal } from '../partners/PartnerEditorModal';
 
 export interface PartnerSearchSelectProps {
   value?: string; // 目前選定夥伴之名稱或 ID
@@ -63,20 +64,6 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
     width: 300,
     placeAbove: false
   });
-
-  // 快速建檔表單狀態
-  const [newPartnerName, setNewPartnerName] = useState('');
-  const [newEntityType, setNewEntityType] = useState<'CORPORATION' | 'NATURAL_PERSON'>('CORPORATION');
-  const [newPartnerType, setNewPartnerType] = useState<'CUSTOMER' | 'VENDOR'>(
-    quickCreateDefaultType || (partnerTypeFilter === 'CUSTOMER' ? 'CUSTOMER' : 'VENDOR')
-  );
-  const [newIsAlsoVendor, setNewIsAlsoVendor] = useState(false); // 業主是否兼具廠商身分
-  const [newTaxId, setNewTaxId] = useState('');
-  const [newContactPerson, setNewContactPerson] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newAddress, setNewAddress] = useState('');
-  const [newCategory, setNewCategory] = useState(quickCreateDefaultCategory || '');
-  const [createError, setCreateError] = useState('');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -244,111 +231,10 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
     if (inputRef.current) inputRef.current.focus();
   };
 
-  // 開啟快速新增彈窗
+  // 開啟聯絡明細規格新增彈窗
   const handleOpenQuickCreate = () => {
-    setNewPartnerName(searchTerm.trim());
-    setNewTaxId('');
-    setNewContactPerson('');
-    setNewPhone('');
-    setNewAddress('');
-    setNewIsAlsoVendor(false);
-    setNewEntityType('CORPORATION');
-    setNewCategory(
-      quickCreateDefaultCategory ||
-      (partnerTypeFilter === 'SHOP_DRAWING'
-        ? '專業技術顧問與測量設計 / 拆圖廠商 / 施工大樣圖拆圖'
-        : isCustomerOnly ? '業主建設開發' : '協力包商')
-    );
-    setNewPartnerType(
-      quickCreateDefaultType || (isCustomerOnly ? 'CUSTOMER' : 'VENDOR')
-    );
-    setCreateError('');
     setIsQuickCreateOpen(true);
     setIsOpen(false);
-  };
-
-  // 儲存快速新增夥伴 (不使用 form submit，杜絕外層父表單誤觸發關閉)
-  const handleSaveQuickPartner = () => {
-    if (!newPartnerName.trim()) {
-      setCreateError(isCustomerOnly ? '請填寫新業主或客戶全銜' : '請填寫夥伴名稱全銜');
-      return;
-    }
-
-    if (newTaxId.trim()) {
-      const clean = newTaxId.trim();
-      if (/^[A-Za-z]/.test(clean)) {
-        const valResult = validateTaiwanNationalId(clean);
-        if (!valResult.isValid) {
-          setCreateError(`身分證字號檢驗未通過：${valResult.message}`);
-          return;
-        }
-      } else if (clean.length === 8) {
-        const valResult = validateTaiwanTaxId(clean);
-        if (!valResult.isValid) {
-          setCreateError(`統一編號加權檢核未通過：${valResult.message}`);
-          return;
-        }
-      }
-    }
-
-    try {
-      const isCust = isCustomerOnly || newPartnerType === 'CUSTOMER';
-      const isVend = (!isCustomerOnly && newPartnerType === 'VENDOR') || (isCust && newIsAlsoVendor);
-      const partnerFinalType: BusinessPartner['type'] = isCust && newIsAlsoVendor
-        ? 'BOTH'
-        : (isCust ? 'CUSTOMER' : 'VENDOR');
-
-      const bpCode = isCust
-        ? `CUST-${Date.now().toString().slice(-4)}`
-        : (partnerTypeFilter === 'SHOP_DRAWING'
-          ? `SUB-DRAW-${Date.now().toString().slice(-4)}`
-          : `VEND-${Date.now().toString().slice(-4)}`);
-
-      const newPartner: BusinessPartner = {
-        id: `BP-QUICK-${Date.now().toString().slice(-6)}`,
-        bpCode,
-        name: newPartnerName.trim(),
-        taxId: newTaxId.trim(),
-        entityType: newEntityType,
-        type: partnerFinalType,
-        isCustomer: isCust,
-        isVendor: isVend,
-        serviceCategoryMain: isVend
-          ? (partnerTypeFilter === 'SHOP_DRAWING'
-            ? '專業技術顧問與測量設計'
-            : (newCategory.includes('/') ? newCategory.split('/')[0].trim() : '專業工程'))
-          : undefined,
-        serviceCategorySub: newCategory.trim() || (isCust ? '業主建設' : '工程協力廠商'),
-        representative: newContactPerson.trim() || (newEntityType === 'NATURAL_PERSON' ? newPartnerName.trim() : ''),
-        contactPerson: newContactPerson.trim() || (newEntityType === 'NATURAL_PERSON' ? newPartnerName.trim() : ''),
-        phone: newPhone.trim(),
-        email: '',
-        address: newAddress.trim(),
-        bankName: '',
-        bankCode: '',
-        bankAccount: '',
-        bankAccountName: '',
-        bankFeePayer: 'COMPANY',
-        hasInvoice: newEntityType === 'CORPORATION',
-        paymentTermsDays: 30,
-        isHighRisk: false,
-        currentScore: 90,
-        status: 'ACTIVE',
-        companyId: 'COMP-01',
-        isDeleted: false,
-        version: 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      const saved = saveBusinessPartner(newPartner, '系統操作員');
-      refreshPartners();
-      setSearchTerm(saved.name);
-      setIsQuickCreateOpen(false);
-      onSelect(saved, saved.name);
-    } catch (err: any) {
-      setCreateError(`建立失敗：${err.message || err}`);
-    }
   };
 
   return (
@@ -591,317 +477,21 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
         document.body
       )}
 
-      {/* 快速新增客戶/廠商資料彈窗 (Quick Create Partner Modal - 獨立 Portal 絕對杜絕父層表單觸發關閉) */}
-      {isQuickCreateOpen && createPortal(
-        <div
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
+      {/* 聯絡明細全功能新增彈窗 (PartnerEditorModal - 規格與聯絡明細 100% 一致) */}
+      {isQuickCreateOpen && (
+        <PartnerEditorModal
+          isOpen={isQuickCreateOpen}
+          onClose={() => setIsQuickCreateOpen(false)}
+          initialName={searchTerm.trim()}
+          defaultType={isCustomerOnly ? 'CUSTOMER' : 'VENDOR'}
+          title={isCustomerOnly ? '新增業主客戶資料（聯絡明細規格）' : '新增商業夥伴主檔（聯絡明細規格）'}
+          onSaved={(savedPartner) => {
+            refreshPartners();
+            setSearchTerm(savedPartner.name);
             setIsQuickCreateOpen(false);
+            onSelect(savedPartner, savedPartner.name);
           }}
-          className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
-          >
-            {/* Modal Header */}
-            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <div className={`w-7 h-7 rounded-lg text-white flex items-center justify-center ${
-                  isCustomerOnly
-                    ? 'bg-emerald-600'
-                    : partnerTypeFilter === 'SHOP_DRAWING'
-                    ? 'bg-purple-600'
-                    : 'bg-indigo-600'
-                }`}>
-                  {isCustomerOnly ? (
-                    <Building2 className="w-4 h-4" />
-                  ) : partnerTypeFilter === 'SHOP_DRAWING' ? (
-                    <DraftingCompass className="w-4 h-4" />
-                  ) : (
-                    <Sparkles className="w-4 h-4" />
-                  )}
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800">
-                    {isCustomerOnly
-                      ? '快速登記新業主 / 客戶資料（合約甲方）'
-                      : partnerTypeFilter === 'SHOP_DRAWING'
-                      ? '快速登記新拆圖協力廠商'
-                      : '快速登記新夥伴資料'}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    {isCustomerOnly
-                      ? '建立後直接作為此案場之合約甲方業主，並同步寫入客戶主庫'
-                      : partnerTypeFilter === 'SHOP_DRAWING'
-                      ? '專業技術顧問與施工大樣圖拆圖業務，建立後直接歸入拆圖類別'
-                      : '立即寫入商業夥伴主檔資料庫，並自動帶入當前表單欄位'}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsQuickCreateOpen(false);
-                }}
-                className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Modal Form - 純 <div> 容器，嚴禁使用 <form> 以杜絕觸發外層 ProjectEditorModal 的 onSubmit */}
-            <div className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
-              {createError && (
-                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{createError}</span>
-                </div>
-              )}
-
-              {/* 業主法人類型選擇 (法人 vs 自然人地主) */}
-              {isCustomerOnly ? (
-                <div className="space-y-2">
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 flex items-center justify-between text-xs text-emerald-800">
-                    <div className="flex items-center gap-2">
-                      <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="font-bold">對象業務型態：案場業主客戶 (合約甲方)</span>
-                    </div>
-                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-mono font-bold">合約甲方 / 發票買受人</span>
-                  </div>
-
-                  {/* 法人 vs 自然人切換 */}
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
-                      業主實體性質
-                    </label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setNewEntityType('CORPORATION')}
-                        className={`py-1.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                          newEntityType === 'CORPORATION'
-                            ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
-                            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <Building2 className="w-3.5 h-3.5" />
-                        <span>公司 / 法人 / 開發商</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setNewEntityType('NATURAL_PERSON')}
-                        className={`py-1.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                          newEntityType === 'NATURAL_PERSON'
-                            ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
-                            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <User className="w-3.5 h-3.5" />
-                        <span>個人 / 自然人地主業主</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 業主兼具廠商勾選框 */}
-                  <label className="flex items-start gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100/70 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={newIsAlsoVendor}
-                      onChange={(e) => setNewIsAlsoVendor(e.target.checked)}
-                      className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div>
-                      <span className="font-bold text-slate-800 text-[11px]">兼具協力廠商身分（雙重身分 BOTH）</span>
-                      <p className="text-[10px] text-slate-500 mt-0.5">
-                        若此業主單位未來亦有供料、代工或發包承包業務，勾選後日後亦可在採購發包與進貨模組中選取。
-                      </p>
-                    </div>
-                  </label>
-                </div>
-              ) : partnerTypeFilter === 'SHOP_DRAWING' ? (
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-2.5 flex items-center justify-between text-xs text-purple-800">
-                  <div className="flex items-center gap-2">
-                    <DraftingCompass className="w-4 h-4 text-purple-600 shrink-0" />
-                    <span className="font-bold">對象業務型態：拆圖協力廠商 (SUBCONTRACTOR)</span>
-                  </div>
-                  <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-mono font-bold">專業拆圖 / 施工大樣圖顧問</span>
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
-                    夥伴業務型態 <span className="text-rose-500">*</span>
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setNewPartnerType('CUSTOMER')}
-                      className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        newPartnerType === 'CUSTOMER'
-                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
-                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Building2 className="w-3.5 h-3.5" />
-                      <span>客戶 / 業主單位 (合約發票開立對象)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setNewPartnerType('VENDOR')}
-                      className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        newPartnerType === 'VENDOR'
-                          ? 'bg-indigo-50 border-indigo-500 text-indigo-800 ring-2 ring-indigo-500/20'
-                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      <DraftingCompass className="w-3.5 h-3.5" />
-                      <span>合作廠商 (拆圖顧問/分包/材料商)</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* 夥伴全銜 */}
-              <div>
-                <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                  {isCustomerOnly
-                    ? (newEntityType === 'NATURAL_PERSON' ? '業主姓名 / 起造人姓名' : '業主公司或單位全銜名稱')
-                    : '公司或單位全銜名稱'} <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={newPartnerName}
-                  onChange={(e) => setNewPartnerName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleSaveQuickPartner();
-                    }
-                  }}
-                  placeholder={
-                    isCustomerOnly
-                      ? (newEntityType === 'NATURAL_PERSON' ? '例如：林建國' : '例如：宏聯資產開發股份有限公司')
-                      : '例如：宏聯結構工程拆圖顧問有限公司 或 B開發營造股份有限公司'
-                  }
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-semibold focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
-
-              {/* 統一編號 / 身分證字號 & 聯絡人 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    {newEntityType === 'NATURAL_PERSON' ? '身分證字號 (10 碼)' : '統一編號 (8 碼)'}
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={newEntityType === 'NATURAL_PERSON' ? 10 : 8}
-                    value={newTaxId}
-                    onChange={(e) => setNewTaxId(e.target.value.toUpperCase())}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSaveQuickPartner();
-                      }
-                    }}
-                    placeholder={newEntityType === 'NATURAL_PERSON' ? '如：A123456789' : '如：98765432'}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    {newEntityType === 'NATURAL_PERSON' ? '法定代理人 / 備用聯絡人' : '業務窗口 / 負責人姓名'}
-                  </label>
-                  <input
-                    type="text"
-                    value={newContactPerson}
-                    onChange={(e) => setNewContactPerson(e.target.value)}
-                    placeholder="例如：張總工程師 / 李專案經理"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* 電話 & 專業類別 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    聯絡電話 / 手機
-                  </label>
-                  <input
-                    type="text"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    placeholder="如：02-2345-6789 或 0912-345-678"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    專業服務分類標註
-                  </label>
-                  <input
-                    type="text"
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value)}
-                    placeholder={isCustomerOnly ? '業主建設開發' : '例如：拆圖廠商 / 施工大樣圖拆圖'}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* 通訊地址 */}
-              <div>
-                <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                  通訊 / 登記地址
-                </label>
-                <input
-                  type="text"
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                  placeholder="例如：台北市信義區信義路五段 7 號"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsQuickCreateOpen(false);
-                }}
-                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-medium text-xs transition-colors cursor-pointer"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSaveQuickPartner();
-                }}
-                className={`px-4 py-2 rounded-lg text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer ${
-                  isCustomerOnly
-                    ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : 'bg-indigo-600 hover:bg-indigo-700'
-                }`}
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>{isCustomerOnly ? '建立新業主並直接帶入' : '立即建立並帶入表單'}</span>
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
+        />
       )}
     </div>
   );

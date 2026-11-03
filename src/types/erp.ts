@@ -586,7 +586,8 @@ export interface InboundReceipt {
   vendorId: string; // 供應商夥伴 ID
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;
-  deliveryNoteNumber: string; // 廠商送貨單號 / 現場簽收單號
+  deliveryNoteNumber: string; // 廠商送貨單號 / 現場簽收單號 (選填)
+  orderNumber?: string; // 訂貨單號 / 採購單號 (選填，不強制要求輸入)
   receivedDate: string; // 簽收日期 YYYY-MM-DD
   receivedBy: string; // 現場點收同仁姓名
   totalAmount: number; // 未稅合計金額（明細小計加總）

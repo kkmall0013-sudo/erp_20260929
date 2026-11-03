@@ -109,6 +109,7 @@ import { AttachmentUploader } from './attachments/AttachmentUploader';
 import { SubcontractorCategoryManagerModal } from './partners/SubcontractorCategoryManagerModal';
 import { ClientUpgradeVendorModal } from './partners/ClientUpgradeVendorModal';
 import { PartnerImportModal } from './partners/PartnerImportModal';
+import { PartnerEditorModal } from './partners/PartnerEditorModal';
 
 interface BusinessPartnerWorkspaceProps {
   onNotify?: (message: string) => void;

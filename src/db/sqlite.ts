@@ -684,10 +684,12 @@ function initializeTables(db: Database) {
       companyId TEXT NOT NULL,
       projectId TEXT NOT NULL,
       projectNameSnapshot TEXT,
+      projectCodeSnapshot TEXT,
       vendorId TEXT NOT NULL,
       vendorNameSnapshot TEXT,
       vendorTaxIdSnapshot TEXT,
       deliveryNoteNumber TEXT NOT NULL,
+      orderNumber TEXT,
       receivedDate TEXT NOT NULL,
       receivedBy TEXT NOT NULL,
       totalAmount REAL DEFAULT 0,
@@ -866,6 +868,10 @@ function initializeTables(db: Database) {
   try { db.run("ALTER TABLE quotation_items ADD COLUMN effectiveUnitPrice REAL DEFAULT 0;"); } catch (_) {}
   try { db.run("ALTER TABLE quotation_items ADD COLUMN isAwarded INTEGER DEFAULT 1;"); } catch (_) {}
   try { db.run("ALTER TABLE quotation_items ADD COLUMN lostReason TEXT;"); } catch (_) {}
+
+  // 🛡️ 進貨簽收單專案代碼與訂貨單號安全增量欄位
+  try { db.run("ALTER TABLE inbound_receipts ADD COLUMN projectCodeSnapshot TEXT;"); } catch (_) {}
+  try { db.run("ALTER TABLE inbound_receipts ADD COLUMN orderNumber TEXT;"); } catch (_) {}
 }
 
 // 建立營造工程真實範例資料
@@ -6473,10 +6479,12 @@ export function ensureDatabaseIntegrity(db: Database) {
         companyId TEXT NOT NULL,
         projectId TEXT NOT NULL,
         projectNameSnapshot TEXT,
+        projectCodeSnapshot TEXT,
         vendorId TEXT NOT NULL,
         vendorNameSnapshot TEXT,
         vendorTaxIdSnapshot TEXT,
         deliveryNoteNumber TEXT NOT NULL,
+        orderNumber TEXT,
         receivedDate TEXT NOT NULL,
         receivedBy TEXT NOT NULL,
         totalAmount REAL DEFAULT 0,
@@ -6507,6 +6515,10 @@ export function ensureDatabaseIntegrity(db: Database) {
       );
     `);
   } catch (_) {}
+
+  // 🛡️ 保證現有快照平滑升級 inbound_receipts 擁有 projectCodeSnapshot 與 orderNumber 欄位
+  try { db.run(`ALTER TABLE inbound_receipts ADD COLUMN projectCodeSnapshot TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE inbound_receipts ADD COLUMN orderNumber TEXT;`); } catch (e) {}
 
   initializeTables(db);
 
@@ -8578,34 +8590,72 @@ export function getAllInboundReceipts(filters?: {
 
   query += ` ORDER BY receivedDate DESC, receiptNumber DESC;`;
 
+  try {
+    dbInstance.run("ALTER TABLE inbound_receipts ADD COLUMN projectCodeSnapshot TEXT;");
+  } catch (_) {}
+  try {
+    dbInstance.run("ALTER TABLE inbound_receipts ADD COLUMN orderNumber TEXT;");
+  } catch (_) {}
+
   const res = dbInstance.exec(query);
   if (!res.length || !res[0].values.length) return [];
 
+  const cols = res[0].columns;
+  const colIdx = (name: string) => cols.indexOf(name);
+  const idIdx = colIdx('id');
+  const receiptNumberIdx = colIdx('receiptNumber');
+  const companyIdIdx = colIdx('companyId');
+  const projectIdIdx = colIdx('projectId');
+  const projectNameSnapshotIdx = colIdx('projectNameSnapshot');
+  const projectCodeSnapshotIdx = colIdx('projectCodeSnapshot');
+  const vendorIdIdx = colIdx('vendorId');
+  const vendorNameSnapshotIdx = colIdx('vendorNameSnapshot');
+  const vendorTaxIdSnapshotIdx = colIdx('vendorTaxIdSnapshot');
+  const deliveryNoteNumberIdx = colIdx('deliveryNoteNumber');
+  const orderNumberIdx = colIdx('orderNumber');
+  const receivedDateIdx = colIdx('receivedDate');
+  const receivedByIdx = colIdx('receivedBy');
+  const totalAmountIdx = colIdx('totalAmount');
+  const billingStatusIdx = colIdx('billingStatus');
+  const reconciliationIdIdx = colIdx('reconciliationId');
+  const reconciliationNumberIdx = colIdx('reconciliationNumber');
+  const purchaseOrderIdIdx = colIdx('purchaseOrderId');
+  const statusIdx = colIdx('status');
+  const attachmentFileIdIdx = colIdx('attachmentFileId');
+  const attachmentFileNameIdx = colIdx('attachmentFileName');
+  const notesIdx = colIdx('notes');
+  const isDeletedIdx = colIdx('isDeleted');
+  const versionIdx = colIdx('version');
+  const createdAtIdx = colIdx('createdAt');
+  const updatedAtIdx = colIdx('updatedAt');
+
   const receipts: InboundReceipt[] = res[0].values.map(row => ({
-    id: String(row[0]),
-    receiptNumber: String(row[1]),
-    companyId: String(row[2]),
-    projectId: String(row[3]),
-    projectNameSnapshot: row[4] ? String(row[4]) : undefined,
-    vendorId: String(row[5]),
-    vendorNameSnapshot: row[6] ? String(row[6]) : undefined,
-    vendorTaxIdSnapshot: row[7] ? String(row[7]) : undefined,
-    deliveryNoteNumber: String(row[8] || ''),
-    receivedDate: String(row[9] || ''),
-    receivedBy: String(row[10] || ''),
-    totalAmount: Number(row[11] || 0),
-    billingStatus: (row[12] || 'PENDING_BILLING') as InboundBillingStatus,
-    reconciliationId: row[13] ? String(row[13]) : undefined,
-    reconciliationNumber: row[14] ? String(row[14]) : undefined,
-    purchaseOrderId: row[15] ? String(row[15]) : undefined,
-    status: (row[16] || 'DRAFT') as InboundReceiptStatus,
-    attachmentFileId: row[17] ? String(row[17]) : undefined,
-    attachmentFileName: row[18] ? String(row[18]) : undefined,
-    notes: row[19] ? String(row[19]) : undefined,
-    isDeleted: Boolean(row[20]),
-    version: Number(row[21] || 1),
-    createdAt: String(row[22] || ''),
-    updatedAt: String(row[23] || ''),
+    id: String(row[idIdx !== -1 ? idIdx : 0]),
+    receiptNumber: String(row[receiptNumberIdx !== -1 ? receiptNumberIdx : 1]),
+    companyId: String(row[companyIdIdx !== -1 ? companyIdIdx : 2]),
+    projectId: String(row[projectIdIdx !== -1 ? projectIdIdx : 3]),
+    projectNameSnapshot: projectNameSnapshotIdx !== -1 && row[projectNameSnapshotIdx] ? String(row[projectNameSnapshotIdx]) : undefined,
+    projectCodeSnapshot: projectCodeSnapshotIdx !== -1 && row[projectCodeSnapshotIdx] ? String(row[projectCodeSnapshotIdx]) : undefined,
+    vendorId: String(row[vendorIdIdx !== -1 ? vendorIdIdx : 5]),
+    vendorNameSnapshot: vendorNameSnapshotIdx !== -1 && row[vendorNameSnapshotIdx] ? String(row[vendorNameSnapshotIdx]) : undefined,
+    vendorTaxIdSnapshot: vendorTaxIdSnapshotIdx !== -1 && row[vendorTaxIdSnapshotIdx] ? String(row[vendorTaxIdSnapshotIdx]) : undefined,
+    deliveryNoteNumber: deliveryNoteNumberIdx !== -1 && row[deliveryNoteNumberIdx] ? String(row[deliveryNoteNumberIdx]) : '',
+    orderNumber: orderNumberIdx !== -1 && row[orderNumberIdx] ? String(row[orderNumberIdx]) : undefined,
+    receivedDate: receivedDateIdx !== -1 && row[receivedDateIdx] ? String(row[receivedDateIdx]) : '',
+    receivedBy: receivedByIdx !== -1 && row[receivedByIdx] ? String(row[receivedByIdx]) : '',
+    totalAmount: Number(totalAmountIdx !== -1 ? row[totalAmountIdx] : 0),
+    billingStatus: ((billingStatusIdx !== -1 && row[billingStatusIdx]) || 'PENDING_BILLING') as InboundBillingStatus,
+    reconciliationId: reconciliationIdIdx !== -1 && row[reconciliationIdIdx] ? String(row[reconciliationIdIdx]) : undefined,
+    reconciliationNumber: reconciliationNumberIdx !== -1 && row[reconciliationNumberIdx] ? String(row[reconciliationNumberIdx]) : undefined,
+    purchaseOrderId: purchaseOrderIdIdx !== -1 && row[purchaseOrderIdIdx] ? String(row[purchaseOrderIdIdx]) : undefined,
+    status: ((statusIdx !== -1 && row[statusIdx]) || 'DRAFT') as InboundReceiptStatus,
+    attachmentFileId: attachmentFileIdIdx !== -1 && row[attachmentFileIdIdx] ? String(row[attachmentFileIdIdx]) : undefined,
+    attachmentFileName: attachmentFileNameIdx !== -1 && row[attachmentFileNameIdx] ? String(row[attachmentFileNameIdx]) : undefined,
+    notes: notesIdx !== -1 && row[notesIdx] ? String(row[notesIdx]) : undefined,
+    isDeleted: isDeletedIdx !== -1 ? Boolean(row[isDeletedIdx]) : false,
+    version: versionIdx !== -1 ? Number(row[versionIdx] || 1) : 1,
+    createdAt: createdAtIdx !== -1 && row[createdAtIdx] ? String(row[createdAtIdx]) : '',
+    updatedAt: updatedAtIdx !== -1 && row[updatedAtIdx] ? String(row[updatedAtIdx]) : '',
     items: [],
   }));
 
@@ -8662,12 +8712,14 @@ export function createInboundReceipt(
     }
   }
 
-  // 取得專案名稱與廠商名稱快照
+  // 取得專案名稱與代碼快照
   let projectNameSnapshot = data.projectNameSnapshot;
-  if (!projectNameSnapshot && data.projectId) {
-    const prjRes = dbInstance.exec(`SELECT name FROM projects WHERE id = '${data.projectId}';`);
-    if (prjRes.length && prjRes[0].values.length) {
-      projectNameSnapshot = String(prjRes[0].values[0][0]);
+  let projectCodeSnapshot = data.projectCodeSnapshot;
+  if (data.projectId) {
+    const prj = getAllProjects().find(p => p.id === data.projectId);
+    if (prj) {
+      if (!projectNameSnapshot) projectNameSnapshot = prj.name;
+      if (!projectCodeSnapshot) projectCodeSnapshot = prj.projectCode;
     }
   }
 
@@ -8706,10 +8758,17 @@ export function createInboundReceipt(
   const status = data.status || 'DRAFT';
   const billingStatus = data.billingStatus || 'PENDING_BILLING';
 
+  try {
+    dbInstance.run("ALTER TABLE inbound_receipts ADD COLUMN projectCodeSnapshot TEXT;");
+  } catch (_) {}
+  try {
+    dbInstance.run("ALTER TABLE inbound_receipts ADD COLUMN orderNumber TEXT;");
+  } catch (_) {}
+
   dbInstance.run(`
     INSERT INTO inbound_receipts (
-      id, receiptNumber, companyId, projectId, projectNameSnapshot,
-      vendorId, vendorNameSnapshot, vendorTaxIdSnapshot, deliveryNoteNumber,
+      id, receiptNumber, companyId, projectId, projectNameSnapshot, projectCodeSnapshot,
+      vendorId, vendorNameSnapshot, vendorTaxIdSnapshot, deliveryNoteNumber, orderNumber,
       receivedDate, receivedBy, totalAmount, billingStatus,
       reconciliationId, reconciliationNumber, purchaseOrderId,
       status, attachmentFileId, attachmentFileName, notes,
@@ -8720,10 +8779,12 @@ export function createInboundReceipt(
       '${(data.companyId || 'COMP-01').replace(/'/g, "''")}',
       '${(data.projectId || '').replace(/'/g, "''")}',
       '${(projectNameSnapshot || '').replace(/'/g, "''")}',
+      '${(projectCodeSnapshot || '').replace(/'/g, "''")}',
       '${(data.vendorId || '').replace(/'/g, "''")}',
       '${(vendorNameSnapshot || '').replace(/'/g, "''")}',
       '${(vendorTaxIdSnapshot || '').replace(/'/g, "''")}',
       '${(data.deliveryNoteNumber || '').replace(/'/g, "''")}',
+      ${data.orderNumber ? `'${data.orderNumber.replace(/'/g, "''")}'` : 'NULL'},
       '${receivedDate}',
       '${(data.receivedBy || '點收人').replace(/'/g, "''")}',
       ${totalAmount},
@@ -8776,10 +8837,12 @@ export function createInboundReceipt(
     companyId: data.companyId || 'COMP-01',
     projectId: data.projectId || '',
     projectNameSnapshot,
+    projectCodeSnapshot,
     vendorId: data.vendorId || '',
     vendorNameSnapshot,
     vendorTaxIdSnapshot,
     deliveryNoteNumber: data.deliveryNoteNumber || '',
+    orderNumber: data.orderNumber,
     receivedDate,
     receivedBy: data.receivedBy || '點收人',
     totalAmount,
@@ -8811,6 +8874,13 @@ export function updateInboundReceipt(
   if (existing.billingStatus === 'BILLED') {
     throw new Error('該進貨簽收單已納入會計對帳單請款，依法鎖定禁止修改');
   }
+
+  try {
+    dbInstance.run("ALTER TABLE inbound_receipts ADD COLUMN projectCodeSnapshot TEXT;");
+  } catch (_) {}
+  try {
+    dbInstance.run("ALTER TABLE inbound_receipts ADD COLUMN orderNumber TEXT;");
+  } catch (_) {}
 
   const now = new Date().toISOString();
   const newVersion = (existing.version || 1) + 1;
@@ -8853,18 +8923,37 @@ export function updateInboundReceipt(
   ];
 
   if (data.deliveryNoteNumber !== undefined) updates.push(`deliveryNoteNumber = '${data.deliveryNoteNumber.replace(/'/g, "''")}'`);
+  if (data.orderNumber !== undefined) updates.push(`orderNumber = ${data.orderNumber ? `'${data.orderNumber.replace(/'/g, "''")}'` : 'NULL'}`);
   if (data.receivedDate !== undefined) updates.push(`receivedDate = '${data.receivedDate}'`);
   if (data.receivedBy !== undefined) updates.push(`receivedBy = '${data.receivedBy.replace(/'/g, "''")}'`);
   if (data.notes !== undefined) updates.push(`notes = '${(data.notes || '').replace(/'/g, "''")}'`);
   if (data.status !== undefined) updates.push(`status = '${data.status}'`);
+  if (data.purchaseOrderId !== undefined) updates.push(`purchaseOrderId = ${data.purchaseOrderId ? `'${data.purchaseOrderId}'` : 'NULL'}`);
+
   if (data.projectId !== undefined) {
     updates.push(`projectId = '${data.projectId}'`);
+  }
+
+  // 專案名稱快照：優先採用傳入的 projectNameSnapshot，若未提供但有 projectId 則自專案庫查出
+  if (data.projectNameSnapshot !== undefined) {
+    updates.push(`projectNameSnapshot = '${data.projectNameSnapshot.replace(/'/g, "''")}'`);
+  } else if (data.projectId !== undefined) {
     const prj = getAllProjects().find(p => p.id === data.projectId);
     if (prj) {
       updates.push(`projectNameSnapshot = '${prj.name.replace(/'/g, "''")}'`);
+    }
+  }
+
+  // 專案代碼快照：優先採用傳入的 projectCodeSnapshot，若未提供但有 projectId 則自專案庫查出
+  if (data.projectCodeSnapshot !== undefined) {
+    updates.push(`projectCodeSnapshot = '${data.projectCodeSnapshot.replace(/'/g, "''")}'`);
+  } else if (data.projectId !== undefined) {
+    const prj = getAllProjects().find(p => p.id === data.projectId);
+    if (prj) {
       updates.push(`projectCodeSnapshot = '${prj.projectCode.replace(/'/g, "''")}'`);
     }
   }
+
   if (data.vendorId !== undefined) {
     updates.push(`vendorId = '${data.vendorId}'`);
     const ven = getAllBusinessPartners().find(v => v.id === data.vendorId);
@@ -8877,6 +8966,32 @@ export function updateInboundReceipt(
   if (data.attachmentFileName !== undefined) updates.push(`attachmentFileName = ${data.attachmentFileName ? `'${data.attachmentFileName.replace(/'/g, "''")}'` : 'NULL'}`);
 
   dbInstance.run(`UPDATE inbound_receipts SET ${updates.join(', ')} WHERE id = '${id}';`);
+
+  // A 模式直入案場成本：若原單為 POSTED，專案異動或金額異動時自動重分配成本
+  if (existing.status === 'POSTED') {
+    const oldPrjId = existing.projectId;
+    const newPrjId = data.projectId !== undefined ? data.projectId : oldPrjId;
+    const oldAmount = existing.totalAmount;
+    const newAmount = totalAmount;
+
+    if (oldPrjId !== newPrjId) {
+      if (oldPrjId && oldAmount > 0) {
+        try {
+          dbInstance.run(`UPDATE projects SET actualCost = MAX(0, actualCost - ${oldAmount}), updatedAt = '${now}' WHERE id = '${oldPrjId}';`);
+        } catch (_) {}
+      }
+      if (newPrjId && newAmount > 0) {
+        try {
+          dbInstance.run(`UPDATE projects SET actualCost = actualCost + ${newAmount}, updatedAt = '${now}' WHERE id = '${newPrjId}';`);
+        } catch (_) {}
+      }
+    } else if (oldAmount !== newAmount && newPrjId) {
+      const delta = newAmount - oldAmount;
+      try {
+        dbInstance.run(`UPDATE projects SET actualCost = MAX(0, actualCost + ${delta}), updatedAt = '${now}' WHERE id = '${newPrjId}';`);
+      } catch (_) {}
+    }
+  }
 
   saveDatabaseSnapshot();
   notifyListeners();

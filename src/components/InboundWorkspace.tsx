@@ -254,6 +254,50 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
     }
   }, [activeVendorsInDateRange, selectedVendorId]);
 
+  // ⚡ 歸屬案場/廠內資產全即時動態連動解析 (100% 同步專案庫與廠內資產庫最新全名)
+  const getReceiptProjectInfo = useCallback((r: InboundReceipt) => {
+    if (r.projectId) {
+      const prj = projects.find(p => p.id === r.projectId);
+      if (prj) {
+        return {
+          id: prj.id,
+          name: prj.name,
+          code: prj.projectCode,
+          isInternalAsset: false,
+        };
+      }
+      const asset = internalAssets.find(a => a.id === r.projectId);
+      if (asset) {
+        return {
+          id: asset.id,
+          name: asset.name,
+          code: asset.code,
+          isInternalAsset: true,
+        };
+      }
+    }
+    // 比對快照名稱是否匹配廠內資產
+    if (r.projectNameSnapshot) {
+      const assetByName = internalAssets.find(
+        a => a.name === r.projectNameSnapshot || a.code === (r as any).projectCodeSnapshot
+      );
+      if (assetByName) {
+        return {
+          id: assetByName.id,
+          name: assetByName.name,
+          code: assetByName.code,
+          isInternalAsset: true,
+        };
+      }
+    }
+    return {
+      id: r.projectId || 'UNKNOWN',
+      name: r.projectNameSnapshot || '未指定案場',
+      code: (r as any).projectCodeSnapshot || '',
+      isInternalAsset: (r.projectNameSnapshot || '').includes('廠內') || (r.projectNameSnapshot || '').includes('車輛'),
+    };
+  }, [projects, internalAssets]);
+
   // ⚡ 動態計算「在當前日期區間內真正有進貨單的案場清單」 (案場與廠商一致：有進貨的才進入選單，徹底杜絕無效空白頁面)
   const activeProjectsInDateRange = useMemo(() => {
     const { start, end } = activeDateRange;
@@ -266,10 +310,10 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
 
     const projectMap = new Map<string, { id: string; name: string; code: string; count: number }>();
     rangeReceipts.forEach(r => {
-      const pId = r.projectId || 'UNKNOWN';
-      const prj = projects.find(p => p.id === r.projectId);
-      const pName = r.projectNameSnapshot || prj?.name || '未指定案場';
-      const pCode = (r as any).projectCodeSnapshot || prj?.projectCode || '';
+      const prjInfo = getReceiptProjectInfo(r);
+      const pId = prjInfo.id;
+      const pName = prjInfo.name;
+      const pCode = prjInfo.code;
       const existing = projectMap.get(pId);
       if (existing) {
         existing.count += 1;
@@ -279,7 +323,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
     });
 
     return Array.from(projectMap.values()).sort((a, b) => b.count - a.count);
-  }, [receipts, activeDateRange, projects]);
+  }, [receipts, activeDateRange, getReceiptProjectInfo]);
 
   // 當日期區間切換時，若原先選取的案場在該區間內無單，自動重設為 ALL，避免點了空白
   useEffect(() => {
@@ -302,8 +346,11 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       if (start && r.receivedDate < start) return false;
       if (end && r.receivedDate > end) return false;
 
-      // 案場篩選
-      if (selectedProjectId !== 'ALL' && r.projectId !== selectedProjectId) return false;
+      // 案場篩選 (支援 id 或即時解析 id 比對)
+      if (selectedProjectId !== 'ALL') {
+        const prjInfo = getReceiptProjectInfo(r);
+        if (r.projectId !== selectedProjectId && prjInfo.id !== selectedProjectId) return false;
+      }
 
       // 廠商篩選 (動態關聯)
       if (selectedVendorId !== 'ALL' && r.vendorId !== selectedVendorId) return false;
@@ -311,24 +358,28 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       // 狀態篩選
       if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
 
-      // 關鍵字搜尋
+      // 關鍵字搜尋 (支援單號、送貨單號、訂貨單號、廠商、案場全名/代碼、物料品名規格)
       if (searchKeyword.trim()) {
         const kw = searchKeyword.toLowerCase();
+        const prjInfo = getReceiptProjectInfo(r);
         const matchNo = (r.receiptNumber || '').toLowerCase().includes(kw);
         const matchDn = (r.deliveryNoteNumber || '').toLowerCase().includes(kw);
+        const matchOrder = (r.orderNumber || '').toLowerCase().includes(kw);
         const matchVendor = (r.vendorNameSnapshot || '').toLowerCase().includes(kw);
-        const matchProject = (r.projectNameSnapshot || '').toLowerCase().includes(kw);
+        const matchProject = (r.projectNameSnapshot || '').toLowerCase().includes(kw) ||
+          prjInfo.name.toLowerCase().includes(kw) ||
+          prjInfo.code.toLowerCase().includes(kw);
         const matchItem = (r.items || []).some(it =>
           (it.itemName || '').toLowerCase().includes(kw) ||
           (it.spec || '').toLowerCase().includes(kw) ||
           (it.notes || '').toLowerCase().includes(kw)
         );
-        return matchNo || matchDn || matchVendor || matchProject || matchItem;
+        return matchNo || matchDn || matchOrder || matchVendor || matchProject || matchItem;
       }
 
       return true;
     });
-  }, [receipts, activeDateRange, selectedProjectId, selectedVendorId, statusFilter, searchKeyword]);
+  }, [receipts, activeDateRange, selectedProjectId, selectedVendorId, statusFilter, searchKeyword, getReceiptProjectInfo]);
 
   // 🏢 階層式資料結構：按供貨廠商分組
   const vendorHierarchyGroups = useMemo(() => {
