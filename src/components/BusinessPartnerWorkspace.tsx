@@ -45,7 +45,10 @@ import {
   ChevronsRight,
   Calendar,
   Contact,
-  Scale
+  Scale,
+  Lock,
+  Unlock,
+  RotateCcw
 } from 'lucide-react';
 
 import {
@@ -226,6 +229,11 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
 
   // 廠商二階專業分類管理彈窗 (權限: Admin/指定人員)
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+
+  // 廠商分類多標籤防呆與雙重確認機制狀態
+  const [pendingDeleteTag, setPendingDeleteTag] = useState<string | null>(null);
+  const [lastRemovedTag, setLastRemovedTag] = useState<string | null>(null);
+  const [isTagEditMode, setIsTagEditMode] = useState<boolean>(false);
 
   // 業主轉合作廠商補填彈窗
   const [upgradeClientTarget, setUpgradeClientTarget] = useState<BusinessPartner | null>(null);
@@ -532,6 +540,9 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
     };
 
     setEditingPartner(newPartner);
+    setPendingDeleteTag(null);
+    setLastRemovedTag(null);
+    setIsTagEditMode(false);
     setActiveEditorTab('BASIC');
     setIsEditorOpen(true);
   };
@@ -591,6 +602,9 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
       chequeRecords: p.chequeRecords || [],
       businessCards: p.businessCards || []
     });
+    setPendingDeleteTag(null);
+    setLastRemovedTag(null);
+    setIsTagEditMode(false);
     setActiveEditorTab('BASIC');
     setIsEditorOpen(true);
   };
@@ -2189,24 +2203,75 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                       </div>
                     </div>
 
-                    {/* 合作廠商二階段架構：廠商多角化分類標籤 (以廠商為主體) */}
+                    {/* 合作廠商二階段架構：廠商多角化分類標籤 (以廠商為主體，全方位防呆與雙重確認) */}
                     {editingPartner.isVendor && (
                       <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2.5">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                           <label className="block text-xs font-bold text-amber-950 flex items-center gap-1.5">
                             <Layers className="w-4 h-4 text-amber-700" />
                             <span>廠商工料分類標籤 (多角化多標籤)</span>
-                            <span className="text-red-500">*</span>
+                            <span className="text-red-500">* (至少保留 1 項)</span>
                           </label>
-                          <button
-                            type="button"
-                            onClick={() => setIsCategoryManagerOpen(true)}
-                            className="text-[11px] text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer flex items-center gap-1"
-                          >
-                            <Edit className="w-3 h-3" />
-                            <span>管理分類字典</span>
-                          </button>
+
+                          <div className="flex items-center gap-2">
+                            {/* 防誤觸安全鎖定開關 */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsTagEditMode(!isTagEditMode);
+                                setPendingDeleteTag(null);
+                              }}
+                              className={`text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer ${
+                                isTagEditMode
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-300 hover:bg-rose-200 animate-pulse'
+                                  : 'bg-white hover:bg-amber-100 text-amber-900 border border-amber-300'
+                              }`}
+                              title={isTagEditMode ? "點擊切回安全鎖定模式" : "點擊解鎖以移除標籤"}
+                            >
+                              {isTagEditMode ? (
+                                <>
+                                  <Unlock className="w-3.5 h-3.5 text-rose-600" />
+                                  <span>標籤解鎖編輯中 (點此鎖定防誤觸)</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Lock className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>🔒 標籤安全鎖定中 (防誤刪)</span>
+                                </>
+                              )}
+                            </button>
+
+                            {/* 管理字典 */}
+                            <button
+                              type="button"
+                              onClick={() => setIsCategoryManagerOpen(true)}
+                              className="text-[11px] text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer flex items-center gap-1"
+                            >
+                              <Edit className="w-3 h-3" />
+                              <span>管理分類字典</span>
+                            </button>
+                          </div>
                         </div>
+
+                        {/* 解鎖警示提示 */}
+                        {isTagEditMode && (
+                          <div className="p-2 bg-rose-50/90 border border-rose-200 rounded-lg text-[11px] text-rose-800 flex items-center justify-between animate-in fade-in">
+                            <span className="flex items-center gap-1">
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                              <span>已進入標籤編輯模式：點選標籤右側「移除」將跳出雙重確認。完成後請點擊上方鎖定以防手滑誤觸。</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsTagEditMode(false);
+                                setPendingDeleteTag(null);
+                              }}
+                              className="text-xs text-rose-700 font-bold underline ml-2 shrink-0 cursor-pointer"
+                            >
+                              立即鎖定
+                            </button>
+                          </div>
+                        )}
 
                         {/* 標籤清單與即時加入標籤區塊 */}
                         <div className="space-y-2">
@@ -2217,33 +2282,89 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                                 : [editingPartner.categoryMain || categoryTree[0]?.mainCategory || '鋼材'];
 
                             return (
-                              <div className="flex items-center gap-1.5 flex-wrap p-2 bg-white border border-amber-300 rounded-lg min-h-[44px]">
-                                {currentTags.map((tag, tIdx) => (
-                                  <span
-                                    key={tIdx}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold shadow-2xs group"
-                                  >
-                                    <span>🏷️ {tag}</span>
-                                    {currentTags.length > 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const newTags = currentTags.filter((_, idx) => idx !== tIdx);
-                                          setEditingPartner({
-                                            ...editingPartner,
-                                            categoryTags: newTags,
-                                            categoryMain: newTags[0] || '',
-                                            serviceCategoryMain: newTags[0] || ''
-                                          });
-                                        }}
-                                        className="text-amber-700 hover:text-rose-600 rounded-full p-0.5 hover:bg-amber-200 transition-colors ml-0.5"
-                                        title="移除此分類標籤"
+                              <div className="flex items-center gap-2 flex-wrap p-2.5 bg-white border border-amber-300 rounded-xl min-h-[48px]">
+                                {currentTags.map((tag, tIdx) => {
+                                  const isPendingDelete = pendingDeleteTag === tag;
+
+                                  if (isPendingDelete) {
+                                    {/* 雙重確認專用互動晶片 (防呆保護核心) */}
+                                    return (
+                                      <span
+                                        key={tIdx}
+                                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-rose-50 border-2 border-rose-500 text-rose-950 text-xs font-bold shadow-xs animate-in zoom-in-95 duration-100"
                                       >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </span>
-                                ))}
+                                        <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                                        <span>確定移除【{tag}】？</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (currentTags.length <= 1) {
+                                              showToast('⚠️ 廠商至少須保留 1 個分類標籤，不可全部清空！');
+                                              setPendingDeleteTag(null);
+                                              return;
+                                            }
+                                            const newTags = currentTags.filter((_, idx) => idx !== tIdx);
+                                            setEditingPartner({
+                                              ...editingPartner,
+                                              categoryTags: newTags,
+                                              categoryMain: newTags[0] || '',
+                                              serviceCategoryMain: newTags[0] || ''
+                                            });
+                                            setPendingDeleteTag(null);
+                                            setLastRemovedTag(tag);
+                                            showToast(`✓ 已成功移除標籤「${tag}」（可於下方點選一鍵復原）`);
+                                          }}
+                                          className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-2xs cursor-pointer active:scale-95 transition-all"
+                                        >
+                                          確認移除
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setPendingDeleteTag(null)}
+                                          className="px-2 py-0.5 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-medium text-xs cursor-pointer"
+                                        >
+                                          取消
+                                        </button>
+                                      </span>
+                                    );
+                                  }
+
+                                  return (
+                                    <span
+                                      key={tIdx}
+                                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-2xs transition-all ${
+                                        isTagEditMode
+                                          ? 'bg-amber-100 text-amber-950 border border-amber-400'
+                                          : 'bg-amber-50 text-amber-900 border border-amber-300'
+                                      }`}
+                                    >
+                                      <span>🏷️ {tag}</span>
+
+                                      {/* 安全鎖定模式下完全不渲染刪除按鈕，杜絕一切誤觸！ */}
+                                      {isTagEditMode && (
+                                        <>
+                                          {currentTags.length > 1 ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => setPendingDeleteTag(tag)}
+                                              className="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-200 hover:bg-rose-100 hover:text-rose-700 text-amber-800 transition-colors cursor-pointer border border-amber-300"
+                                              title="點擊後需二次確認才會移除"
+                                            >
+                                              移除
+                                            </button>
+                                          ) : (
+                                            <span
+                                              className="text-[10px] text-amber-700 font-normal ml-1"
+                                              title="廠商至少需保留一個分類標籤"
+                                            >
+                                              (唯一主標籤·保留)
+                                            </span>
+                                          )}
+                                        </>
+                                      )}
+                                    </span>
+                                  );
+                                })}
 
                                 {/* 下拉清單：自現有字典快速添加新標籤 */}
                                 <select
@@ -2259,9 +2380,12 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                                         categoryMain: updated[0],
                                         serviceCategoryMain: updated[0]
                                       });
+                                      showToast(`✓ 已加入產品分類標籤「${selected}」`);
+                                    } else {
+                                      showToast(`⚠️ 標籤「${selected}」已存在，無須重複加入！`);
                                     }
                                   }}
-                                  className="text-xs py-1 px-2 bg-amber-50 border border-dashed border-amber-400 rounded text-amber-900 font-semibold cursor-pointer hover:bg-amber-100 transition-colors"
+                                  className="text-xs py-1.5 px-2 bg-amber-50 border border-dashed border-amber-400 rounded-lg text-amber-900 font-semibold cursor-pointer hover:bg-amber-100 transition-colors"
                                 >
                                   <option value="">＋ 新增字典標籤...</option>
                                   {categoryTree
@@ -2277,21 +2401,25 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                                 <input
                                   type="text"
                                   placeholder="+ 自訂標籤 (Enter)..."
-                                  className="text-xs py-1 px-2 bg-slate-50 border border-slate-200 rounded text-slate-800 placeholder:text-slate-400 w-32 focus:bg-white focus:border-amber-400 focus:outline-none"
+                                  className="text-xs py-1.5 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-400 w-36 focus:bg-white focus:border-amber-400 focus:outline-none"
                                   onKeyDown={e => {
                                     if (e.key === 'Enter') {
                                       e.preventDefault();
                                       const val = (e.currentTarget.value || '').trim();
-                                      if (val && !currentTags.includes(val)) {
-                                        const updated = [...currentTags, val];
-                                        setEditingPartner({
-                                          ...editingPartner,
-                                          categoryTags: updated,
-                                          categoryMain: updated[0],
-                                          serviceCategoryMain: updated[0]
-                                        });
-                                        e.currentTarget.value = '';
+                                      if (!val) return;
+                                      if (currentTags.includes(val)) {
+                                        showToast(`⚠️ 標籤「${val}」已存在，無須重複加入！`);
+                                        return;
                                       }
+                                      const updated = [...currentTags, val];
+                                      setEditingPartner({
+                                        ...editingPartner,
+                                        categoryTags: updated,
+                                        categoryMain: updated[0],
+                                        serviceCategoryMain: updated[0]
+                                      });
+                                      e.currentTarget.value = '';
+                                      showToast(`✓ 已加入自訂產品標籤「${val}」`);
                                     }
                                   }}
                                 />
@@ -2299,9 +2427,41 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                             );
                           })()}
 
+                          {/* 一鍵復原標籤橫條 (即便誤按確認也能 1 秒復原) */}
+                          {lastRemovedTag && (
+                            <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs animate-in fade-in">
+                              <div className="flex items-center gap-1.5 font-bold">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span>剛才移除了標籤：<span className="underline decoration-emerald-500 font-extrabold">🏷️ {lastRemovedTag}</span></span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const currentTags =
+                                    editingPartner.categoryTags && editingPartner.categoryTags.length > 0
+                                      ? editingPartner.categoryTags
+                                      : [editingPartner.categoryMain || categoryTree[0]?.mainCategory || '鋼材'];
+                                  const newTags = [...currentTags, lastRemovedTag];
+                                  setEditingPartner({
+                                    ...editingPartner,
+                                    categoryTags: newTags,
+                                    categoryMain: newTags[0] || '',
+                                    serviceCategoryMain: newTags[0] || ''
+                                  });
+                                  setLastRemovedTag(null);
+                                  showToast(`🎉 已成功復原標籤「${lastRemovedTag}」！`);
+                                }}
+                                className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95 transition-all"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                <span>↩️ 立即復原此標籤</span>
+                              </button>
+                            </div>
+                          )}
+
                           <div className="flex items-center justify-between text-[11px] text-amber-800">
                             <span>
-                              💡 多角化經營支援：廠商為主體，可為此廠商標記 2 種以上產品標籤（如同時標記「鋼材」與「螺絲五金」），在案場叫貨或搜尋此標籤時皆能精準查得！
+                              💡 多角化防呆機制：預設安全鎖定保護防止誤觸。廠商為主體，可為此廠商標記 2 種以上產品標籤，叫貨或搜尋時皆能精準查得！
                             </span>
                           </div>
                         </div>

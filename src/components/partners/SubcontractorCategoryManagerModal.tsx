@@ -739,11 +739,11 @@ export const SubcontractorCategoryManagerModal: React.FC<SubcontractorCategoryMa
                               <button
                                 type="button"
                                 onClick={() => handleRemoveVendor(v)}
-                                className="inline-flex items-center gap-1 text-[11px] text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded transition-colors cursor-pointer"
-                                title="自此分類移出 (不會刪除廠商)"
+                                className="inline-flex items-center gap-1 text-[11px] text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded transition-colors cursor-pointer"
+                                title="自此大類移出此標籤 (不會刪除廠商資料)"
                               >
-                                <Trash2 className="w-3 h-3" />
-                                <span>移出分類</span>
+                                <Tag className="w-3 h-3 text-amber-600" />
+                                <span>移除此標籤</span>
                               </button>
                             </td>
                           </tr>
