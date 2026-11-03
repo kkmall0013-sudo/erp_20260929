@@ -16,7 +16,8 @@ import {
   FileText
 } from 'lucide-react';
 import { BusinessPartner } from '../../types/erp';
-import { getAllBusinessPartners, saveBusinessPartner } from '../../db/sqlite';
+import { getAllBusinessPartners, saveBusinessPartner, subscribeToDatabase } from '../../db/sqlite';
+import { validateTaiwanTaxId, validateTaiwanNationalId } from '../../utils/taiwanValidation';
 
 export interface PartnerSearchSelectProps {
   value?: string; // 目前選定夥伴之名稱或 ID
@@ -51,6 +52,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
   helperText,
   className = ''
 }) => {
+  const isCustomerOnly = partnerTypeFilter === 'CUSTOMER';
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState(value);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
@@ -64,6 +66,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
 
   // 快速建檔表單狀態
   const [newPartnerName, setNewPartnerName] = useState('');
+  const [newEntityType, setNewEntityType] = useState<'CORPORATION' | 'NATURAL_PERSON'>('CORPORATION');
   const [newPartnerType, setNewPartnerType] = useState<'CUSTOMER' | 'VENDOR'>(
     quickCreateDefaultType || (partnerTypeFilter === 'CUSTOMER' ? 'CUSTOMER' : 'VENDOR')
   );
@@ -90,6 +93,12 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
 
   useEffect(() => {
     refreshPartners();
+    const unsubscribe = subscribeToDatabase(() => {
+      refreshPartners();
+    });
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // 同步外部傳入之 value
@@ -243,31 +252,48 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
     setNewPhone('');
     setNewAddress('');
     setNewIsAlsoVendor(false);
+    setNewEntityType('CORPORATION');
     setNewCategory(
       quickCreateDefaultCategory ||
       (partnerTypeFilter === 'SHOP_DRAWING'
         ? '專業技術顧問與測量設計 / 拆圖廠商 / 施工大樣圖拆圖'
-        : partnerTypeFilter === 'CUSTOMER' ? '業主建設開發' : '協力包商')
+        : isCustomerOnly ? '業主建設開發' : '協力包商')
     );
     setNewPartnerType(
-      quickCreateDefaultType || (partnerTypeFilter === 'CUSTOMER' ? 'CUSTOMER' : 'VENDOR')
+      quickCreateDefaultType || (isCustomerOnly ? 'CUSTOMER' : 'VENDOR')
     );
     setCreateError('');
     setIsQuickCreateOpen(true);
     setIsOpen(false);
   };
 
-  // 儲存快速新增夥伴
-  const handleSaveQuickPartner = (e: React.FormEvent) => {
-    e.preventDefault();
+  // 儲存快速新增夥伴 (不使用 form submit，杜絕外層父表單誤觸發關閉)
+  const handleSaveQuickPartner = () => {
     if (!newPartnerName.trim()) {
-      setCreateError('請填寫夥伴名稱全銜');
+      setCreateError(isCustomerOnly ? '請填寫新業主或客戶全銜' : '請填寫夥伴名稱全銜');
       return;
     }
 
+    if (newTaxId.trim()) {
+      const clean = newTaxId.trim();
+      if (/^[A-Za-z]/.test(clean)) {
+        const valResult = validateTaiwanNationalId(clean);
+        if (!valResult.isValid) {
+          setCreateError(`身分證字號檢驗未通過：${valResult.message}`);
+          return;
+        }
+      } else if (clean.length === 8) {
+        const valResult = validateTaiwanTaxId(clean);
+        if (!valResult.isValid) {
+          setCreateError(`統一編號加權檢核未通過：${valResult.message}`);
+          return;
+        }
+      }
+    }
+
     try {
-      const isCust = newPartnerType === 'CUSTOMER';
-      const isVend = newPartnerType === 'VENDOR' || (isCust && newIsAlsoVendor);
+      const isCust = isCustomerOnly || newPartnerType === 'CUSTOMER';
+      const isVend = (!isCustomerOnly && newPartnerType === 'VENDOR') || (isCust && newIsAlsoVendor);
       const partnerFinalType: BusinessPartner['type'] = isCust && newIsAlsoVendor
         ? 'BOTH'
         : (isCust ? 'CUSTOMER' : 'VENDOR');
@@ -283,7 +309,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
         bpCode,
         name: newPartnerName.trim(),
         taxId: newTaxId.trim(),
-        entityType: 'CORPORATION',
+        entityType: newEntityType,
         type: partnerFinalType,
         isCustomer: isCust,
         isVendor: isVend,
@@ -293,8 +319,8 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
             : (newCategory.includes('/') ? newCategory.split('/')[0].trim() : '專業工程'))
           : undefined,
         serviceCategorySub: newCategory.trim() || (isCust ? '業主建設' : '工程協力廠商'),
-        representative: newContactPerson.trim(),
-        contactPerson: newContactPerson.trim(),
+        representative: newContactPerson.trim() || (newEntityType === 'NATURAL_PERSON' ? newPartnerName.trim() : ''),
+        contactPerson: newContactPerson.trim() || (newEntityType === 'NATURAL_PERSON' ? newPartnerName.trim() : ''),
         phone: newPhone.trim(),
         email: '',
         address: newAddress.trim(),
@@ -303,7 +329,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
         bankAccount: '',
         bankAccountName: '',
         bankFeePayer: 'COMPANY',
-        hasInvoice: true,
+        hasInvoice: newEntityType === 'CORPORATION',
         paymentTermsDays: 30,
         isHighRisk: false,
         currentScore: 90,
@@ -336,11 +362,14 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
           {allowQuickCreate && (
             <button
               type="button"
-              onClick={handleOpenQuickCreate}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleOpenQuickCreate();
+              }}
               className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 cursor-pointer"
             >
               <Plus className="w-3 h-3" />
-              <span>快速另建夥伴</span>
+              <span>{isCustomerOnly ? '另建新業主' : '快速另建夥伴'}</span>
             </button>
           )}
         </label>
@@ -358,7 +387,10 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
           disabled={disabled}
           value={searchTerm}
           placeholder={placeholder}
-          onFocus={() => setIsOpen(true)}
+          onFocus={() => {
+            refreshPartners();
+            setIsOpen(true);
+          }}
           onChange={(e) => {
             setSearchTerm(e.target.value);
             setIsOpen(true);
@@ -414,10 +446,12 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
           {/* 頂部標題與結果筆數 */}
           <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] text-slate-600 shrink-0">
             <span className="font-semibold flex items-center gap-1">
-              <Building2 className="w-3 h-3 text-indigo-600" />
-              <span>匹配夥伴清單</span>
+              <Building2 className={`w-3 h-3 ${isCustomerOnly ? 'text-emerald-600' : 'text-indigo-600'}`} />
+              <span>{isCustomerOnly ? '匹配業主清單 (合約甲方)' : '匹配夥伴清單'}</span>
             </span>
-            <span className="font-mono text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200 font-bold">
+            <span className={`font-mono text-[10px] px-1.5 py-0.2 rounded border font-bold ${
+              isCustomerOnly ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+            }`}>
               符合 {filteredPartners.length} 家
             </span>
           </div>
@@ -428,10 +462,14 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
               <div className="py-6 px-4 text-center">
                 <AlertCircle className="w-6 h-6 text-slate-300 mx-auto mb-1.5" />
                 <p className="text-xs font-medium text-slate-600">
-                  查無名稱、統編或代碼含有「{searchTerm}」之夥伴
+                  {isCustomerOnly
+                    ? `查無名稱、統編或代碼含有「${searchTerm}」之已建檔業主`
+                    : `查無名稱、統編或代碼含有「${searchTerm}」之夥伴`}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  您可以直接點擊下方按鈕，就地快速登記建立主檔！
+                  {isCustomerOnly
+                    ? '您可以直接點擊下方「另建新業主」，立即登記建立業主主檔！'
+                    : '您可以直接點擊下方按鈕，就地快速登記建立主檔！'}
                 </p>
               </div>
             ) : (
@@ -448,13 +486,15 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                     onClick={() => handleSelect(p)}
                     className={`px-3 py-2 rounded-lg cursor-pointer transition-colors group flex items-start justify-between gap-2 ${
                       isSelected
-                        ? 'bg-indigo-50/90 text-indigo-900 font-semibold'
+                        ? (isCustomerOnly ? 'bg-emerald-50 text-emerald-900 font-semibold' : 'bg-indigo-50/90 text-indigo-900 font-semibold')
                         : 'hover:bg-slate-50 text-slate-700'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+                        <span className={`text-xs font-bold text-slate-800 transition-colors ${
+                          isCustomerOnly ? 'group-hover:text-emerald-700' : 'group-hover:text-indigo-600'
+                        }`}>
                           {p.name}
                         </span>
 
@@ -482,7 +522,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                       {/* 細部資訊 (統編、代碼、聯絡人、電話) */}
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-[10px] text-slate-500 font-mono">
                         {p.taxId && (
-                          <span>統編: <strong className="text-slate-700">{p.taxId}</strong></span>
+                          <span>統編/身分證: <strong className="text-slate-700">{p.taxId}</strong></span>
                         )}
                         {p.bpCode && (
                           <span>代碼: {p.bpCode}</span>
@@ -504,9 +544,11 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
 
                     <div className="shrink-0 self-center">
                       {isSelected ? (
-                        <Check className="w-4 h-4 text-indigo-600" />
+                        <Check className={`w-4 h-4 ${isCustomerOnly ? 'text-emerald-600' : 'text-indigo-600'}`} />
                       ) : (
-                        <span className="text-[10px] text-indigo-600 opacity-0 group-hover:opacity-100 font-bold transition-opacity">
+                        <span className={`text-[10px] opacity-0 group-hover:opacity-100 font-bold transition-opacity ${
+                          isCustomerOnly ? 'text-emerald-600' : 'text-indigo-600'
+                        }`}>
                           帶入 ↵
                         </span>
                       )}
@@ -522,14 +564,25 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
             <div className="p-2 border-t border-slate-200 bg-slate-50/90 shrink-0">
               <button
                 type="button"
-                onClick={handleOpenQuickCreate}
-                className="w-full py-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenQuickCreate();
+                }}
+                className={`w-full py-1.5 px-3 rounded-lg text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-xs cursor-pointer ${
+                  isCustomerOnly
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>
                   {searchTerm.trim()
-                    ? `另建新夥伴「${searchTerm.trim()}」至商業夥伴主庫`
-                    : '快速登記建立新客戶 / 廠商資料'}
+                    ? (isCustomerOnly
+                        ? `另建新業主「${searchTerm.trim()}」至客戶主庫`
+                        : `另建新夥伴「${searchTerm.trim()}」至商業夥伴主庫`)
+                    : (isCustomerOnly
+                        ? '＋ 快速登記建立新業主資料'
+                        : '快速登記建立新客戶 / 廠商資料')}
                 </span>
               </button>
             </div>
@@ -538,21 +591,31 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
         document.body
       )}
 
-      {/* 快速新增客戶/廠商資料彈窗 (Quick Create Partner Modal) */}
-      {isQuickCreateOpen && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      {/* 快速新增客戶/廠商資料彈窗 (Quick Create Partner Modal - 獨立 Portal 絕對杜絕父層表單觸發關閉) */}
+      {isQuickCreateOpen && createPortal(
+        <div
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setIsQuickCreateOpen(false);
+          }}
+          className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+          >
             {/* Modal Header */}
-            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <div className={`w-7 h-7 rounded-lg text-white flex items-center justify-center ${
-                  partnerTypeFilter === 'CUSTOMER'
+                  isCustomerOnly
                     ? 'bg-emerald-600'
                     : partnerTypeFilter === 'SHOP_DRAWING'
                     ? 'bg-purple-600'
                     : 'bg-indigo-600'
                 }`}>
-                  {partnerTypeFilter === 'CUSTOMER' ? (
+                  {isCustomerOnly ? (
                     <Building2 className="w-4 h-4" />
                   ) : partnerTypeFilter === 'SHOP_DRAWING' ? (
                     <DraftingCompass className="w-4 h-4" />
@@ -562,15 +625,15 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-800">
-                    {partnerTypeFilter === 'CUSTOMER'
-                      ? '快速登記新業主 / 客戶（合約甲方）'
+                    {isCustomerOnly
+                      ? '快速登記新業主 / 客戶資料（合約甲方）'
                       : partnerTypeFilter === 'SHOP_DRAWING'
                       ? '快速登記新拆圖協力廠商'
                       : '快速登記新夥伴資料'}
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    {partnerTypeFilter === 'CUSTOMER'
-                      ? '確定對接為本案場業主單位，立即建立業主主檔；日後亦可指派兼具廠商身分'
+                    {isCustomerOnly
+                      ? '建立後直接作為此案場之合約甲方業主，並同步寫入客戶主庫'
                       : partnerTypeFilter === 'SHOP_DRAWING'
                       ? '專業技術顧問與施工大樣圖拆圖業務，建立後直接歸入拆圖類別'
                       : '立即寫入商業夥伴主檔資料庫，並自動帶入當前表單欄位'}
@@ -579,15 +642,18 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setIsQuickCreateOpen(false)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsQuickCreateOpen(false);
+                }}
                 className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Modal Form */}
-            <form onSubmit={handleSaveQuickPartner} className="p-5 space-y-4 text-xs">
+            {/* Modal Form - 純 <div> 容器，嚴禁使用 <form> 以杜絕觸發外層 ProjectEditorModal 的 onSubmit */}
+            <div className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
               {createError && (
                 <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
@@ -595,19 +661,53 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                 </div>
               )}
 
-              {/* 夥伴身分分類 Toggle / 專屬情境指示 */}
-              {partnerTypeFilter === 'CUSTOMER' ? (
+              {/* 業主法人類型選擇 (法人 vs 自然人地主) */}
+              {isCustomerOnly ? (
                 <div className="space-y-2">
                   <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 flex items-center justify-between text-xs text-emerald-800">
                     <div className="flex items-center gap-2">
                       <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="font-bold">對象業務型態：案場業主客戶 (CUSTOMER)</span>
+                      <span className="font-bold">對象業務型態：案場業主客戶 (合約甲方)</span>
                     </div>
                     <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-mono font-bold">合約甲方 / 發票買受人</span>
                   </div>
 
-                  {/* 業主兼具廠商勾選框 (符合使用者提問：業主是否兼廠商又是另一件事) */}
-                  <label className="flex items-start gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100/70 transition-colors">
+                  {/* 法人 vs 自然人切換 */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
+                      業主實體性質
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNewEntityType('CORPORATION')}
+                        className={`py-1.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          newEntityType === 'CORPORATION'
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <Building2 className="w-3.5 h-3.5" />
+                        <span>公司 / 法人 / 開發商</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setNewEntityType('NATURAL_PERSON')}
+                        className={`py-1.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          newEntityType === 'NATURAL_PERSON'
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-800 ring-2 ring-emerald-500/20'
+                            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <User className="w-3.5 h-3.5" />
+                        <span>個人 / 自然人地主業主</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 業主兼具廠商勾選框 */}
+                  <label className="flex items-start gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100/70 transition-colors">
                     <input
                       type="checkbox"
                       checked={newIsAlsoVendor}
@@ -617,7 +717,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                     <div>
                       <span className="font-bold text-slate-800 text-[11px]">兼具協力廠商身分（雙重身分 BOTH）</span>
                       <p className="text-[10px] text-slate-500 mt-0.5">
-                        預設純為業主。若此業主單位同時或未來亦有供料、代工或發包承包業務，勾選後日後亦可在採購發包與進貨模組中選取。
+                        若此業主單位未來亦有供料、代工或發包承包業務，勾選後日後亦可在採購發包與進貨模組中選取。
                       </p>
                     </div>
                   </label>
@@ -668,37 +768,54 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
               {/* 夥伴全銜 */}
               <div>
                 <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                  公司或單位全銜名稱 <span className="text-rose-500">*</span>
+                  {isCustomerOnly
+                    ? (newEntityType === 'NATURAL_PERSON' ? '業主姓名 / 起造人姓名' : '業主公司或單位全銜名稱')
+                    : '公司或單位全銜名稱'} <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
-                  required
                   value={newPartnerName}
                   onChange={(e) => setNewPartnerName(e.target.value)}
-                  placeholder="例如：宏聯結構工程拆圖顧問有限公司 或 B開發營造股份有限公司"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSaveQuickPartner();
+                    }
+                  }}
+                  placeholder={
+                    isCustomerOnly
+                      ? (newEntityType === 'NATURAL_PERSON' ? '例如：林建國' : '例如：宏聯資產開發股份有限公司')
+                      : '例如：宏聯結構工程拆圖顧問有限公司 或 B開發營造股份有限公司'
+                  }
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-semibold focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
 
-              {/* 統一編號 & 聯絡人 */}
+              {/* 統一編號 / 身分證字號 & 聯絡人 */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    統一編號 (8 碼)
+                    {newEntityType === 'NATURAL_PERSON' ? '身分證字號 (10 碼)' : '統一編號 (8 碼)'}
                   </label>
                   <input
                     type="text"
-                    maxLength={8}
+                    maxLength={newEntityType === 'NATURAL_PERSON' ? 10 : 8}
                     value={newTaxId}
-                    onChange={(e) => setNewTaxId(e.target.value)}
-                    placeholder="如：98765432"
+                    onChange={(e) => setNewTaxId(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSaveQuickPartner();
+                      }
+                    }}
+                    placeholder={newEntityType === 'NATURAL_PERSON' ? '如：A123456789' : '如：98765432'}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    業務窗口 / 負責人姓名
+                    {newEntityType === 'NATURAL_PERSON' ? '法定代理人 / 備用聯絡人' : '業務窗口 / 負責人姓名'}
                   </label>
                   <input
                     type="text"
@@ -720,7 +837,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                     type="text"
                     value={newPhone}
                     onChange={(e) => setNewPhone(e.target.value)}
-                    placeholder="如：02-2345-6789"
+                    placeholder="如：02-2345-6789 或 0912-345-678"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                 </div>
@@ -733,7 +850,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                     type="text"
                     value={newCategory}
                     onChange={(e) => setNewCategory(e.target.value)}
-                    placeholder="例如：拆圖廠商 / 施工大樣圖拆圖"
+                    placeholder={isCustomerOnly ? '業主建設開發' : '例如：拆圖廠商 / 施工大樣圖拆圖'}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                 </div>
@@ -742,7 +859,7 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
               {/* 通訊地址 */}
               <div>
                 <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                  營業通訊地址
+                  通訊 / 登記地址
                 </label>
                 <input
                   type="text"
@@ -752,28 +869,41 @@ export const PartnerSearchSelect: React.FC<PartnerSearchSelectProps> = ({
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
+            </div>
 
-              {/* Modal Actions */}
-              <div className="pt-2 border-t border-slate-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsQuickCreateOpen(false)}
-                  className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium text-xs transition-colors cursor-pointer"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>立即建立並帶入表單</span>
-                </button>
-              </div>
-            </form>
+            {/* Modal Actions */}
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsQuickCreateOpen(false);
+                }}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-medium text-xs transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSaveQuickPartner();
+                }}
+                className={`px-4 py-2 rounded-lg text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer ${
+                  isCustomerOnly
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>{isCustomerOnly ? '建立新業主並直接帶入' : '立即建立並帶入表單'}</span>
+              </button>
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
 };
+

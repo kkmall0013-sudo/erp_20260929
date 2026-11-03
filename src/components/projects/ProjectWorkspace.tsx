@@ -49,12 +49,13 @@ import {
   getAllInboundReceipts,
   getBuildingCategoryTree,
   getProjectBudgetPartners,
-  getProjectPartnerBillingSummary
+  getProjectPartnerBillingSummary,
+  subscribeToDatabase
 } from '../../db/sqlite';
 import { PartnerSearchSelect } from '../widgets/PartnerSearchSelect';
 import { FloatingSubcontractorSelect } from '../widgets/FloatingSubcontractorSelect';
 import { TaiwanIdTaxValidatorWidget } from '../widgets/TaiwanIdTaxValidatorWidget';
-import { validateTaiwanTaxId } from '../../utils/taiwanValidation';
+import { validateTaiwanTaxId, validateTaiwanNationalId } from '../../utils/taiwanValidation';
 import { BuildingCategoryManagerModal } from './BuildingCategoryManagerModal';
 import { ProjectVendorInboundModal } from './ProjectVendorInboundModal';
 
@@ -142,12 +143,21 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
 
   // 載入現地資料與商業夥伴
   useEffect(() => {
-    try {
-      setSites(getAllProjectSites());
-      setPartners(getAllBusinessPartners());
-    } catch (err) {
-      console.error('Failed to load project sites or partners:', err);
-    }
+    const refreshData = () => {
+      try {
+        setSites(getAllProjectSites());
+        setPartners(getAllBusinessPartners());
+      } catch (err) {
+        console.error('Failed to load project sites or partners:', err);
+      }
+    };
+    refreshData();
+    const unsubscribe = subscribeToDatabase(() => {
+      refreshData();
+    });
+    return () => {
+      unsubscribe();
+    };
   }, [projects]);
 
   // 現地工區 Mapping (projectId -> ProjectSite)
@@ -1045,9 +1055,12 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       return;
     }
     if (ownerTaxId.trim()) {
-      const taxValidation = validateTaiwanTaxId(ownerTaxId.trim());
+      const cleanTax = ownerTaxId.trim();
+      const taxValidation = /^[A-Za-z]/.test(cleanTax)
+        ? validateTaiwanNationalId(cleanTax)
+        : validateTaiwanTaxId(cleanTax);
       if (!taxValidation.isValid) {
-        setErrorMessage(`業主統一編號格式或加權校驗未通過：${taxValidation.message}，請核對或修正。`);
+        setErrorMessage(`業主統一編號 / 身分證字號格式或加權校驗未通過：${taxValidation.message}，請核對或修正。`);
         return;
       }
     }
@@ -1288,15 +1301,15 @@ const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
               <div>
                 <TaiwanIdTaxValidatorWidget
-                  label="業主統一編號 (8 碼)"
-                  type="TAX_ID"
+                  label="業主統一編號 / 身分證字號"
+                  type="AUTO"
                   value={ownerTaxId}
                   onChange={(val) => setOwnerTaxId(val)}
-                  placeholder="例如：28457226"
+                  placeholder="公司統編 8 碼 或 自然人身分證 10 碼"
                   showExplanation={true}
                 />
                 <p className="text-[10px] text-slate-400 mt-1">
-                  💡 選取上方夥伴後自動帶入，調用通用檢驗小程式即時執行財政部模數校驗
+                  💡 選取上方業主後自動帶入，調用通用檢驗小程式即時執行財政部模數校驗
                 </p>
               </div>
             </div>

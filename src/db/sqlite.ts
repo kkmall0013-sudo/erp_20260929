@@ -4071,7 +4071,27 @@ export function saveBusinessPartner(
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
   const isExisting = Boolean(partner.id && getBusinessPartnerById(partner.id));
   const targetId = partner.id || `BP-${Date.now().toString().slice(-6)}`;
-  const targetCode = partner.bpCode || (partner.isCustomer ? `CUST-${Date.now().toString().slice(-4)}` : `VEND-${Date.now().toString().slice(-4)}`);
+  let targetCode = partner.bpCode || (partner.isCustomer ? `CUST-${Date.now().toString().slice(-4)}` : `VEND-${Date.now().toString().slice(-4)}`);
+
+  // 🛡️ 唯一性防撞保障：若為新增主檔，自動檢查 bpCode 是否已被佔用，若重疊自動安全遞增
+  if (!isExisting) {
+    let codeCounter = 1;
+    let candidateCode = targetCode;
+    while (true) {
+      try {
+        const checkRes = dbInstance.exec(`SELECT id FROM business_partners WHERE bpCode = '${candidateCode.replace(/'/g, "''")}' AND id != '${targetId}';`);
+        if (checkRes.length && checkRes[0].values && checkRes[0].values.length > 0) {
+          candidateCode = `${targetCode}-${codeCounter}`;
+          codeCounter++;
+        } else {
+          break;
+        }
+      } catch (_) {
+        break;
+      }
+    }
+    targetCode = candidateCode;
+  }
 
   // 決定類型代號
   let determinedType: BusinessPartner['type'] = partner.type;
