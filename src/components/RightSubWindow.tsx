@@ -38,6 +38,7 @@ import { MiniAppsWorkspace } from './MiniAppsWorkspace';
 import { UniversalVaultWorkspace } from './attachments/UniversalVaultWorkspace';
 import { QuotationWorkspace } from './quotations/QuotationWorkspace';
 import { InboundWorkspace } from './InboundWorkspace';
+import { FinanceCashierWorkspace } from './finance/FinanceCashierWorkspace';
 import { AppSettingsWorkspace } from './AppSettingsWorkspace';
 import { BasicSettingsHubWorkspace } from './BasicSettingsHubWorkspace';
 import { SystemHubWorkspace, SystemHubTab } from './SystemHubWorkspace';
@@ -573,7 +574,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           />
         )}
 
-        {/* F. 其他核心業務模組 (PROCUREMENT, VALUATIONS, FINANCE, COMMAND_CENTER)
+        {/* F. 其他核心業務模組 (PROCUREMENT, VALUATIONS, COMMAND_CENTER)
                提供真實 SQLite 資料檢視 + 互動式【讀 / 寫 / 審 / 出】權限實測沙盒 */}
         {![
           'APP_SETTINGS',
@@ -588,7 +589,8 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           'MINI_APPS',
           'VAULT',
           'QUOTATIONS',
-          'INBOUND'
+          'INBOUND',
+          'FINANCE'
         ].includes(activeNavId) && (
           <div className="space-y-4">
             {/* 頂部權限實測控制台 */}
@@ -863,6 +865,14 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
           <InboundWorkspace
             onDataChanged={onReloadData}
             triggerToast={triggerModuleToast}
+          />
+        )}
+
+        {/* L. 財務會計與收納金流中樞 (Finance & Cashier Hub - Phase 7 & 憲法第五篇旗艦版) */}
+        {activeNavId === 'FINANCE' && (
+          <FinanceCashierWorkspace
+            onNotify={triggerModuleToast}
+            onNavigateToInbound={() => onNavigateNav('INBOUND')}
           />
         )}
       </div>

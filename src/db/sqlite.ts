@@ -55,7 +55,17 @@ import {
   BuildingCategoryItem,
   ProjectBudgetPartner,
   SubcontractorCategoryGroup,
-  SubcontractorVendorItem
+  SubcontractorVendorItem,
+  AccountsPayableReconciliation,
+  PaymentRecord,
+  PaymentLineItem,
+  PaymentMethod,
+  PaymentStatus,
+  Invoice,
+  BillingInvoiceMapping,
+  SuspenseReceipt,
+  OverpaymentPoolRecord,
+  CompanyBankAccount
 } from '../types/erp';
 
 declare global {
@@ -828,9 +838,162 @@ function initializeTables(db: Database) {
       issueDate TEXT,
       dueDate TEXT,
       bankName TEXT,
+      drawerBank TEXT,
+      paymentId TEXT,
+      expectedClearanceDate TEXT,
+      actualClearanceDate TEXT,
       status TEXT DEFAULT 'ISSUED',
       voidReason TEXT,
       notes TEXT
+    );
+
+    -- 🏛️ 會計廠商應付對帳單 (大水池核心)
+    CREATE TABLE IF NOT EXISTS ap_reconciliations (
+      id TEXT PRIMARY KEY,
+      reconciliationNumber TEXT UNIQUE NOT NULL,
+      companyId TEXT NOT NULL,
+      vendorId TEXT NOT NULL,
+      vendorName TEXT,
+      billingPeriod TEXT NOT NULL,
+      inboundTotalAmount REAL DEFAULT 0,
+      discountAmount REAL DEFAULT 0,
+      taxType TEXT DEFAULT 'TAX_EXCLUSIVE',
+      taxAmount REAL DEFAULT 0,
+      netPayableAmount REAL DEFAULT 0,
+      invoiceNumber TEXT,
+      hasInvoice INTEGER DEFAULT 1,
+      paymentDueDate TEXT NOT NULL,
+      status TEXT DEFAULT 'APPROVED',
+      reconciledBy TEXT,
+      approvedBy TEXT,
+      disbursedAt TEXT,
+      notes TEXT,
+      receiptIds TEXT,
+      isDeleted INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    -- 🏛️ 資金收支主檔 (出金付款單)
+    CREATE TABLE IF NOT EXISTS fin_payment_records (
+      id TEXT PRIMARY KEY,
+      paymentNo TEXT UNIQUE NOT NULL,
+      companyId TEXT NOT NULL,
+      currency TEXT DEFAULT 'TWD',
+      bankAccountId TEXT NOT NULL,
+      bankAccountName TEXT,
+      targetBankAccountId TEXT,
+      partnerId TEXT,
+      partnerName TEXT,
+      customVendorName TEXT,
+      paymentMethod TEXT DEFAULT 'TT',
+      isReversal INTEGER DEFAULT 0,
+      documentDate TEXT NOT NULL,
+      postingDate TEXT NOT NULL,
+      totalAmount REAL DEFAULT 0,
+      status TEXT DEFAULT 'POSTED',
+      isReconciled INTEGER DEFAULT 0,
+      reconciledAt TEXT,
+      voidReason TEXT,
+      notes TEXT,
+      isDeleted INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1,
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    -- 🏛️ 動態沖銷明細 (四柱平衡與粉紅代扣款)
+    CREATE TABLE IF NOT EXISTS fin_payment_line_items (
+      id TEXT PRIMARY KEY,
+      paymentId TEXT NOT NULL,
+      sourceType TEXT NOT NULL,
+      sourceId TEXT NOT NULL,
+      sourceNumber TEXT,
+      itemType TEXT DEFAULT 'STANDARD',
+      appliedAmount REAL DEFAULT 0,
+      feeAmount REAL DEFAULT 0,
+      isFeeAbsorbedByCompany INTEGER DEFAULT 1,
+      discountAmount REAL DEFAULT 0,
+      offsetExpenseId TEXT,
+      withholdingTaxAmt REAL DEFAULT 0,
+      nhiAmt REAL DEFAULT 0,
+      projectId TEXT,
+      notes TEXT
+    );
+
+    -- 🏛️ 共用發票主檔 (內外帳解耦)
+    CREATE TABLE IF NOT EXISTS fin_invoices (
+      id TEXT PRIMARY KEY,
+      invoiceType TEXT DEFAULT 'INPUT',
+      invoiceNumber TEXT NOT NULL,
+      invoiceDate TEXT NOT NULL,
+      taxReportingCompanyId TEXT NOT NULL,
+      issuerTaxId TEXT NOT NULL,
+      issuerName TEXT,
+      buyerTaxId TEXT NOT NULL,
+      buyerName TEXT,
+      netAmount REAL DEFAULT 0,
+      taxAmount REAL DEFAULT 0,
+      totalAmount REAL DEFAULT 0,
+      status TEXT DEFAULT 'VALID',
+      createdAt TEXT,
+      updatedAt TEXT,
+      UNIQUE(taxReportingCompanyId, issuerTaxId, invoiceNumber)
+    );
+
+    -- 🏛️ 發票與請款單多對多勾稽
+    CREATE TABLE IF NOT EXISTS fin_billing_invoice_mappings (
+      id TEXT PRIMARY KEY,
+      invoiceId TEXT NOT NULL,
+      sourceDocumentType TEXT NOT NULL,
+      sourceDocumentId TEXT NOT NULL,
+      mappedAmount REAL DEFAULT 0,
+      createdAt TEXT
+    );
+
+    -- 🏛️ 未知款項暫收池 (認領時才申報營業稅)
+    CREATE TABLE IF NOT EXISTS fin_suspense_receipts (
+      id TEXT PRIMARY KEY,
+      companyId TEXT NOT NULL,
+      bankAccountId TEXT NOT NULL,
+      bankAccountName TEXT,
+      amount REAL DEFAULT 0,
+      receivedDate TEXT NOT NULL,
+      payerInfo TEXT NOT NULL,
+      isAllocated INTEGER DEFAULT 0,
+      allocatedToArId TEXT,
+      notes TEXT,
+      createdAt TEXT
+    );
+
+    -- 🏛️ 溢付款資金池 (轉待扣抵或退款)
+    CREATE TABLE IF NOT EXISTS fin_overpayment_pools (
+      id TEXT PRIMARY KEY,
+      companyId TEXT NOT NULL,
+      partnerId TEXT NOT NULL,
+      partnerName TEXT,
+      amount REAL DEFAULT 0,
+      resolvedBy TEXT,
+      isResolved INTEGER DEFAULT 0,
+      notes TEXT,
+      createdAt TEXT
+    );
+
+    -- 🏛️ 公司銀行帳戶主檔 (含實體帳戶與老闆口袋專戶)
+    CREATE TABLE IF NOT EXISTS company_bank_accounts (
+      id TEXT PRIMARY KEY,
+      companyId TEXT NOT NULL,
+      bankCode TEXT NOT NULL,
+      bankName TEXT NOT NULL,
+      branchName TEXT,
+      accountNumber TEXT NOT NULL,
+      accountName TEXT NOT NULL,
+      isVirtualAccount INTEGER DEFAULT 0,
+      initialBalance REAL DEFAULT 0,
+      currentBalance REAL DEFAULT 0,
+      currency TEXT DEFAULT 'TWD',
+      status TEXT DEFAULT 'ACTIVE'
     );
   `);
 
@@ -5163,25 +5326,780 @@ export function getAllAccountsReceivable(): AccountReceivable[] {
   }));
 }
 
-// 讀取支票
+// 讀取支票 (含三燈號、雙日期與開票行)
 export function getAllBankChecks(): BankCheck[] {
   if (!dbInstance) return [];
-  const res = dbInstance.exec(`SELECT * FROM bank_checks ORDER BY dueDate;`);
-  if (!res.length) return [];
-  return res[0].values.map(v => ({
-    id: String(v[0]),
-    checkNumber: String(v[1]),
-    type: v[2] as BankCheck['type'],
-    companyId: String(v[3]),
-    counterpartyName: String(v[4]),
-    amount: Number(v[5] || 0),
-    issueDate: String(v[6]),
-    dueDate: String(v[7]),
-    bankName: String(v[8]),
-    status: v[9] as BankCheck['status'],
-    voidReason: v[10] ? String(v[10]) : undefined,
-    notes: v[11] ? String(v[11]) : undefined,
-  }));
+  try {
+    const res = dbInstance.exec(`SELECT id, checkNumber, type, companyId, counterpartyName, amount, issueDate, dueDate, bankName, drawerBank, paymentId, expectedClearanceDate, actualClearanceDate, status, voidReason, notes FROM bank_checks ORDER BY dueDate;`);
+    if (!res.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      checkNumber: String(v[1]),
+      type: v[2] as BankCheck['type'],
+      companyId: String(v[3]),
+      counterpartyName: String(v[4]),
+      amount: Number(v[5] || 0),
+      issueDate: String(v[6]),
+      dueDate: String(v[7]),
+      bankName: String(v[8]),
+      drawerBank: v[9] ? String(v[9]) : undefined,
+      paymentId: v[10] ? String(v[10]) : undefined,
+      expectedClearanceDate: v[11] ? String(v[11]) : String(v[7]),
+      actualClearanceDate: v[12] ? String(v[12]) : undefined,
+      status: v[13] as BankCheck['status'],
+      voidReason: v[14] ? String(v[14]) : undefined,
+      notes: v[15] ? String(v[15]) : undefined,
+    }));
+  } catch (e) {
+    const fallbackRes = dbInstance.exec(`SELECT * FROM bank_checks ORDER BY dueDate;`);
+    if (!fallbackRes.length) return [];
+    return fallbackRes[0].values.map(v => ({
+      id: String(v[0]),
+      checkNumber: String(v[1]),
+      type: v[2] as BankCheck['type'],
+      companyId: String(v[3]),
+      counterpartyName: String(v[4]),
+      amount: Number(v[5] || 0),
+      issueDate: String(v[6]),
+      dueDate: String(v[7]),
+      bankName: String(v[8]),
+      status: v[9] as BankCheck['status'],
+      voidReason: v[10] ? String(v[10]) : undefined,
+      notes: v[11] ? String(v[11]) : undefined,
+    }));
+  }
+}
+
+// -------------------------------------------------------------
+// 🏛️ 會計應付對帳大水池 (AP Reconciliation) 核心 CRUD
+// -------------------------------------------------------------
+
+export function getAllApReconciliations(): AccountsPayableReconciliation[] {
+  if (!dbInstance) return [];
+  try {
+    const res = dbInstance.exec(`SELECT * FROM ap_reconciliations WHERE isDeleted = 0 ORDER BY paymentDueDate ASC, reconciliationNumber DESC;`);
+    if (!res.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      reconciliationNumber: String(v[1]),
+      companyId: String(v[2]),
+      vendorId: String(v[3]),
+      vendorName: v[4] ? String(v[4]) : undefined,
+      billingPeriod: String(v[5]),
+      inboundTotalAmount: Number(v[6] || 0),
+      discountAmount: Number(v[7] || 0),
+      taxType: (v[8] || 'TAX_EXCLUSIVE') as AccountsPayableReconciliation['taxType'],
+      taxAmount: Number(v[9] || 0),
+      netPayableAmount: Number(v[10] || 0),
+      invoiceNumber: v[11] ? String(v[11]) : undefined,
+      hasInvoice: Boolean(v[12]),
+      paymentDueDate: String(v[13]),
+      status: (v[14] || 'APPROVED') as AccountsPayableReconciliation['status'],
+      reconciledBy: v[15] ? String(v[15]) : undefined,
+      approvedBy: v[16] ? String(v[16]) : undefined,
+      disbursedAt: v[17] ? String(v[17]) : undefined,
+      notes: v[18] ? String(v[18]) : undefined,
+      receiptIds: v[19] ? JSON.parse(String(v[19])) : [],
+      isDeleted: Boolean(v[20]),
+      version: Number(v[21] || 1),
+      createdAt: v[22] ? String(v[22]) : undefined,
+      updatedAt: v[23] ? String(v[23]) : undefined,
+    }));
+  } catch (e) {
+    console.error('getAllApReconciliations error', e);
+    return [];
+  }
+}
+
+export function createApReconciliation(
+  data: Omit<AccountsPayableReconciliation, 'id' | 'createdAt' | 'updatedAt' | 'version'> & { id?: string },
+  operatorName: string = '張會計長'
+): AccountsPayableReconciliation {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const id = data.id || `REC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const receiptIdsJson = JSON.stringify(data.receiptIds || []);
+
+  dbInstance.run(`
+    INSERT INTO ap_reconciliations (
+      id, reconciliationNumber, companyId, vendorId, vendorName, billingPeriod,
+      inboundTotalAmount, discountAmount, taxType, taxAmount, netPayableAmount,
+      invoiceNumber, hasInvoice, paymentDueDate, status, reconciledBy, approvedBy,
+      disbursedAt, notes, receiptIds, isDeleted, version, createdAt, updatedAt
+    ) VALUES (
+      '${id}', '${data.reconciliationNumber}', '${data.companyId}', '${data.vendorId}',
+      '${(data.vendorName || '').replace(/'/g, "''")}', '${data.billingPeriod}',
+      ${data.inboundTotalAmount}, ${data.discountAmount}, '${data.taxType}', ${data.taxAmount},
+      ${data.netPayableAmount}, ${data.invoiceNumber ? `'${data.invoiceNumber.replace(/'/g, "''")}'` : 'NULL'},
+      ${data.hasInvoice ? 1 : 0}, '${data.paymentDueDate}', '${data.status}',
+      '${operatorName}', ${data.status === 'APPROVED' ? `'${operatorName}'` : 'NULL'},
+      NULL, '${(data.notes || '').replace(/'/g, "''")}', '${receiptIdsJson}',
+      0, 1, '${now}', '${now}'
+    );
+  `);
+
+  // 若狀態為 APPROVED，立即將勾選之進貨單轉為 BILLED 並回填外鍵
+  if (data.status === 'APPROVED' && data.receiptIds && data.receiptIds.length > 0) {
+    const inList = data.receiptIds.map((rid: string) => `'${rid}'`).join(',');
+    dbInstance.run(`
+      UPDATE inbound_receipts
+      SET billingStatus = 'BILLED',
+          reconciliationId = '${id}',
+          reconciliationNumber = '${data.reconciliationNumber}',
+          updatedAt = '${now}'
+      WHERE id IN (${inList});
+    `);
+
+    // 同步寫入舊版 accounts_payable 兼顧向下相容
+    try {
+      dbInstance.run(`
+        INSERT OR REPLACE INTO accounts_payable (
+          id, apNumber, sourceTable, sourceId, companyId, vendorId, vendorName,
+          originalAmount, appliedAmount, remainingAmount, dueDate, invoiceNumber,
+          taxReportingCompanyId, status, createdAt
+        ) VALUES (
+          'AP-${id}', '${data.reconciliationNumber}', 'INBOUND_RECONCILIATION', '${id}',
+          '${data.companyId}', '${data.vendorId}', '${(data.vendorName || '').replace(/'/g, "''")}',
+          ${data.netPayableAmount}, 0, ${data.netPayableAmount}, '${data.paymentDueDate}',
+          ${data.invoiceNumber ? `'${data.invoiceNumber.replace(/'/g, "''")}'` : 'NULL'},
+          '${data.companyId}', 'OPEN', '${now}'
+        );
+      `);
+    } catch (_) {}
+  }
+
+  recordAuditLog(
+    operatorName,
+    '建立廠商應付對帳單',
+    '會計應付對帳大水池',
+    data.reconciliationNumber,
+    {
+      '對帳單號': data.reconciliationNumber,
+      '廠商名稱': data.vendorName || data.vendorId,
+      '期別': data.billingPeriod,
+      '進貨總額': `NT$ ${data.inboundTotalAmount.toLocaleString()}`,
+      '折讓扣除': `NT$ ${data.discountAmount.toLocaleString()}`,
+      '營業稅 (5%)': `NT$ ${data.taxAmount.toLocaleString()}`,
+      '應付淨額': `NT$ ${data.netPayableAmount.toLocaleString()}`,
+      '勾稽進貨單筆數': `${data.receiptIds?.length || 0} 筆`,
+      '預計付款日': data.paymentDueDate,
+      '發票字軌': data.invoiceNumber || (data.hasInvoice ? '待補票' : '免用統一發票')
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    ...data,
+    id,
+    createdAt: now,
+    updatedAt: now,
+    version: 1
+  };
+}
+
+export function voidApReconciliation(
+  id: string,
+  reason: string,
+  operatorName: string = '張會計長'
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  
+  const res = dbInstance.exec(`SELECT reconciliationNumber, receiptIds FROM ap_reconciliations WHERE id = '${id}';`);
+  if (!res.length || !res[0].values.length) throw new Error('找不到該應付對帳單');
+  const recNumber = String(res[0].values[0][0]);
+  const receiptIdsRaw = res[0].values[0][1];
+  let receiptIds: string[] = [];
+  try {
+    receiptIds = receiptIdsRaw ? JSON.parse(String(receiptIdsRaw)) : [];
+  } catch (_) {}
+
+  // 1. 將對帳單狀態標記為 VOIDED
+  dbInstance.run(`
+    UPDATE ap_reconciliations
+    SET status = 'VOIDED', notes = COALESCE(notes, '') || ' [作廢原因: ${reason.replace(/'/g, "''")}]', updatedAt = '${now}'
+    WHERE id = '${id}';
+  `);
+
+  // 2. 🛡️ 逆向釋放回進貨大水池：將原勾選的進貨單打回 PENDING_BILLING，清除 reconciliationId
+  dbInstance.run(`
+    UPDATE inbound_receipts
+    SET billingStatus = 'PENDING_BILLING',
+        reconciliationId = NULL,
+        reconciliationNumber = NULL,
+        updatedAt = '${now}'
+    WHERE reconciliationId = '${id}';
+  `);
+
+  // 3. 同步作廢相容 AP 表
+  try {
+    dbInstance.run(`UPDATE accounts_payable SET status = 'VOIDED' WHERE sourceId = '${id}';`);
+  } catch (_) {}
+
+  recordAuditLog(
+    operatorName,
+    '作廢應付對帳單 (水池回滾釋放)',
+    '會計應付對帳大水池',
+    recNumber,
+    {
+      '對帳單號': recNumber,
+      '作廢原因': reason,
+      '受回滾進貨單筆數': `${receiptIds.length} 筆已重返待對帳水池`
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// -------------------------------------------------------------
+// 🏛️ 出納放款與收納 (Treasury & Payments) 核心 CRUD
+// -------------------------------------------------------------
+
+export function getAllPaymentRecords(): PaymentRecord[] {
+  if (!dbInstance) return [];
+  try {
+    const res = dbInstance.exec(`SELECT * FROM fin_payment_records WHERE isDeleted = 0 ORDER BY postingDate DESC, paymentNo DESC;`);
+    if (!res.length) return [];
+    return res[0].values.map(v => {
+      const pId = String(v[0]);
+      // 載入明細
+      const itemsRes = dbInstance?.exec(`SELECT * FROM fin_payment_line_items WHERE paymentId = '${pId}';`);
+      const lineItems: PaymentLineItem[] = (itemsRes && itemsRes.length && itemsRes[0].values)
+        ? itemsRes[0].values.map(iv => ({
+            id: String(iv[0]),
+            paymentId: String(iv[1]),
+            sourceType: iv[2] as PaymentLineItem['sourceType'],
+            sourceId: String(iv[3]),
+            sourceNumber: iv[4] ? String(iv[4]) : undefined,
+            itemType: (iv[5] || 'STANDARD') as PaymentLineItem['itemType'],
+            appliedAmount: Number(iv[6] || 0),
+            feeAmount: Number(iv[7] || 0),
+            isFeeAbsorbedByCompany: Boolean(iv[8]),
+            discountAmount: Number(iv[9] || 0),
+            offsetExpenseId: iv[10] ? String(iv[10]) : undefined,
+            withholdingTaxAmt: Number(iv[11] || 0),
+            nhiAmt: Number(iv[12] || 0),
+            projectId: iv[13] ? String(iv[13]) : undefined,
+            notes: iv[14] ? String(iv[14]) : undefined,
+          }))
+        : [];
+
+      return {
+        id: pId,
+        paymentNo: String(v[1]),
+        companyId: String(v[2]),
+        currency: String(v[3] || 'TWD'),
+        bankAccountId: String(v[4]),
+        bankAccountName: v[5] ? String(v[5]) : undefined,
+        targetBankAccountId: v[6] ? String(v[6]) : undefined,
+        partnerId: v[7] ? String(v[7]) : undefined,
+        partnerName: v[8] ? String(v[8]) : undefined,
+        customVendorName: v[9] ? String(v[9]) : undefined,
+        paymentMethod: (v[10] || 'TT') as PaymentMethod,
+        isReversal: Boolean(v[11]),
+        documentDate: String(v[12]),
+        postingDate: String(v[13]),
+        totalAmount: Number(v[14] || 0),
+        status: (v[15] || 'POSTED') as PaymentStatus,
+        isReconciled: Boolean(v[16]),
+        reconciledAt: v[17] ? String(v[17]) : undefined,
+        voidReason: v[18] ? String(v[18]) : undefined,
+        notes: v[19] ? String(v[19]) : undefined,
+        isDeleted: Boolean(v[20]),
+        version: Number(v[21] || 1),
+        createdAt: v[22] ? String(v[22]) : undefined,
+        updatedAt: v[23] ? String(v[23]) : undefined,
+        lineItems,
+      };
+    });
+  } catch (e) {
+    console.error('getAllPaymentRecords error', e);
+    return [];
+  }
+}
+
+export function createPaymentRecord(
+  data: Omit<PaymentRecord, 'id' | 'createdAt' | 'updatedAt' | 'version'> & {
+    id?: string;
+    checkNumber?: string;
+    checkDueDate?: string;
+    drawerBank?: string;
+  },
+  operatorName: string = '李出納專員'
+): PaymentRecord {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const id = data.id || `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  dbInstance.run(`
+    INSERT INTO fin_payment_records (
+      id, paymentNo, companyId, currency, bankAccountId, bankAccountName,
+      targetBankAccountId, partnerId, partnerName, customVendorName, paymentMethod,
+      isReversal, documentDate, postingDate, totalAmount, status, isReconciled,
+      reconciledAt, voidReason, notes, isDeleted, version, createdAt, updatedAt
+    ) VALUES (
+      '${id}', '${data.paymentNo}', '${data.companyId}', '${data.currency || 'TWD'}',
+      '${data.bankAccountId}', '${(data.bankAccountName || '').replace(/'/g, "''")}',
+      ${data.targetBankAccountId ? `'${data.targetBankAccountId}'` : 'NULL'},
+      ${data.partnerId ? `'${data.partnerId}'` : 'NULL'},
+      '${(data.partnerName || '').replace(/'/g, "''")}',
+      ${data.customVendorName ? `'${data.customVendorName.replace(/'/g, "''")}'` : 'NULL'},
+      '${data.paymentMethod}', ${data.isReversal ? 1 : 0}, '${data.documentDate}',
+      '${data.postingDate}', ${data.totalAmount}, '${data.status}', 0, NULL,
+      NULL, '${(data.notes || '').replace(/'/g, "''")}', 0, 1, '${now}', '${now}'
+    );
+  `);
+
+  // 寫入明細
+  if (data.lineItems && data.lineItems.length > 0) {
+    for (const item of data.lineItems) {
+      const itemId = item.id || `PLI-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      dbInstance.run(`
+        INSERT INTO fin_payment_line_items (
+          id, paymentId, sourceType, sourceId, sourceNumber, itemType,
+          appliedAmount, feeAmount, isFeeAbsorbedByCompany, discountAmount,
+          offsetExpenseId, withholdingTaxAmt, nhiAmt, projectId, notes
+        ) VALUES (
+          '${itemId}', '${id}', '${item.sourceType}', '${item.sourceId}',
+          '${(item.sourceNumber || '').replace(/'/g, "''")}', '${item.itemType || 'STANDARD'}',
+          ${item.appliedAmount}, ${item.feeAmount || 0}, ${item.isFeeAbsorbedByCompany ? 1 : 0},
+          ${item.discountAmount || 0}, ${item.offsetExpenseId ? `'${item.offsetExpenseId}'` : 'NULL'},
+          ${item.withholdingTaxAmt || 0}, ${item.nhiAmt || 0},
+          ${item.projectId ? `'${item.projectId}'` : 'NULL'},
+          '${(item.notes || '').replace(/'/g, "''")}'
+        );
+      `);
+
+      // 若沖抵來源為 AP 對帳單，更新對帳單為 PAID
+      if (item.sourceType === 'AP' && data.status === 'POSTED') {
+        dbInstance.run(`
+          UPDATE ap_reconciliations
+          SET status = 'PAID', disbursedAt = '${data.postingDate}', updatedAt = '${now}'
+          WHERE id = '${item.sourceId}';
+        `);
+        try {
+          dbInstance.run(`
+            UPDATE accounts_payable
+            SET status = 'PAID', remainingAmount = 0, appliedAmount = originalAmount
+            WHERE sourceId = '${item.sourceId}';
+          `);
+        } catch (_) {}
+      }
+    }
+  }
+
+  // 若支付方式為支票，自動在 bank_checks 產生黃燈支票 (ISSUED，不扣實體存款)
+  if (data.paymentMethod === 'CHECK' && data.checkNumber) {
+    const chkId = `CHK-P-${Date.now()}`;
+    const chkDueDate = data.checkDueDate || data.postingDate;
+    dbInstance.run(`
+      INSERT OR REPLACE INTO bank_checks (
+        id, checkNumber, type, companyId, counterpartyName, amount,
+        issueDate, dueDate, bankName, drawerBank, paymentId,
+        expectedClearanceDate, actualClearanceDate, status, voidReason, notes
+      ) VALUES (
+        '${chkId}', '${data.checkNumber.replace(/'/g, "''")}', 'PAYABLE', '${data.companyId}',
+        '${(data.partnerName || data.customVendorName || '廠商').replace(/'/g, "''")}',
+        ${data.totalAmount}, '${data.documentDate}', '${chkDueDate}',
+        '${(data.bankAccountName || '公司帳戶').replace(/'/g, "''")}',
+        '${(data.drawerBank || data.bankAccountName || '公司帳戶').replace(/'/g, "''")}',
+        '${id}', '${chkDueDate}', NULL, 'ISSUED', NULL, '付款單自動關聯期票 (黃燈未兌現)'
+      );
+    `);
+
+    if (data.bankAccountId) {
+      dbInstance.run(`
+        UPDATE company_bank_accounts
+        SET nextCheckNumber = COALESCE(nextCheckNumber, 1000) + 1
+        WHERE id = '${data.bankAccountId}';
+      `);
+    }
+  } else if ((data.paymentMethod === 'TT' || data.paymentMethod === 'CASH') && data.status === 'POSTED') {
+    // 電匯或現金放款：直接從指定帳戶扣除真實餘額
+    dbInstance.run(`
+      UPDATE company_bank_accounts
+      SET currentBalance = currentBalance - ${data.totalAmount}
+      WHERE id = '${data.bankAccountId}';
+    `);
+  }
+
+  recordAuditLog(
+    operatorName,
+    '開立出納付款單',
+    '出納放款與收納工作台',
+    data.paymentNo,
+    {
+      '付款單號': data.paymentNo,
+      '受款對象': data.partnerName || data.customVendorName,
+      '出款帳戶': data.bankAccountName,
+      '支付方式': data.paymentMethod === 'CHECK' ? `期票支票 [${data.checkNumber}]` : data.paymentMethod,
+      '實付總額': `NT$ ${data.totalAmount.toLocaleString()}`,
+      '入帳日期': data.postingDate
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return {
+    ...data,
+    id,
+    createdAt: now,
+    updatedAt: now,
+    version: 1
+  };
+}
+
+// -------------------------------------------------------------
+// 🏛️ 支票三燈號生命週期流轉 (Check Lifecycle: ISSUED -> CLEARED / BOUNCED / VOIDED)
+// -------------------------------------------------------------
+
+export function updateBankCheckStatus(
+  checkId: string,
+  newStatus: BankCheck['status'],
+  actualClearanceDate?: string,
+  voidReason?: string,
+  operatorName: string = '李出納專員'
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+
+  const res = dbInstance.exec(`SELECT checkNumber, amount, companyId, bankName, paymentId, status, type FROM bank_checks WHERE id = '${checkId}';`);
+  if (!res.length || !res[0].values.length) throw new Error('找不到該支票');
+  const row = res[0].values[0];
+  const checkNumber = String(row[0]);
+  const amount = Number(row[1] || 0);
+  const companyId = String(row[2]);
+  const bankName = String(row[3]);
+  const paymentId = row[4] ? String(row[4]) : null;
+  const oldStatus = String(row[5]);
+  const checkType = String(row[6]);
+
+  const actualDateVal = actualClearanceDate ? `'${actualClearanceDate}'` : 'NULL';
+  const reasonVal = voidReason ? `'${voidReason.replace(/'/g, "''")}'` : 'NULL';
+
+  dbInstance.run(`
+    UPDATE bank_checks
+    SET status = '${newStatus}',
+        actualClearanceDate = ${actualDateVal},
+        voidReason = ${reasonVal}
+    WHERE id = '${checkId}';
+  `);
+
+  // 🟢 綠燈：存摺兌現扣款
+  if (newStatus === 'CLEARED' && oldStatus !== 'CLEARED') {
+    if (checkType === 'PAYABLE') {
+      // 應付支票兌現：正式扣減公司存款
+      dbInstance.run(`
+        UPDATE company_bank_accounts
+        SET currentBalance = currentBalance - ${amount}
+        WHERE companyId = '${companyId}' AND (bankName LIKE '%${bankName.slice(0, 4)}%' OR id = 'BANK-01');
+      `);
+    } else if (checkType === 'RECEIVABLE') {
+      // 應收支票兌現：增加公司存款
+      dbInstance.run(`
+        UPDATE company_bank_accounts
+        SET currentBalance = currentBalance + ${amount}
+        WHERE companyId = '${companyId}' AND (bankName LIKE '%${bankName.slice(0, 4)}%' OR id = 'BANK-01');
+      `);
+    }
+  }
+
+  // 🔴 退票或作廢：🛡️ 觸發 AP 復活機制 (Reverse Rollback)
+  if ((newStatus === 'BOUNCED' || newStatus === 'VOIDED') && paymentId) {
+    // 找出所屬付款單之來源請款單，打回 APPROVED/OPEN 狀態
+    const pliRes = dbInstance.exec(`SELECT sourceId, sourceType FROM fin_payment_line_items WHERE paymentId = '${paymentId}';`);
+    if (pliRes.length && pliRes[0].values.length) {
+      for (const pli of pliRes[0].values) {
+        const sId = String(pli[0]);
+        const sType = String(pli[1]);
+        if (sType === 'AP') {
+          dbInstance.run(`UPDATE ap_reconciliations SET status = 'APPROVED', disbursedAt = NULL WHERE id = '${sId}';`);
+          try { dbInstance.run(`UPDATE accounts_payable SET status = 'OPEN', remainingAmount = originalAmount WHERE sourceId = '${sId}';`); } catch (_) {}
+        }
+      }
+    }
+
+    // 將該付款單標記為 VOIDED
+    dbInstance.run(`
+      UPDATE fin_payment_records
+      SET status = 'VOIDED', voidReason = '支票【${checkNumber}】已標記為${newStatus === 'BOUNCED' ? '退票' : '作廢'}，已自動執行 AP 復活防線！'
+      WHERE id = '${paymentId}';
+    `);
+  }
+
+  recordAuditLog(
+    operatorName,
+    `支票狀態變更為 [${newStatus}]`,
+    '票據管理與資金雷達',
+    checkNumber,
+    {
+      '支票號碼': checkNumber,
+      '原狀態': oldStatus,
+      '新狀態': newStatus,
+      '票面金額': `NT$ ${amount.toLocaleString()}`,
+      '實際兌現日': actualClearanceDate || '未填',
+      '作廢/退票原因': voidReason || '無'
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// -------------------------------------------------------------
+// 🏛️ 發票主檔 (Invoices) 與多對多勾稽
+// -------------------------------------------------------------
+
+export function getAllInvoices(): Invoice[] {
+  if (!dbInstance) return [];
+  try {
+    const res = dbInstance.exec(`SELECT * FROM fin_invoices ORDER BY invoiceDate DESC;`);
+    if (!res.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      invoiceType: (v[1] || 'INPUT') as Invoice['invoiceType'],
+      invoiceNumber: String(v[2]),
+      invoiceDate: String(v[3]),
+      taxReportingCompanyId: String(v[4]),
+      issuerTaxId: String(v[5]),
+      issuerName: v[6] ? String(v[6]) : undefined,
+      buyerTaxId: String(v[7]),
+      buyerName: v[8] ? String(v[8]) : undefined,
+      netAmount: Number(v[9] || 0),
+      taxAmount: Number(v[10] || 0),
+      totalAmount: Number(v[11] || 0),
+      status: (v[12] || 'VALID') as Invoice['status'],
+      createdAt: v[13] ? String(v[13]) : undefined,
+      updatedAt: v[14] ? String(v[14]) : undefined,
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+export function createInvoice(
+  inv: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'> & { id?: string },
+  operatorName: string = '張會計長'
+): Invoice {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+  const id = inv.id || `INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  dbInstance.run(`
+    INSERT INTO fin_invoices (
+      id, invoiceType, invoiceNumber, invoiceDate, taxReportingCompanyId,
+      issuerTaxId, issuerName, buyerTaxId, buyerName, netAmount, taxAmount,
+      totalAmount, status, createdAt, updatedAt
+    ) VALUES (
+      '${id}', '${inv.invoiceType}', '${inv.invoiceNumber.replace(/'/g, "''")}',
+      '${inv.invoiceDate}', '${inv.taxReportingCompanyId}', '${inv.issuerTaxId}',
+      '${(inv.issuerName || '').replace(/'/g, "''")}', '${inv.buyerTaxId}',
+      '${(inv.buyerName || '').replace(/'/g, "''")}', ${inv.netAmount}, ${inv.taxAmount},
+      ${inv.totalAmount}, '${inv.status || 'VALID'}', '${now}', '${now}'
+    )
+    ON CONFLICT(taxReportingCompanyId, issuerTaxId, invoiceNumber) DO UPDATE SET
+      netAmount = excluded.netAmount,
+      taxAmount = excluded.taxAmount,
+      totalAmount = excluded.totalAmount,
+      updatedAt = '${now}';
+  `);
+
+  recordAuditLog(
+    operatorName,
+    '登記統一發票',
+    '發票管理主檔',
+    inv.invoiceNumber,
+    {
+      '發票號碼': inv.invoiceNumber,
+      '發票方向': inv.invoiceType === 'INPUT' ? '進項發票' : '銷項發票',
+      '開立方': inv.issuerName || inv.issuerTaxId,
+      '買受方': inv.buyerName || inv.buyerTaxId,
+      '含稅總額': `NT$ ${inv.totalAmount.toLocaleString()}`
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+
+  return { ...inv, id, createdAt: now, updatedAt: now };
+}
+
+// -------------------------------------------------------------
+// 🏛️ 未知款項暫收池 (Suspense Receipts)
+// -------------------------------------------------------------
+
+export function getAllSuspenseReceipts(): SuspenseReceipt[] {
+  if (!dbInstance) return [];
+  try {
+    const res = dbInstance.exec(`SELECT * FROM fin_suspense_receipts ORDER BY receivedDate DESC;`);
+    if (!res.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      companyId: String(v[1]),
+      bankAccountId: String(v[2]),
+      bankAccountName: v[3] ? String(v[3]) : undefined,
+      amount: Number(v[4] || 0),
+      receivedDate: String(v[5]),
+      payerInfo: String(v[6]),
+      isAllocated: Boolean(v[7]),
+      allocatedToArId: v[8] ? String(v[8]) : undefined,
+      notes: v[9] ? String(v[9]) : undefined,
+      createdAt: v[10] ? String(v[10]) : undefined,
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+export function allocateSuspenseReceipt(
+  suspenseId: string,
+  targetArId: string,
+  operatorName: string = '張會計長'
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const now = new Date().toISOString();
+
+  dbInstance.run(`
+    UPDATE fin_suspense_receipts
+    SET isAllocated = 1, allocatedToArId = '${targetArId}', notes = COALESCE(notes, '') || ' [已於 ${now.slice(0, 10)} 認領轉拋 AR]'
+    WHERE id = '${suspenseId}';
+  `);
+
+  // 更新 AR 為已收
+  try {
+    dbInstance.run(`
+      UPDATE accounts_receivable
+      SET status = 'COLLECTED', appliedAmount = amount, remainingAmount = 0
+      WHERE id = '${targetArId}';
+    `);
+  } catch (_) {}
+
+  recordAuditLog(
+    operatorName,
+    '暫收款認領轉拋 (觸發發票申報)',
+    '未知款項暫收池',
+    suspenseId,
+    {
+      '暫收紀錄 ID': suspenseId,
+      '沖銷應收帳款': targetArId,
+      '認領狀態': '已認領轉拋 (營業稅進入申報階段)'
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+}
+
+// -------------------------------------------------------------
+// 🏛️ 公司銀行帳戶主檔 (Company Bank Accounts)
+// -------------------------------------------------------------
+
+export function getAllCompanyBankAccounts(): CompanyBankAccount[] {
+  if (!dbInstance) return [];
+
+  // 確保欄位存在
+  try { dbInstance.run(`ALTER TABLE company_bank_accounts ADD COLUMN checkPrefix TEXT DEFAULT 'CQ';`); } catch (_) {}
+  try { dbInstance.run(`ALTER TABLE company_bank_accounts ADD COLUMN nextCheckNumber INTEGER DEFAULT 1001;`); } catch (_) {}
+  try { dbInstance.run(`ALTER TABLE company_bank_accounts ADD COLUMN checkDigits INTEGER DEFAULT 6;`); } catch (_) {}
+
+  // 若資料庫內無銀行帳戶，自動預先植入各大公司往來帳戶與專屬支票簿初始編號
+  try {
+    const countCheck = dbInstance.exec(`SELECT count(*) FROM company_bank_accounts;`);
+    if (!countCheck.length || Number(countCheck[0].values[0][0]) === 0) {
+      dbInstance.run(`
+        INSERT INTO company_bank_accounts (id, companyId, bankCode, bankName, branchName, accountNumber, accountName, isVirtualAccount, initialBalance, currentBalance, currency, status, checkPrefix, nextCheckNumber, checkDigits)
+        VALUES
+          ('BANK-01', 'COMP-01', '004', '臺灣銀行', '營業部 (大巨營造甲存支票戶)', '004001998822', '台灣大巨營造工程股份有限公司', 0, 25000000, 24500000, 'TWD', 'ACTIVE', 'TW', 1001, 6),
+          ('BANK-02', 'COMP-01', '822', '中國信託商業銀行', '松高分行 (大巨營運專戶)', '822002334455', '台灣大巨營造工程股份有限公司', 0, 18000000, 17800000, 'TWD', 'ACTIVE', 'CT', 2001, 6),
+          ('BANK-03', 'COMP-02', '808', '玉山商業銀行', '復興分行 (宏達機電甲存專戶)', '808003445566', '宏達機電工程股份有限公司', 0, 8500000, 8500000, 'TWD', 'ACTIVE', 'ES', 3001, 6),
+          ('BANK-BOSS', 'BOSS-01', 'VIRT', '老闆口袋專戶', '林董私人代墊專戶', 'BOSS-POCKET-01', '林大巨 董事長私帳', 1, 5000000, 5000000, 'TWD', 'ACTIVE', 'BS', 9001, 6);
+      `);
+    }
+  } catch (_) {}
+
+  try {
+    const res = dbInstance.exec(`SELECT id, companyId, bankCode, bankName, branchName, accountNumber, accountName, isVirtualAccount, initialBalance, currentBalance, currency, status, checkPrefix, nextCheckNumber, checkDigits FROM company_bank_accounts ORDER BY isVirtualAccount ASC, bankName ASC;`);
+    if (!res.length) return [];
+    return res[0].values.map(v => ({
+      id: String(v[0]),
+      companyId: String(v[1]),
+      bankCode: String(v[2]),
+      bankName: String(v[3]),
+      branchName: v[4] ? String(v[4]) : undefined,
+      accountNumber: String(v[5]),
+      accountName: String(v[6]),
+      isVirtualAccount: Boolean(v[7]),
+      initialBalance: Number(v[8] || 0),
+      currentBalance: Number(v[9] || 0),
+      currency: String(v[10] || 'TWD'),
+      status: (v[11] || 'ACTIVE') as CompanyBankAccount['status'],
+      checkPrefix: v[12] ? String(v[12]) : 'CQ',
+      nextCheckNumber: v[13] ? Number(v[13]) : 1001,
+      checkDigits: v[14] ? Number(v[14]) : 6,
+    }));
+  } catch (e) {
+    try {
+      const res2 = dbInstance.exec(`SELECT * FROM company_bank_accounts ORDER BY isVirtualAccount ASC, bankName ASC;`);
+      if (!res2.length) return [];
+      return res2[0].values.map(v => ({
+        id: String(v[0]),
+        companyId: String(v[1]),
+        bankCode: String(v[2]),
+        bankName: String(v[3]),
+        branchName: v[4] ? String(v[4]) : undefined,
+        accountNumber: String(v[5]),
+        accountName: String(v[6]),
+        isVirtualAccount: Boolean(v[7]),
+        initialBalance: Number(v[8] || 0),
+        currentBalance: Number(v[9] || 0),
+        currency: String(v[10] || 'TWD'),
+        status: (v[11] || 'ACTIVE') as CompanyBankAccount['status'],
+        checkPrefix: 'CQ',
+        nextCheckNumber: 1001,
+        checkDigits: 6,
+      }));
+    } catch (_) {
+      return [];
+    }
+  }
+}
+
+// 更新銀行帳戶支票簿字軌與起始連續編號
+export function updateBankAccountCheckSequence(
+  id: string,
+  checkPrefix: string,
+  nextCheckNumber: number,
+  checkDigits: number = 6,
+  operatorName: string = '系統管理員'
+): void {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  dbInstance.run(`
+    UPDATE company_bank_accounts
+    SET checkPrefix = '${checkPrefix.replace(/'/g, "''")}',
+        nextCheckNumber = ${nextCheckNumber},
+        checkDigits = ${checkDigits}
+    WHERE id = '${id}';
+  `);
+
+  recordAuditLog(
+    operatorName,
+    '設定銀行帳戶支票簿起始號碼',
+    '銀行帳戶支票簿管理',
+    id,
+    {
+      '帳戶ID': id,
+      '支票字軌': checkPrefix,
+      '下一張連續票號': nextCheckNumber,
+      '票號位數': checkDigits
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
 }
 
 // 讀取全域參數
@@ -7066,6 +7984,197 @@ export function ensureDatabaseIntegrity(db: Database) {
         ('LOG-07', '一般同仁', '張會計長', '單據過帳', '估驗計價單', '連續壁工程第一期估驗單', '{"單據狀態":"已送審"}', '{"單據狀態":"已過帳"}', '公司內網', '2026-03-31 14:40:00'),
         ('LOG-08', '最高管理者', '黃副總經理', '修改資料', '同仁帳號', '陳資訊主任', '{"帳號管理專人特許":"關閉"}', '{"帳號管理專人特許":"開啟"}', '公司內網', '2026-03-31 15:10:00');
     `);
+  } catch (e) {}
+
+  // 🏛️ 確保財務會計與收納核心資料表存在
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS ap_reconciliations (
+        id TEXT PRIMARY KEY,
+        reconciliationNumber TEXT UNIQUE NOT NULL,
+        companyId TEXT NOT NULL,
+        vendorId TEXT NOT NULL,
+        vendorName TEXT,
+        billingPeriod TEXT NOT NULL,
+        inboundTotalAmount REAL DEFAULT 0,
+        discountAmount REAL DEFAULT 0,
+        taxType TEXT DEFAULT 'TAX_EXCLUSIVE',
+        taxAmount REAL DEFAULT 0,
+        netPayableAmount REAL DEFAULT 0,
+        invoiceNumber TEXT,
+        hasInvoice INTEGER DEFAULT 1,
+        paymentDueDate TEXT NOT NULL,
+        status TEXT DEFAULT 'APPROVED',
+        reconciledBy TEXT,
+        approvedBy TEXT,
+        disbursedAt TEXT,
+        notes TEXT,
+        receiptIds TEXT,
+        isDeleted INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        createdAt TEXT,
+        updatedAt TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS fin_payment_records (
+        id TEXT PRIMARY KEY,
+        paymentNo TEXT UNIQUE NOT NULL,
+        companyId TEXT NOT NULL,
+        currency TEXT DEFAULT 'TWD',
+        bankAccountId TEXT NOT NULL,
+        bankAccountName TEXT,
+        targetBankAccountId TEXT,
+        partnerId TEXT,
+        partnerName TEXT,
+        customVendorName TEXT,
+        paymentMethod TEXT DEFAULT 'TT',
+        isReversal INTEGER DEFAULT 0,
+        documentDate TEXT NOT NULL,
+        postingDate TEXT NOT NULL,
+        totalAmount REAL DEFAULT 0,
+        status TEXT DEFAULT 'POSTED',
+        isReconciled INTEGER DEFAULT 0,
+        reconciledAt TEXT,
+        voidReason TEXT,
+        notes TEXT,
+        isDeleted INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        createdAt TEXT,
+        updatedAt TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS fin_payment_line_items (
+        id TEXT PRIMARY KEY,
+        paymentId TEXT NOT NULL,
+        sourceType TEXT NOT NULL,
+        sourceId TEXT NOT NULL,
+        sourceNumber TEXT,
+        itemType TEXT DEFAULT 'STANDARD',
+        appliedAmount REAL DEFAULT 0,
+        feeAmount REAL DEFAULT 0,
+        isFeeAbsorbedByCompany INTEGER DEFAULT 1,
+        discountAmount REAL DEFAULT 0,
+        offsetExpenseId TEXT,
+        withholdingTaxAmt REAL DEFAULT 0,
+        nhiAmt REAL DEFAULT 0,
+        projectId TEXT,
+        notes TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS fin_invoices (
+        id TEXT PRIMARY KEY,
+        invoiceType TEXT DEFAULT 'INPUT',
+        invoiceNumber TEXT NOT NULL,
+        invoiceDate TEXT NOT NULL,
+        taxReportingCompanyId TEXT NOT NULL,
+        issuerTaxId TEXT NOT NULL,
+        issuerName TEXT,
+        buyerTaxId TEXT NOT NULL,
+        buyerName TEXT,
+        netAmount REAL DEFAULT 0,
+        taxAmount REAL DEFAULT 0,
+        totalAmount REAL DEFAULT 0,
+        status TEXT DEFAULT 'VALID',
+        createdAt TEXT,
+        updatedAt TEXT,
+        UNIQUE(taxReportingCompanyId, issuerTaxId, invoiceNumber)
+      );
+
+      CREATE TABLE IF NOT EXISTS fin_billing_invoice_mappings (
+        id TEXT PRIMARY KEY,
+        invoiceId TEXT NOT NULL,
+        sourceDocumentType TEXT NOT NULL,
+        sourceDocumentId TEXT NOT NULL,
+        mappedAmount REAL DEFAULT 0,
+        createdAt TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS fin_suspense_receipts (
+        id TEXT PRIMARY KEY,
+        companyId TEXT NOT NULL,
+        bankAccountId TEXT NOT NULL,
+        bankAccountName TEXT,
+        amount REAL DEFAULT 0,
+        receivedDate TEXT NOT NULL,
+        payerInfo TEXT NOT NULL,
+        isAllocated INTEGER DEFAULT 0,
+        allocatedToArId TEXT,
+        notes TEXT,
+        createdAt TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS fin_overpayment_pools (
+        id TEXT PRIMARY KEY,
+        companyId TEXT NOT NULL,
+        partnerId TEXT NOT NULL,
+        partnerName TEXT,
+        amount REAL DEFAULT 0,
+        resolvedBy TEXT,
+        isResolved INTEGER DEFAULT 0,
+        notes TEXT,
+        createdAt TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS company_bank_accounts (
+        id TEXT PRIMARY KEY,
+        companyId TEXT NOT NULL,
+        bankCode TEXT NOT NULL,
+        bankName TEXT NOT NULL,
+        branchName TEXT,
+        accountNumber TEXT NOT NULL,
+        accountName TEXT NOT NULL,
+        isVirtualAccount INTEGER DEFAULT 0,
+        initialBalance REAL DEFAULT 0,
+        currentBalance REAL DEFAULT 0,
+        currency TEXT DEFAULT 'TWD',
+        status TEXT DEFAULT 'ACTIVE'
+      );
+    `);
+  } catch (e) {}
+
+  // 補齊 bank_checks 欄位
+  try { db.run(`ALTER TABLE bank_checks ADD COLUMN drawerBank TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE bank_checks ADD COLUMN paymentId TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE bank_checks ADD COLUMN expectedClearanceDate TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE bank_checks ADD COLUMN actualClearanceDate TEXT;`); } catch (e) {}
+
+  // 補齊 company_bank_accounts 種子資料
+  try {
+    const bCount = db.exec(`SELECT count(*) FROM company_bank_accounts;`);
+    if (!bCount.length || Number(bCount[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO company_bank_accounts (id, companyId, bankCode, bankName, branchName, accountNumber, accountName, isVirtualAccount, initialBalance, currentBalance, currency, status)
+        VALUES
+          ('BANK-01', 'COMP-01', '822', '中國信託商業銀行', '松高分行 (營運主要出納戶)', '123456789012', '台灣大巨營造工程股份有限公司', 0, 38500000, 38500000, 'TWD', 'ACTIVE'),
+          ('BANK-02', 'COMP-01', '004', '台灣銀行', '群賢分行 (公共工程押標專戶)', '004987654321', '台灣大巨營造工程股份有限公司', 0, 22000000, 22000000, 'TWD', 'ACTIVE'),
+          ('BANK-03', 'COMP-01', '999', '林董私人代墊專戶', '虛擬帳戶 (老闆口袋)', 'BOSS-POCKET-01', '林大巨 創辦人', 1, 500000, 500000, 'TWD', 'ACTIVE');
+      `);
+    }
+  } catch (e) {}
+
+  // 補齊 fin_invoices 種子發票
+  try {
+    const invCount = db.exec(`SELECT count(*) FROM fin_invoices;`);
+    if (!invCount.length || Number(invCount[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO fin_invoices (id, invoiceType, invoiceNumber, invoiceDate, taxReportingCompanyId, issuerTaxId, issuerName, buyerTaxId, buyerName, netAmount, taxAmount, totalAmount, status, createdAt, updatedAt)
+        VALUES
+          ('INV-01', 'INPUT', 'TC-88992211', '2026-03-12', 'COMP-01', '03754904', '台灣水泥股份有限公司', '88991234', '台灣大巨營造工程股份有限公司', 288000, 14400, 302400, 'VALID', '2026-03-12', '2026-03-12'),
+          ('INV-02', 'INPUT', 'CSC-86512390', '2026-03-22', 'COMP-01', '86512390', '中鋼結構工程股份有限公司', '88991234', '台灣大巨營造工程股份有限公司', 1200000, 60000, 1260000, 'VALID', '2026-03-22', '2026-03-22');
+      `);
+    }
+  } catch (e) {}
+
+  // 補齊 fin_suspense_receipts 種子未明暫收款
+  try {
+    const suspCount = db.exec(`SELECT count(*) FROM fin_suspense_receipts;`);
+    if (!suspCount.length || Number(suspCount[0].values[0][0]) === 0) {
+      db.run(`
+        INSERT INTO fin_suspense_receipts (id, companyId, bankAccountId, bankAccountName, amount, receivedDate, payerInfo, isAllocated, notes, createdAt)
+        VALUES
+          ('SUSP-01', 'COMP-01', 'BANK-01', '中國信託松高分行', 350000, '2026-04-15', '國泰世華銀行 轉入 附言: 台北工程款 (未明業主)', 0, '待工務主任確認歸屬案場後認領轉拋 AR', '2026-04-15');
+      `);
+    }
   } catch (e) {}
 
   // 自動校準單據流水號計數器

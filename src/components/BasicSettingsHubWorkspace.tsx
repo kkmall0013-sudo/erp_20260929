@@ -37,7 +37,8 @@ import {
   FileText,
   Wrench,
   CheckCheck,
-  Upload
+  Upload,
+  CreditCard
 } from 'lucide-react';
 import {
   Company,
@@ -46,7 +47,8 @@ import {
   DocumentSequenceRule,
   DocumentModuleSequenceStatus,
   RegulatorySchedule,
-  AnnualArchiveSnapshot
+  AnnualArchiveSnapshot,
+  CompanyBankAccount
 } from '../types/erp';
 import {
   getAllSystemConfigs,
@@ -73,7 +75,9 @@ import {
   reseedDocumentSequences,
   restoreFromSqliteBinary,
   restoreFromSqlScript,
-  resetToSeedData
+  resetToSeedData,
+  getAllCompanyBankAccounts,
+  updateBankAccountCheckSequence
 } from '../db/sqlite';
 import { useAuth } from '../context/AuthContext';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
@@ -151,6 +155,11 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
   const [isRestoringHubDb, setIsRestoringHubDb] = useState(false);
   const [isDraggingHubDb, setIsDraggingHubDb] = useState(false);
 
+  // 銀行支票簿起始號碼設定狀態
+  const [hubBankAccounts, setHubBankAccounts] = useState<CompanyBankAccount[]>([]);
+  const [editingBankChecks, setEditingBankChecks] = useState<Record<string, { checkPrefix: string; nextCheckNumber: number; checkDigits: number }>>({});
+  const [savingBankId, setSavingBankId] = useState<string | null>(null);
+
   const loadData = () => {
     // 1. 系統參數
     const cfgs = getAllSystemConfigs();
@@ -186,6 +195,47 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
       setModuleStats(getDatabaseModuleStats());
       setAnnualSnapshots(getAnnualArchiveSnapshots());
     } catch (_) {}
+
+    // 5. 銀行帳戶支票簿設定
+    try {
+      const bAccounts = getAllCompanyBankAccounts();
+      setHubBankAccounts(bAccounts);
+      const bMap: Record<string, { checkPrefix: string; nextCheckNumber: number; checkDigits: number }> = {};
+      bAccounts.forEach(b => {
+        bMap[b.id] = {
+          checkPrefix: b.checkPrefix || 'CQ',
+          nextCheckNumber: b.nextCheckNumber || 1001,
+          checkDigits: b.checkDigits || 6
+        };
+      });
+      setEditingBankChecks(bMap);
+    } catch (_) {}
+  };
+
+  const handleSaveBankCheckSequence = (bankId: string) => {
+    if (!canWriteModule) {
+      triggerToast('⛔ 權限攔截：您目前的身分無【銀行支票簿序號】維護權限！');
+      return;
+    }
+    const edit = editingBankChecks[bankId];
+    if (!edit) return;
+    try {
+      setSavingBankId(bankId);
+      updateBankAccountCheckSequence(
+        bankId,
+        edit.checkPrefix,
+        edit.nextCheckNumber,
+        edit.checkDigits,
+        currentUser?.fullName || '系統管理員'
+      );
+      triggerToast('✅ 銀行支票簿起始字軌與連貫序號已成功儲存！');
+      loadData();
+      onDataChanged();
+    } catch (e: any) {
+      triggerToast(`❌ 儲存失敗: ${e.message}`);
+    } finally {
+      setSavingBankId(null);
+    }
   };
 
   useEffect(() => {
@@ -578,6 +628,157 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
       onDataChanged();
     }
   };
+
+  // 🏦 銀行支票簿起始號與連貫序號管理卡片
+  const renderBankCheckSequencesTable = () => (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+      <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-200">
+            <CreditCard className="w-5 h-5 text-emerald-600" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+              <span>各銀行帳戶支票簿起始字軌與連貫序號設定 (Bank Checkbook Continuous Sequences)</span>
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                防跳號・自動遞增
+              </span>
+            </h4>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              每間銀行支票簿字軌前綴（如台灣銀行 TW、中國信託 CT、玉山銀行 ES）與起號各異。在此設定後，出納開立支票放款時自動依序給號並自動加一，防止重號與人工輸入錯誤。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-200">
+              <th className="p-3.5">所屬公司法人</th>
+              <th className="p-3.5">銀行帳戶與專戶性質</th>
+              <th className="p-3.5">支票字軌前綴 (Prefix)</th>
+              <th className="p-3.5">號碼位數 (碼長)</th>
+              <th className="p-3.5">下一筆發放票號</th>
+              <th className="p-3.5">下張開立票號預覽</th>
+              <th className="p-3.5 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {hubBankAccounts.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-6 text-center text-slate-400">
+                  尚未建立銀行帳戶主檔
+                </td>
+              </tr>
+            ) : (
+              hubBankAccounts.map(b => {
+                const edit = editingBankChecks[b.id] || {
+                  checkPrefix: b.checkPrefix || 'CQ',
+                  nextCheckNumber: b.nextCheckNumber || 1001,
+                  checkDigits: b.checkDigits || 6
+                };
+                const formattedNum = String(edit.nextCheckNumber).padStart(edit.checkDigits, '0');
+                const previewCheckNo = `${edit.checkPrefix ? edit.checkPrefix + '-' : ''}${formattedNum}`;
+                const isSaving = savingBankId === b.id;
+
+                const ownerCompany = companies.find(c => c.id === b.companyId);
+                const companyName = ownerCompany?.name || '全集團共用帳戶';
+                const taxId = ownerCompany?.taxId || '-';
+
+                return (
+                  <tr key={b.id} className="hover:bg-slate-50/90 transition-colors">
+                    <td className="p-3.5 align-middle">
+                      <div className="font-bold text-slate-900">{companyName}</div>
+                      <div className="text-[11px] text-slate-500 font-mono">統編 {taxId}</div>
+                    </td>
+                    <td className="p-3.5 align-middle">
+                      <div className="font-bold text-slate-900">{b.bankName} {b.branchName || ''}</div>
+                      <div className="font-mono text-slate-600 text-xs flex items-center gap-1.5 mt-0.5">
+                        <span>{b.accountNumber}</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                          {b.accountName}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="p-3.5 align-middle">
+                      <input
+                        type="text"
+                        value={edit.checkPrefix}
+                        onChange={e => {
+                          const val = e.target.value.toUpperCase();
+                          setEditingBankChecks(prev => ({
+                            ...prev,
+                            [b.id]: { ...(prev[b.id] || edit), checkPrefix: val }
+                          }));
+                        }}
+                        placeholder="例 TW / CT"
+                        className="w-24 px-2.5 py-1.5 font-mono font-bold text-xs rounded border border-slate-300 focus:ring-1 focus:ring-indigo-500 bg-white"
+                        disabled={!canWriteModule}
+                      />
+                    </td>
+                    <td className="p-3.5 align-middle">
+                      <select
+                        value={edit.checkDigits}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setEditingBankChecks(prev => ({
+                            ...prev,
+                            [b.id]: { ...(prev[b.id] || edit), checkDigits: val }
+                          }));
+                        }}
+                        className="px-2 py-1.5 font-mono text-xs rounded border border-slate-300 bg-white cursor-pointer"
+                        disabled={!canWriteModule}
+                      >
+                        <option value={4}>4 位數</option>
+                        <option value={5}>5 位數</option>
+                        <option value={6}>6 位數 (標準)</option>
+                        <option value={7}>7 位數</option>
+                        <option value={8}>8 位數</option>
+                      </select>
+                    </td>
+                    <td className="p-3.5 align-middle">
+                      <input
+                        type="number"
+                        min={1}
+                        value={edit.nextCheckNumber}
+                        onChange={e => {
+                          const val = Math.max(1, Number(e.target.value) || 1);
+                          setEditingBankChecks(prev => ({
+                            ...prev,
+                            [b.id]: { ...(prev[b.id] || edit), nextCheckNumber: val }
+                          }));
+                        }}
+                        className="w-28 px-2.5 py-1.5 font-mono font-bold text-xs rounded border border-slate-300 focus:ring-1 focus:ring-indigo-500 bg-white"
+                        disabled={!canWriteModule}
+                      />
+                    </td>
+                    <td className="p-3.5 align-middle font-mono">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs shadow-2xs">
+                        <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>{previewCheckNo}</span>
+                      </span>
+                    </td>
+                    <td className="p-3.5 align-middle text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleSaveBankCheckSequence(b.id)}
+                        disabled={!canWriteModule || isSaving}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors cursor-pointer border border-emerald-700 shadow-2xs inline-flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{isSaving ? '儲存中...' : '儲存序號'}</span>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
   // 分類參數清單
   const taxConfigs = systemConfigs.filter(c => ['TAX_RATE', 'FIN_TAX_TOLERANCE', 'NHI_RATE', 'MINIMUM_WAGE'].includes(c.configKey));
@@ -1240,6 +1441,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                       </table>
                     </div>
                   </div>
+
+                  {/* 🏦 各銀行帳戶支票簿起始字軌與連貫序號設定 */}
+                  {renderBankCheckSequencesTable()}
                 </div>
               )}
 
@@ -1465,6 +1669,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                           </table>
                         </div>
                       </div>
+
+                      {/* 🏦 各銀行帳戶支票簿起始字軌與連貫序號設定 */}
+                      {renderBankCheckSequencesTable()}
                     </div>
                   )}
 

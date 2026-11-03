@@ -2,7 +2,7 @@
 // 🏛️ 現場進貨簽收管理工作台 (Inbound Goods / Material Receiving Management)
 // 專責現場物料送達簽收點收 · A 模式直入案場成本 · 清冊支援「清單」與「廠商階層目錄」切換 · 動態日期與進貨廠商關聯篩選 · 支援單據獨立編輯修改與草稿功能
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   PackageCheck,
   Truck,

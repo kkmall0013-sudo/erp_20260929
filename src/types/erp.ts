@@ -720,9 +720,167 @@ export interface BankCheck {
   issueDate: string;
   dueDate: string;
   bankName: string;
+  drawerBank?: string;
+  paymentId?: string;
+  expectedClearanceDate?: string;
+  actualClearanceDate?: string;
   status: 'ISSUED' | 'DEPOSITED' | 'CLEARED' | 'VOIDED' | 'BOUNCED';
   voidReason?: string;
   notes?: string;
+}
+
+// ==========================================
+// 🏛️ 會計與收納核心模型 (Phase 7 & 憲法第五篇)
+// ==========================================
+
+export type ReconciliationStatus = 'DRAFT' | 'APPROVED' | 'PAID' | 'VOIDED';
+
+export interface AccountsPayableReconciliation {
+  id: string;
+  reconciliationNumber: string; // REC-YYYYMM-0001
+  companyId: string; // 申報法人
+  vendorId: string; // 廠商夥伴 ID
+  vendorName?: string; // 廠商名稱快照
+  billingPeriod: string; // 對帳期別 YYYY-MM
+  inboundTotalAmount: number; // 本期勾選進貨原始金額
+  discountAmount: number; // 折讓抹零 (正數存儲，粉紅視覺)
+  taxType: 'TAX_EXCLUSIVE' | 'TAX_INCLUSIVE' | 'TAX_EXEMPT'; // 外加 5% / 內含 / 免稅
+  taxAmount: number; // 本期營業稅額
+  netPayableAmount: number; // 本期應付淨額
+  invoiceNumber?: string; // 發票字軌
+  hasInvoice: boolean; // 是否具備發票
+  paymentDueDate: string; // 預計付款日
+  status: ReconciliationStatus;
+  reconciledBy?: string; // 對帳人員
+  approvedBy?: string; // 覆核主管
+  disbursedAt?: string; // 實際放款日
+  notes?: string;
+  receiptIds?: string[]; // 勾選之進貨單 ID 清冊
+  isDeleted?: boolean;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type PaymentStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'POSTED' | 'VOIDED' | 'DISPUTED';
+export type PaymentMethod = 'TT' | 'CHECK' | 'CASH';
+
+export interface PaymentRecord {
+  id: string;
+  paymentNo: string; // PAY-YYYYMM-0001
+  companyId: string; // 集團法人
+  currency: string; // TWD
+  bankAccountId: string; // 出款帳戶 (含 BOSS_POCKET 老闆口袋)
+  bankAccountName?: string;
+  targetBankAccountId?: string; // 供內部資金調撥 FUND_TRANSFER
+  partnerId?: string; // 受款夥伴
+  partnerName?: string;
+  customVendorName?: string; // 零星手打廠商
+  paymentMethod: PaymentMethod;
+  isReversal: boolean; // 全紅迴轉單標記
+  documentDate: string; // 原始發生日/發票真實日
+  postingDate: string; // 會計入帳日 (受關帳鎖定)
+  totalAmount: number; // 實付總額期望值
+  status: PaymentStatus;
+  isReconciled: boolean; // 是否完成銀行存摺調節
+  reconciledAt?: string;
+  voidReason?: string;
+  notes?: string;
+  isDeleted?: boolean;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  lineItems?: PaymentLineItem[];
+  checkDetail?: BankCheck;
+}
+
+export interface PaymentLineItem {
+  id: string;
+  paymentId: string;
+  sourceType: 'AP' | 'PO' | 'SUB' | 'EXP'; // 應付對帳單 / 採購 / 估驗 / 雜支
+  sourceId: string; // 對應來源單據 ID
+  sourceNumber?: string; // 來源單號快照
+  itemType: 'STANDARD' | 'DEDUCTION'; // 常規加項 vs 粉紅代扣減項
+  appliedAmount: number; // 本次實付沖抵額 (正數)
+  feeAmount: number; // 銀行手續費 (預設 30)
+  isFeeAbsorbedByCompany: boolean; // 跨行匯費是否由公司吸收
+  discountAmount: number; // 尾數折讓
+  offsetExpenseId?: string; // 專案代墊費用 ID (專案成本還原)
+  withholdingTaxAmt?: number; // 代扣所得稅
+  nhiAmt?: number; // 二代健保補充保費
+  projectId?: string; // 實際費用歸屬專案
+  notes?: string;
+}
+
+export interface Invoice {
+  id: string;
+  invoiceType: 'INPUT' | 'OUTPUT'; // 進項 / 銷項
+  invoiceNumber: string; // 發票字軌
+  invoiceDate: string; // 開立日
+  taxReportingCompanyId: string; // 申報法人
+  issuerTaxId: string; // 開立方統編
+  issuerName?: string;
+  buyerTaxId: string; // 買受方統編
+  buyerName?: string;
+  netAmount: number; // 未稅銷售額
+  taxAmount: number; // 營業稅額
+  totalAmount: number; // 含稅總額
+  status: 'VALID' | 'VOIDED' | 'CREDITED';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BillingInvoiceMapping {
+  id: string;
+  invoiceId: string;
+  sourceDocumentType: 'AP' | 'AR' | 'INBOUND' | 'PROGRESS_BILLING';
+  sourceDocumentId: string;
+  mappedAmount: number;
+  createdAt?: string;
+}
+
+export interface SuspenseReceipt {
+  id: string;
+  companyId: string;
+  bankAccountId: string;
+  bankAccountName?: string;
+  amount: number;
+  receivedDate: string;
+  payerInfo: string; // 匯入來源戶名/附言
+  isAllocated: boolean; // 是否已認領沖銷 (認領時才申報營業稅)
+  allocatedToArId?: string;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface OverpaymentPoolRecord {
+  id: string;
+  companyId: string;
+  partnerId: string;
+  partnerName?: string;
+  amount: number;
+  resolvedBy?: 'CREDIT_MEMO' | 'REFUND';
+  isResolved: boolean;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface CompanyBankAccount {
+  id: string;
+  companyId: string;
+  bankCode: string;
+  bankName: string;
+  branchName?: string;
+  accountNumber: string;
+  accountName: string;
+  isVirtualAccount: boolean; // 是否為虛擬專戶 (如 BOSS_POCKET 老闆口袋)
+  initialBalance: number;
+  currentBalance: number;
+  currency: string;
+  status: 'ACTIVE' | 'DISABLED';
+  checkPrefix?: string; // 支票簿字軌代碼 (例如 CQ, CT, BOT)
+  nextCheckNumber?: number; // 下一張支票連續號碼 (例如 882201)
+  checkDigits?: number; // 支票位數 (例如 6 或 7 碼)
 }
 
 export interface OwnerContract {
