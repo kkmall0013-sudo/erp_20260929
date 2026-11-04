@@ -40,11 +40,15 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { ExcelInboundGridModal, loadStoredInternalAssets, InternalAsset } from './inbound/ExcelInboundGridModal';
+import { InternalAssetManagerModal } from './widgets/InternalAssetManagerModal';
+import { ProjectEditorModal } from './projects/ProjectEditorModal';
+import { PartnerEditorModal } from './partners/PartnerEditorModal';
 import {
   InboundReceipt,
   InboundReceiptItem,
   InboundReceiptStatus,
   Project,
+  ProjectSite,
   BusinessPartner
 } from '../types/erp';
 import {
@@ -57,6 +61,7 @@ import {
   deleteInboundReceipt,
   getAllProjects,
   getAllBusinessPartners,
+  createProjectRecord,
   subscribeToDatabase,
   recordAuditLog
 } from '../db/sqlite';
@@ -128,6 +133,11 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
   const [selectedReceipt, setSelectedReceipt] = useState<InboundReceipt | null>(null);
   const [isPrintViewOpen, setIsPrintViewOpen] = useState<boolean>(false);
 
+  // 🚚 廠內自用資產與車輛維護中心、案場工程小程式、聯絡明細廠商小程式
+  const [isAssetManagerModalOpen, setIsAssetManagerModalOpen] = useState<boolean>(false);
+  const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState<boolean>(false);
+  const [isNewVendorModalOpen, setIsNewVendorModalOpen] = useState<boolean>(false);
+
   // 防呆確認 Modal
   const [voidModalTarget, setVoidModalTarget] = useState<InboundReceipt | null>(null);
   const [voidReasonText, setVoidReasonText] = useState<string>('規格不符現場退貨重送');
@@ -171,6 +181,50 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       setInternalAssets(loadStoredInternalAssets());
     } catch (e) {
       console.error('載入進貨資料失敗', e);
+    }
+  };
+
+  // 🚚 廠內資產與公務車更新回調
+  const handleAssetsUpdated = () => {
+    const updated = loadStoredInternalAssets();
+    setInternalAssets(updated);
+    triggerToast('✅ 廠內資產與公務車輛資料已同步更新！', 'success');
+  };
+
+  // 🏗️ 案場工程小程式新建回調 (SSoT 直接調用 ProjectEditorModal 產出之成果)
+  const handleProjectCreated = (projectData: Partial<Project>, siteData: Partial<ProjectSite>) => {
+    try {
+      const newProj = createProjectRecord(projectData, siteData, currentUser?.fullName || '現場工程師');
+      triggerToast(`✅ 案場【${newProj.name}】已成功建檔！專案代碼：${newProj.projectCode}`, 'success');
+      loadData();
+      setFormData(prev => ({
+        ...prev,
+        projectId: newProj.id,
+        projectNameSnapshot: newProj.name,
+        projectCodeSnapshot: newProj.projectCode
+      }));
+      setIsNewProjectModalOpen(false);
+      if (onDataChanged) onDataChanged();
+    } catch (err: any) {
+      triggerToast(`❌ 建立案場失敗：${err.message || String(err)}`, 'error');
+    }
+  };
+
+  // 🏢 商業夥伴模組新建回調 (SSoT 直接調用 PartnerEditorModal 產出之成果)
+  const handleVendorCreated = (savedPartner: BusinessPartner) => {
+    try {
+      triggerToast(`✅ 合作供料商【${savedPartner.name}】已成功建檔！`, 'success');
+      loadData();
+      setFormData(prev => ({
+        ...prev,
+        vendorId: savedPartner.id,
+        vendorNameSnapshot: savedPartner.name,
+        vendorTaxIdSnapshot: savedPartner.taxId || ''
+      }));
+      setIsNewVendorModalOpen(false);
+      if (onDataChanged) onDataChanged();
+    } catch (err: any) {
+      triggerToast(`❌ 建立廠商失敗：${err.message || String(err)}`, 'error');
     }
   };
 
@@ -256,8 +310,9 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
 
   // ⚡ 歸屬案場/廠內資產全即時動態連動解析 (100% 同步專案庫與廠內資產庫最新全名)
   const getReceiptProjectInfo = useCallback((r: InboundReceipt) => {
+    // 1. 優先檢查專案主庫
     if (r.projectId) {
-      const prj = projects.find(p => p.id === r.projectId);
+      const prj = projects.find(p => p.id === r.projectId || p.projectCode === r.projectId);
       if (prj) {
         return {
           id: prj.id,
@@ -266,7 +321,11 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
           isInternalAsset: false,
         };
       }
-      const asset = internalAssets.find(a => a.id === r.projectId);
+      const asset = internalAssets.find(a => 
+        a.id === r.projectId || 
+        a.code === r.projectId ||
+        (a.aliases && a.aliases.includes(r.projectId))
+      );
       if (asset) {
         return {
           id: asset.id,
@@ -276,25 +335,58 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
         };
       }
     }
-    // 比對快照名稱是否匹配廠內資產
-    if (r.projectNameSnapshot) {
-      const assetByName = internalAssets.find(
-        a => a.name === r.projectNameSnapshot || a.code === (r as any).projectCodeSnapshot
+
+    // 2. 檢查快照名稱或代碼是否匹配專案主庫
+    if (r.projectNameSnapshot || (r as any).projectCodeSnapshot) {
+      const prjBySnap = projects.find(p => 
+        p.name === r.projectNameSnapshot || 
+        (p.projectCode && p.projectCode === (r as any).projectCodeSnapshot)
       );
-      if (assetByName) {
+      if (prjBySnap) {
         return {
-          id: assetByName.id,
-          name: assetByName.name,
-          code: assetByName.code,
-          isInternalAsset: true,
+          id: prjBySnap.id,
+          name: prjBySnap.name,
+          code: prjBySnap.projectCode,
+          isInternalAsset: false,
         };
       }
     }
+
+    // 3. 檢查快照名稱、代碼或別名是否匹配廠內資產 (例如 '358'、'776'、'三噸半')
+    const assetByAlias = internalAssets.find(a =>
+      a.id === r.projectId ||
+      a.code === (r as any).projectCodeSnapshot ||
+      a.name === r.projectNameSnapshot ||
+      (a.aliases && (
+        a.aliases.includes(r.projectId || '') ||
+        a.aliases.includes(r.projectNameSnapshot || '') ||
+        a.aliases.includes((r as any).projectCodeSnapshot || '')
+      ))
+    );
+    if (assetByAlias) {
+      return {
+        id: assetByAlias.id,
+        name: assetByAlias.name,
+        code: assetByAlias.code,
+        isInternalAsset: true,
+      };
+    }
+
+    // 4. 若為內部廠區專案或文字包含廠內/公務
+    if (r.projectId === 'PRJ-INTERNAL' || (r.projectNameSnapshot || '').includes('廠內') || (r.projectNameSnapshot || '').includes('車輛')) {
+      return {
+        id: r.projectId || 'PRJ-INTERNAL',
+        name: r.projectNameSnapshot || '廠內自用 / 廠務支出',
+        code: (r as any).projectCodeSnapshot || 'INTERNAL',
+        isInternalAsset: true,
+      };
+    }
+
     return {
       id: r.projectId || 'UNKNOWN',
       name: r.projectNameSnapshot || '未指定案場',
       code: (r as any).projectCodeSnapshot || '',
-      isInternalAsset: (r.projectNameSnapshot || '').includes('廠內') || (r.projectNameSnapshot || '').includes('車輛'),
+      isInternalAsset: false,
     };
   }, [projects, internalAssets]);
 
@@ -540,7 +632,27 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       return;
     }
 
-    setFormData({ ...r });
+    const prjInfo = getReceiptProjectInfo(r);
+    let initialProjectId = r.projectId;
+    let initialProjectName = r.projectNameSnapshot;
+    let initialProjectCode = (r as any).projectCodeSnapshot;
+
+    const hasProjectMatch = projects.some(p => p.id === r.projectId);
+    const hasAssetMatch = internalAssets.some(a => a.id === r.projectId);
+
+    if (!hasProjectMatch && !hasAssetMatch && prjInfo.id && prjInfo.id !== 'UNKNOWN') {
+      initialProjectId = prjInfo.id;
+      initialProjectName = prjInfo.name;
+      initialProjectCode = prjInfo.code;
+    }
+
+    setFormData({
+      ...r,
+      projectId: initialProjectId,
+      projectNameSnapshot: initialProjectName,
+      projectCodeSnapshot: initialProjectCode,
+      orderNumber: r.orderNumber || '',
+    });
     const fullReceipt = getInboundReceiptById(r.id) || r;
     setFormItems(
       (fullReceipt.items && fullReceipt.items.length > 0
@@ -903,6 +1015,16 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                   草稿 {stats.draftCount}
                 </span>
               )}
+            </button>
+
+            {/* 🚚 廠內車輛與廠務資產維護 */}
+            <button
+              onClick={() => setIsAssetManagerModalOpen(true)}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-slate-100 font-semibold rounded-lg text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer border border-slate-700"
+              title="維護公務車輛換車/汰換報廢、重型機具、常備庫存與廠區修繕項目，支援別名與進貨單關聯"
+            >
+              <Truck className="w-4 h-4 text-emerald-400" />
+              <span>🚚 廠內車輛/資產維護</span>
             </button>
 
             {/* 新增單筆進貨簽收單 */}
@@ -1312,12 +1434,19 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                                           <div className="text-[10px] font-mono text-slate-400">{r.receiptNumber}</div>
                                         </td>
                                         <td className="py-2 px-3">
-                                          <div className="font-bold text-indigo-700">{r.projectNameSnapshot || '現場工區'}</div>
-                                          {((r as any).projectCodeSnapshot || projects.find(p => p.id === r.projectId)?.projectCode) && (
-                                            <div className="text-[10px] font-mono text-slate-500">
-                                              代碼: {(r as any).projectCodeSnapshot || projects.find(p => p.id === r.projectId)?.projectCode}
-                                            </div>
-                                          )}
+                                          {(() => {
+                                            const prjInfo = getReceiptProjectInfo(r);
+                                            return (
+                                              <div>
+                                                <div className="font-bold text-indigo-700">{prjInfo.name}</div>
+                                                {prjInfo.code && (
+                                                  <div className="text-[10px] font-mono text-slate-500">
+                                                    代碼: {prjInfo.code}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })()}
                                         </td>
                                         <td className="py-2 px-3 font-bold text-slate-900">
                                           {it.itemName}
@@ -1548,9 +1677,14 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                             </div>
                           </td>
                           <td className="py-3 px-3 text-slate-700 whitespace-nowrap">
-                            <span className="text-indigo-700 font-semibold truncate max-w-[140px] inline-block">
-                              {r.projectNameSnapshot || '案場'}
-                            </span>
+                            {(() => {
+                              const prjInfo = getReceiptProjectInfo(r);
+                              return (
+                                <span className="text-indigo-700 font-semibold truncate max-w-[140px] inline-block" title={prjInfo.name}>
+                                  {prjInfo.name}
+                                </span>
+                              );
+                            })()}
                           </td>
                           {/* 品名 */}
                           <td className="py-3 px-3 whitespace-nowrap">
@@ -1756,9 +1890,32 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
             <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    歸屬工區案場 (直入成本) <span className="text-rose-500">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      歸屬工區案場 (直入成本) <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsNewProjectModalOpen(true)}
+                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-0.5 cursor-pointer"
+                        title="調用案場工程小程式建立新工區，具備起造人分流與建物分類"
+                      >
+                        <Plus className="w-3 h-3" />
+                        另建新案場
+                      </button>
+                      <span className="text-slate-300 text-xs">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsAssetManagerModalOpen(true)}
+                        className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-800 hover:underline flex items-center gap-0.5 cursor-pointer"
+                        title="公務車輛換車/報廢、重型機具與廠區修繕資產管理中心"
+                      >
+                        <Truck className="w-3 h-3" />
+                        管理車輛/資產
+                      </button>
+                    </div>
+                  </div>
                   <select
                     value={formData.projectId}
                     onChange={e => {
@@ -1802,9 +1959,20 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    合作供貨廠商 <span className="text-rose-500">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      合作供貨廠商 <span className="text-rose-500">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsNewVendorModalOpen(true)}
+                      className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-0.5 cursor-pointer"
+                      title="調用聯絡明細規格之商業夥伴小程式直接建檔，保持資料庫乾淨"
+                    >
+                      <Plus className="w-3 h-3" />
+                      另建新供料商
+                    </button>
+                  </div>
                   <select
                     value={formData.vendorId}
                     onChange={e => setFormData({ ...formData, vendorId: e.target.value })}
@@ -1828,6 +1996,19 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                     placeholder="例如: TC-889922、CSC-003"
                     value={formData.deliveryNoteNumber || ''}
                     onChange={e => setFormData({ ...formData, deliveryNoteNumber: e.target.value })}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    訂貨單號 / 採購單號 <span className="text-slate-400 font-normal">(選填，不強制)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="例如: PO-2026-001 (無可留空)"
+                    value={formData.orderNumber || ''}
+                    onChange={e => setFormData({ ...formData, orderNumber: e.target.value })}
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
                   />
                 </div>
@@ -2423,6 +2604,30 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
         canApprove={canApprove}
         initialDraftToLoad={initialDraftToLoad}
         onClearInitialDraft={() => setInitialDraftToLoad(null)}
+      />
+
+      {/* 🚚 廠內自用公務車輛與廠務資產維護中心 Modal */}
+      <InternalAssetManagerModal
+        isOpen={isAssetManagerModalOpen}
+        onClose={() => setIsAssetManagerModalOpen(false)}
+        onAssetsUpdated={handleAssetsUpdated}
+        triggerToast={triggerToast}
+      />
+
+      {/* 🏗️ 案場工程小程式 Modal (共用拆分之獨立元件，具備專案代碼自動配發與起造人分流) */}
+      <ProjectEditorModal
+        isOpen={isNewProjectModalOpen}
+        onClose={() => setIsNewProjectModalOpen(false)}
+        onSave={handleProjectCreated}
+      />
+
+      {/* 🏢 商業夥伴/供料廠商小程式 Modal (共用聯絡明細規格之完整建檔元件) */}
+      <PartnerEditorModal
+        isOpen={isNewVendorModalOpen}
+        defaultType="VENDOR"
+        title="現場進貨快捷新增合作供料廠商"
+        onClose={() => setIsNewVendorModalOpen(false)}
+        onSaved={handleVendorCreated}
       />
     </div>
   );

@@ -7751,9 +7751,17 @@ export function ensureDatabaseIntegrity(db: Database) {
   try { db.run(`ALTER TABLE project_sites ADD COLUMN shopDrawingVendorName TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE project_sites ADD COLUMN landNumber TEXT;`); } catch (e) {}
 
-  // 🏛️ 專案案場建物類型與工作內容分類欄位
+  // 🏛️ 專案案場建物類型與工作內容分類欄位及防缺欄位防呆
   try { db.run(`ALTER TABLE projects ADD COLUMN buildingType TEXT;`); } catch (e) {}
   try { db.run(`ALTER TABLE projects ADD COLUMN workScope TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN contractAmount REAL DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN budgetAmount REAL DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN committedCost REAL DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN actualCost REAL DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN isLocked INTEGER DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN companyId TEXT;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN isDeleted INTEGER DEFAULT 0;`); } catch (e) {}
+  try { db.run(`ALTER TABLE projects ADD COLUMN version INTEGER DEFAULT 1;`); } catch (e) {}
   try {
     db.run(`UPDATE projects SET buildingType = '鐵皮倉庫', workScope = '統包新建工程' WHERE id = 'PRJ-01' AND (buildingType IS NULL OR buildingType = '' OR buildingType = '商辦金融大樓');`);
     db.run(`UPDATE projects SET buildingType = '鋼構建築', workScope = '室內裝修與機電消防工程' WHERE id = 'PRJ-02' AND (buildingType IS NULL OR buildingType = '' OR buildingType = '廠辦與工業廠房');`);
@@ -9929,12 +9937,14 @@ export function createInboundReceipt(
 
   // A 模式直入案場成本：若直接過帳 (POSTED) 且關聯專案，同步累加專案 actualCost
   if (status === 'POSTED' && data.projectId && totalAmount > 0) {
-    dbInstance.run(`
-      UPDATE projects 
-      SET actualCost = actualCost + ${totalAmount},
-          updatedAt = '${now}'
-      WHERE id = '${data.projectId}';
-    `);
+    try {
+      dbInstance.run(`
+        UPDATE projects 
+        SET actualCost = actualCost + ${totalAmount},
+            updatedAt = '${now}'
+        WHERE id = '${data.projectId}';
+      `);
+    } catch (_) {}
   }
 
   saveDatabaseSnapshot();
@@ -10130,12 +10140,14 @@ export function postInboundReceipt(id: string): InboundReceipt {
 
   // A 模式直入案場成本：過帳時同步累加專案 actualCost
   if (existing.projectId && existing.totalAmount > 0) {
-    dbInstance.run(`
-      UPDATE projects 
-      SET actualCost = actualCost + ${existing.totalAmount},
-          updatedAt = '${now}'
-      WHERE id = '${existing.projectId}';
-    `);
+    try {
+      dbInstance.run(`
+        UPDATE projects 
+        SET actualCost = actualCost + ${existing.totalAmount},
+            updatedAt = '${now}'
+        WHERE id = '${existing.projectId}';
+      `);
+    } catch (_) {}
   }
 
   saveDatabaseSnapshot();
@@ -10166,12 +10178,14 @@ export function voidInboundReceipt(id: string, notes?: string): InboundReceipt {
 
   // A 模式：若原單為 POSTED 狀態，作廢時自專案 actualCost 回沖扣除
   if (existing.status === 'POSTED' && existing.projectId && existing.totalAmount > 0) {
-    dbInstance.run(`
-      UPDATE projects 
-      SET actualCost = MAX(0, actualCost - ${existing.totalAmount}),
-          updatedAt = '${now}'
-      WHERE id = '${existing.projectId}';
-    `);
+    try {
+      dbInstance.run(`
+        UPDATE projects 
+        SET actualCost = MAX(0, actualCost - ${existing.totalAmount}),
+            updatedAt = '${now}'
+        WHERE id = '${existing.projectId}';
+      `);
+    } catch (_) {}
   }
 
   saveDatabaseSnapshot();

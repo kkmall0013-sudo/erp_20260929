@@ -30,6 +30,7 @@ import {
   Edit2
 } from 'lucide-react';
 import { Project, BusinessPartner, Item, InboundReceipt } from '../../types/erp';
+import { InternalAssetManagerModal } from '../widgets/InternalAssetManagerModal';
 import {
   getAllProjects,
   getAllBusinessPartners,
@@ -62,6 +63,7 @@ export interface ExcelGridRow {
   quantity: number; // 數量
   unitPrice: number; // 單價
   deliveryNoteNumber: string; // 送貨單號 / 簽收單號
+  orderNumber?: string; // 訂貨單號 / 採購單號 (選填，不強制)
   notes: string; // 備註
 }
 
@@ -101,17 +103,44 @@ export function saveStoredSpeedDrafts(drafts: InboundSpeedDraft[]) {
   }
 }
 
-// 🏢 廠內自用 / 車輛資產與廠務維護資料結構
+// 🏢 廠內自用 / 動產維修保養紀錄結構
+export interface AssetMaintenanceRecord {
+  id: string; // 唯一識別碼
+  assetId: string; // 關聯之資產 ID
+  recordDate: string; // 維修/保養日期
+  maintenanceType: 'REGULAR' | 'REPAIR' | 'OVERHAUL' | 'INSPECTION' | 'PARTS_REPLACEMENT'; // 定期保養、故障叫修、重大翻修、法定檢驗、零件耗損
+  title: string; // 維修項目簡述 (如: 10萬公里大保養、更換機油、更換液壓管路)
+  vendorName: string; // 承修廠商 / 修配廠 / 外包技師
+  cost: number; // 維修花費金額 (NT$)
+  invoiceNumber?: string; // 維修發票號碼 / 簽單工單號
+  mileageOrHours?: string; // 當前里程數 (公里) 或 運行工時 (小時)
+  status: 'COMPLETED' | 'IN_PROGRESS'; // 已完工 / 處理中
+  description?: string; // 細部故障原因與維修更換零件說明
+  handledBy?: string; // 經辦同仁 / 司機
+  createdAt: string;
+}
+
+// 🏢 廠內自用 / 車輛資產與廠務維護資料結構 (動產生命週期與履歷)
 export interface InternalAsset {
   id: string; // 唯一識別碼
-  code: string; // 代碼 (如 VEH-358, FAC-ROOF, STOCK-01)
+  code: string; // 代碼 (如 VEH-358, FAC-ROOF, STOCK-01, EQ-PC200)
   name: string; // 顯示名稱 (如 廠內貨車 [358-AB])
   type: 'VEHICLE' | 'FACILITY' | 'CENTRAL_STOCK' | 'EQUIPMENT'; // 類別
   categoryLabel: string; // 標籤名稱
   aliases: string[]; // 常用別名/模糊比對關鍵字 (如 ['358', '358-AB', '三噸半'])
-  licensePlate?: string; // 車牌號碼
+  licensePlate?: string; // 車牌號碼 (車輛專用)
   driverOrCustodian?: string; // 保管人 / 司機
+  status?: 'ACTIVE' | 'MAINTENANCE' | 'RETIRED'; // 服役狀態 (支援全物件汰除/維修防斷鏈)
+  purchaseDate?: string; // 購置啟用日期
+  purchaseCost?: number; // 原始購入金額 (選填)
+  retiredDate?: string; // 汰換報廢日期
+  retiredReason?: string; // 汰換報廢原因
+  disposalMethod?: 'SCRAPPED' | 'SOLD' | 'TRADE_IN' | 'DONATED' | 'STORED'; // 處分方式 (報廢報拆/變賣轉讓/舊換新/報廢封存)
+  salvageAmount?: number; // 處分殘值/變賣金額 (選填)
+  replacedByAssetId?: string; // 接替新資產 ID
+  replacedByAssetName?: string; // 接替新資產名稱
   notes?: string; // 備註說明
+  maintenanceRecords?: AssetMaintenanceRecord[]; // 歷次維修保養紀錄
   createdAt: string;
 }
 
@@ -127,8 +156,43 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     aliases: ['358', '358-AB', '358ab', '三噸半', '大貨車', '一號車'],
     licensePlate: '358-AB',
     driverOrCustodian: '專責司機',
+    status: 'ACTIVE',
+    purchaseDate: '2023-05-15',
+    purchaseCost: 980000,
     notes: '3.5噸柴油框式小貨車，工區材料運補專用',
     createdAt: '2026-01-01',
+    maintenanceRecords: [
+      {
+        id: 'maint-358-1',
+        assetId: 'asset-veh-358',
+        recordDate: '2026-02-10',
+        maintenanceType: 'REGULAR',
+        title: '定期更換機油、機油芯與煞車油檢查',
+        vendorName: '台日重車輪業保養廠',
+        cost: 6500,
+        invoiceNumber: 'INV-TR-8812',
+        mileageOrHours: '86,400 km',
+        status: 'COMPLETED',
+        description: '更換 15W40 柴油引擎專用合成機油 7L，更換副廠機油濾心，底盤四輪胎紋正常。',
+        handledBy: '專責司機',
+        createdAt: '2026-02-10'
+      },
+      {
+        id: 'maint-358-2',
+        assetId: 'asset-veh-358',
+        recordDate: '2026-03-22',
+        maintenanceType: 'PARTS_REPLACEMENT',
+        title: '後煞車分泵分總成與前煞車來令片更換',
+        vendorName: '弘揚汽車修配廠',
+        cost: 14200,
+        invoiceNumber: 'HY-202603-09',
+        mileageOrHours: '89,800 km',
+        status: 'COMPLETED',
+        description: '右後輪煞車皮咬死磨損，更換左右後輪煞車皮及分泵油封，剎車力道經檢驗線測試合格。',
+        handledBy: '專責司機',
+        createdAt: '2026-03-22'
+      }
+    ]
   },
   {
     id: 'asset-veh-776',
@@ -139,8 +203,28 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     aliases: ['776', '776-EF', '776ef', '二號車', '公務貨車', '公務小卡'],
     licensePlate: '776-EF',
     driverOrCustodian: '公務輪派',
+    status: 'ACTIVE',
+    purchaseDate: '2024-08-01',
+    purchaseCost: 620000,
     notes: '公務卡車，日常採買載料與出勤',
     createdAt: '2026-01-01',
+    maintenanceRecords: [
+      {
+        id: 'maint-776-1',
+        assetId: 'asset-veh-776',
+        recordDate: '2026-01-18',
+        maintenanceType: 'REGULAR',
+        title: '5,000 公里定期保養換油',
+        vendorName: '台日重車輪業保養廠',
+        cost: 4800,
+        invoiceNumber: 'INV-TR-7910',
+        mileageOrHours: '32,500 km',
+        status: 'COMPLETED',
+        description: '全車五油三水檢查，四輪對調平衡，更換機油。',
+        handledBy: '公務組',
+        createdAt: '2026-01-18'
+      }
+    ]
   },
   {
     id: 'asset-eq-pc200',
@@ -149,8 +233,28 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     type: 'EQUIPMENT',
     categoryLabel: '🚜 重型機具',
     aliases: ['怪手', 'PC200', '挖土機', '大怪手'],
+    status: 'ACTIVE',
+    purchaseDate: '2022-03-10',
+    purchaseCost: 2450000,
     notes: '廠內堆料與整地機具',
     createdAt: '2026-01-01',
+    maintenanceRecords: [
+      {
+        id: 'maint-pc200-1',
+        assetId: 'asset-eq-pc200',
+        recordDate: '2026-02-28',
+        maintenanceType: 'REPAIR',
+        title: '大臂液壓高壓油管老化漏油搶修',
+        vendorName: '順成液壓機械工程行',
+        cost: 28500,
+        invoiceNumber: 'SC-88910',
+        mileageOrHours: '3,420 小時',
+        status: 'COMPLETED',
+        description: '更換兩條 1-1/4 吋四層鋼絲液壓高壓耐磨管，補充 AW-68 液壓循環油 40 公升。',
+        handledBy: '機械主管',
+        createdAt: '2026-02-28'
+      }
+    ]
   },
   {
     id: 'asset-eq-forklift',
@@ -159,8 +263,12 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     type: 'EQUIPMENT',
     categoryLabel: '🚜 重型機具',
     aliases: ['堆高機', '叉車', '2.5噸堆高機'],
+    status: 'ACTIVE',
+    purchaseDate: '2023-11-20',
+    purchaseCost: 480000,
     notes: '倉庫與卸貨棧板專用堆高機',
     createdAt: '2026-01-01',
+    maintenanceRecords: []
   },
   {
     id: 'asset-fac-roof',
@@ -169,8 +277,12 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     type: 'FACILITY',
     categoryLabel: '🏠 廠區修繕',
     aliases: ['屋頂', '屋頂翻修', '翻修', '浪板修繕', '廠務修繕'],
+    status: 'ACTIVE',
+    purchaseDate: '2025-06-01',
+    purchaseCost: 350000,
     notes: '總廠廠房屋頂與遮雨棚翻修補漏工程',
     createdAt: '2026-01-01',
+    maintenanceRecords: []
   },
   {
     id: 'asset-stock-central',
@@ -179,8 +291,10 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     type: 'CENTRAL_STOCK',
     categoryLabel: '📦 常備庫存',
     aliases: ['廠內', '庫存', '放廠', '備料', '倉庫', '放廠裡', '留庫存', '常備料', '總廠庫存'],
+    status: 'ACTIVE',
     notes: '先買來放廠內之通用備料（黑鐵線、手套、螺絲五金、水泥備料等），自然消耗不二次分攤',
     createdAt: '2026-01-01',
+    maintenanceRecords: []
   },
 ];
 
@@ -1789,6 +1903,7 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
               vendorId: finalVendorId || 'BP-03',
               vendorNameSnapshot: finalVendorName,
               deliveryNoteNumber: firstRow.deliveryNoteNumber || `DN-${Date.now().toString().slice(-4)}`,
+              orderNumber: firstRow.orderNumber || undefined,
               receivedDate: firstRow.receivedDate || defaultDate,
               totalAmount: total,
               status: 'DRAFT',
@@ -1806,6 +1921,7 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
               vendorId: finalVendorId || 'BP-03',
               vendorNameSnapshot: finalVendorName,
               deliveryNoteNumber: firstRow.deliveryNoteNumber || `DN-${Date.now().toString().slice(-4)}`,
+              orderNumber: firstRow.orderNumber || undefined,
               receivedDate: firstRow.receivedDate || defaultDate,
               receivedBy: currentUserFullName,
               totalAmount: total,
@@ -1826,6 +1942,7 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
             vendorId: finalVendorId || 'BP-03',
             vendorNameSnapshot: finalVendorName,
             deliveryNoteNumber: firstRow.deliveryNoteNumber || `DN-${Date.now().toString().slice(-4)}`,
+            orderNumber: firstRow.orderNumber || undefined,
             receivedDate: firstRow.receivedDate || defaultDate,
             receivedBy: currentUserFullName,
             totalAmount: total,
@@ -2074,6 +2191,7 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
               vendorId: finalVendorId || 'BP-03',
               vendorNameSnapshot: finalVendorName,
               deliveryNoteNumber: firstRow.deliveryNoteNumber || `DN-${Date.now().toString().slice(-4)}`,
+              orderNumber: firstRow.orderNumber || undefined,
               receivedDate: firstRow.receivedDate || defaultDate,
               receivedBy: currentUserFullName,
               totalAmount: groupTotal,
@@ -2203,6 +2321,16 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
           >
             <Download className="w-3.5 h-3.5 text-emerald-400" />
             <span>匯出 CSV</span>
+          </button>
+
+          {/* 🚚 廠內車輛/資產管理 */}
+          <button
+            onClick={() => setIsAssetManagerOpen(true)}
+            className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
+            title="維護公務車換車、老舊報廢、重型機具與常備庫存別名"
+          >
+            <Truck className="w-3.5 h-3.5 text-blue-400" />
+            <span>🚚 車輛/資產管理</span>
           </button>
 
           <button
@@ -3924,267 +4052,16 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
         </div>
       )}
 
-      {/* 資產清冊由會計總帳主檔管理，現場進貨端僅作選取/對齊，不顯示維護彈窗 */}
-      {false && (
-        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
-            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <Truck className="w-5 h-5 text-blue-400" />
-                <div>
-                  <h3 className="font-bold text-sm tracking-tight">
-                    廠內自用 / 車輛資產與廠區項目維護清冊
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    可自由增修公務車、重機具、修繕項目與常備庫存，並設定「常用別名」以利 Excel 匯入 100% 自動辨識
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAssetManagerOpen(false);
-                  setEditingAsset(null);
-                }}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* 新增 / 編輯 表單區 */}
-            <div className="p-4 bg-blue-50/50 border-b border-blue-200 shrink-0">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-bold text-xs text-blue-950 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span>{editingAsset ? '✏️ 編輯車輛 / 廠內項目' : '➕ 新增廠內公務車 / 資產項目'}</span>
-                </span>
-                {editingAsset && (
-                  <button
-                    type="button"
-                    onClick={() => setEditingAsset(null)}
-                    className="text-[11px] text-slate-500 hover:text-slate-800 underline cursor-pointer"
-                  >
-                    取消編輯，改為新增
-                  </button>
-                )}
-              </div>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const form = e.currentTarget;
-                  const name = (form.elements.namedItem('assetName') as HTMLInputElement)?.value;
-                  const type = (form.elements.namedItem('assetType') as HTMLSelectElement)?.value as any;
-                  const plate = (form.elements.namedItem('assetPlate') as HTMLInputElement)?.value;
-                  const custodian = (form.elements.namedItem('assetCustodian') as HTMLInputElement)?.value;
-                  const aliasesRaw = (form.elements.namedItem('assetAliases') as HTMLInputElement)?.value;
-                  const notes = (form.elements.namedItem('assetNotes') as HTMLInputElement)?.value;
-
-                  const aliases = aliasesRaw
-                    ? aliasesRaw.split(/[,，、\s]+/).map(s => s.trim()).filter(Boolean)
-                    : [];
-
-                  handleSaveAsset({
-                    id: editingAsset?.id,
-                    name,
-                    type,
-                    licensePlate: plate,
-                    driverOrCustodian: custodian,
-                    aliases,
-                    notes,
-                  });
-                }}
-                className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs"
-              >
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    資產 / 車輛名稱 <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    name="assetName"
-                    key={`name-${editingAsset?.id || 'new'}`}
-                    defaultValue={editingAsset?.name || ''}
-                    placeholder="如：廠內貨車 [889-CD]"
-                    required
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    類型分類
-                  </label>
-                  <select
-                    name="assetType"
-                    key={`type-${editingAsset?.id || 'new'}`}
-                    defaultValue={editingAsset?.type || 'VEHICLE'}
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer font-medium"
-                  >
-                    <option value="VEHICLE">🚚 廠內公務車 / 貨車</option>
-                    <option value="EQUIPMENT">🚜 重型機具 (怪手/堆高機)</option>
-                    <option value="FACILITY">🏠 廠區公共修繕 (屋頂/設備)</option>
-                    <option value="CENTRAL_STOCK">📦 廠內常備公共庫存</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    車牌號碼 (車輛專用)
-                  </label>
-                  <input
-                    name="assetPlate"
-                    key={`plate-${editingAsset?.id || 'new'}`}
-                    defaultValue={editingAsset?.licensePlate || ''}
-                    placeholder="如：889-CD"
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    司機 / 保管人
-                  </label>
-                  <input
-                    name="assetCustodian"
-                    key={`custodian-${editingAsset?.id || 'new'}`}
-                    defaultValue={editingAsset?.driverOrCustodian || ''}
-                    placeholder="如：陳司機 / 廠務組"
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    常用別名 (以逗號分隔，用於 Excel 自動辨識)
-                  </label>
-                  <input
-                    name="assetAliases"
-                    key={`aliases-${editingAsset?.id || 'new'}`}
-                    defaultValue={editingAsset?.aliases?.join(', ') || ''}
-                    placeholder="如：889, 小卡, 藍色貨車"
-                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      備註說明
-                    </label>
-                    <input
-                      name="assetNotes"
-                      key={`notes-${editingAsset?.id || 'new'}`}
-                      defaultValue={editingAsset?.notes || ''}
-                      placeholder="如：維修專用"
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs cursor-pointer shadow-xs transition-colors shrink-0 flex items-center gap-1"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>{editingAsset ? '儲存修改' : '加入清冊'}</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* 現有資產清單列表 */}
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-2">
-              <div className="px-3 py-1.5 bg-slate-100 rounded-lg flex items-center justify-between text-[11px] font-bold text-slate-600 mb-2">
-                <span>現有廠內資產與項目 ({internalAssets.length} 筆)</span>
-                <span className="font-mono text-slate-500">點擊右側鉛筆可修改別名與資訊</span>
-              </div>
-
-              {internalAssets.map(ast => (
-                <div
-                  key={ast.id}
-                  className="p-3 hover:bg-slate-50 rounded-xl transition-colors flex items-start justify-between gap-3 border border-transparent hover:border-slate-200"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded text-[10px] bg-slate-200 text-slate-800 font-bold shrink-0">
-                        {ast.categoryLabel}
-                      </span>
-                      <span className="font-bold text-xs text-slate-900 truncate">
-                        {ast.name}
-                      </span>
-                      {ast.licensePlate && (
-                        <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-900 font-mono text-[10px] font-bold shrink-0">
-                          車牌: {ast.licensePlate}
-                        </span>
-                      )}
-                      <span className="text-[10px] font-mono text-slate-400">
-                        代碼: {ast.code}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3 mt-1 text-[11px] text-slate-500">
-                      {ast.driverOrCustodian && (
-                        <span>司機/保管: <strong className="text-slate-700">{ast.driverOrCustodian}</strong></span>
-                      )}
-                      {ast.notes && (
-                        <span>備註: <span className="text-slate-600">{ast.notes}</span></span>
-                      )}
-                    </div>
-
-                    {ast.aliases.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                        <span className="text-[10px] text-slate-400 font-bold">自動辨識別名:</span>
-                        {ast.aliases.map((al, idx) => (
-                          <span
-                            key={idx}
-                            className="px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-700 text-[10px] border border-slate-200 font-mono"
-                          >
-                            {al}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setEditingAsset(ast)}
-                      className="p-1.5 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 cursor-pointer transition-colors"
-                      title="編輯此項目"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteAsset(ast.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
-                      title="刪除此項目"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs shrink-0">
-              <span className="text-slate-500 text-[11px]">
-                💡 設定豐富別名後，線下填寫 Excel 即使打暱稱或簡寫，匯入時系統也會自動對齊！
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAssetManagerOpen(false);
-                  setEditingAsset(null);
-                }}
-                className="px-4 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer shadow-xs transition-colors"
-              >
-                完成並關閉
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 🚚 廠內自用公務車輛與廠務資產維護中心 Modal */}
+      <InternalAssetManagerModal
+        isOpen={isAssetManagerOpen}
+        onClose={() => setIsAssetManagerOpen(false)}
+        onAssetsUpdated={() => {
+          setInternalAssets(loadStoredInternalAssets());
+          triggerToast('✅ 廠內資產與車輛清冊已同步更新！', 'success');
+        }}
+        triggerToast={triggerToast}
+      />
 
     </div>
   );
