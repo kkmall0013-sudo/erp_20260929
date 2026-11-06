@@ -43,7 +43,8 @@ import {
   quickCreateProject,
   quickCreateVendor,
   quickCreateItem,
-  previewNextDocumentNumber
+  previewNextDocumentNumber,
+  recordAuditLog
 } from '../../db/sqlite';
 
 export interface ExcelGridRow {
@@ -120,17 +121,38 @@ export interface AssetMaintenanceRecord {
   createdAt: string;
 }
 
-// 🏢 廠內自用 / 車輛資產與廠務維護資料結構 (動產生命週期與履歷)
+// 🏢 廠內資產三大核心領域分類：動產 (MOVABLE) | 不動產 (REAL_ESTATE) | 庫存 (INVENTORY)
+export type InternalAssetCategory = 'MOVABLE' | 'REAL_ESTATE' | 'INVENTORY';
+
+export function getAssetCategory(asset: InternalAsset): InternalAssetCategory {
+  if (asset.assetCategory) return asset.assetCategory;
+  if (asset.type === 'VEHICLE' || asset.type === 'EQUIPMENT') return 'MOVABLE';
+  if (asset.type === 'FACILITY') return 'REAL_ESTATE';
+  if (asset.type === 'CENTRAL_STOCK') return 'INVENTORY';
+  return 'MOVABLE';
+}
+
+export function getAssetCategoryLabel(cat: InternalAssetCategory): string {
+  switch (cat) {
+    case 'MOVABLE': return '🚗 動產 (車輛/機具/設備)';
+    case 'REAL_ESTATE': return '🏢 不動產 (廠房/土地/設施)';
+    case 'INVENTORY': return '📦 庫存 (公共備料/材料進庫登記)';
+  }
+}
+
+// 🏢 廠內資產維護資料結構 (動產/不動產/庫存 生命週期與履歷)
 export interface InternalAsset {
   id: string; // 唯一識別碼
   code: string; // 代碼 (如 VEH-358, FAC-ROOF, STOCK-01, EQ-PC200)
   name: string; // 顯示名稱 (如 廠內貨車 [358-AB])
-  type: 'VEHICLE' | 'FACILITY' | 'CENTRAL_STOCK' | 'EQUIPMENT'; // 類別
+  assetCategory?: InternalAssetCategory; // 核心三大領域：動產、不動產、庫存
+  type: 'VEHICLE' | 'FACILITY' | 'CENTRAL_STOCK' | 'EQUIPMENT'; // 子類別 (向下相容)
   categoryLabel: string; // 標籤名稱
   aliases: string[]; // 常用別名/模糊比對關鍵字 (如 ['358', '358-AB', '三噸半'])
   licensePlate?: string; // 車牌號碼 (車輛專用)
   driverOrCustodian?: string; // 保管人 / 司機
-  status?: 'ACTIVE' | 'MAINTENANCE' | 'RETIRED'; // 服役狀態 (支援全物件汰除/維修防斷鏈)
+  locationOrAddress?: string; // 不動產坐落地點 / 建物標號 / 存放庫位
+  status?: 'ACTIVE' | 'MAINTENANCE' | 'RETIRED'; // 服役狀態 (支援全物件汰除/維修防斷鏈，已淘汰移至歷史區)
   purchaseDate?: string; // 購置啟用日期
   purchaseCost?: number; // 原始購入金額 (選填)
   retiredDate?: string; // 汰換報廢日期
@@ -141,6 +163,10 @@ export interface InternalAsset {
   replacedByAssetName?: string; // 接替新資產名稱
   notes?: string; // 備註說明
   maintenanceRecords?: AssetMaintenanceRecord[]; // 歷次維修保養紀錄
+  isDeleted?: boolean; // 軟刪除標記 (一般同仁與Admin均隱蔽，僅 Superadmin 可在救援中心檢視並救回)
+  deletedAt?: string; // 軟刪除時間
+  deletedBy?: string; // 軟刪除操作人
+  deleteReason?: string; // 軟刪除備註原因
   createdAt: string;
 }
 
@@ -151,8 +177,9 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     id: 'asset-veh-358',
     code: 'VEH-358',
     name: '廠內貨車 [358-AB]',
+    assetCategory: 'MOVABLE',
     type: 'VEHICLE',
-    categoryLabel: '🚚 廠內車輛',
+    categoryLabel: '🚗 廠內動產 (車輛)',
     aliases: ['358', '358-AB', '358ab', '三噸半', '大貨車', '一號車'],
     licensePlate: '358-AB',
     driverOrCustodian: '專責司機',
@@ -198,8 +225,9 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     id: 'asset-veh-776',
     code: 'VEH-776',
     name: '廠內公務貨車 [776-EF]',
+    assetCategory: 'MOVABLE',
     type: 'VEHICLE',
-    categoryLabel: '🚚 廠內車輛',
+    categoryLabel: '🚗 廠內動產 (車輛)',
     aliases: ['776', '776-EF', '776ef', '二號車', '公務貨車', '公務小卡'],
     licensePlate: '776-EF',
     driverOrCustodian: '公務輪派',
@@ -230,13 +258,14 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     id: 'asset-eq-pc200',
     code: 'EQ-PC200',
     name: 'PC-200 挖土機 (怪手)',
+    assetCategory: 'MOVABLE',
     type: 'EQUIPMENT',
-    categoryLabel: '🚜 重型機具',
+    categoryLabel: '🚜 廠內動產 (機具)',
     aliases: ['怪手', 'PC200', '挖土機', '大怪手'],
     status: 'ACTIVE',
     purchaseDate: '2022-03-10',
     purchaseCost: 2450000,
-    notes: '廠內堆料與整地機具',
+    notes: '廠內堆料與整地重型機具',
     createdAt: '2026-01-01',
     maintenanceRecords: [
       {
@@ -260,8 +289,9 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     id: 'asset-eq-forklift',
     code: 'EQ-FORK',
     name: '廠內堆高機 (2.5噸)',
+    assetCategory: 'MOVABLE',
     type: 'EQUIPMENT',
-    categoryLabel: '🚜 重型機具',
+    categoryLabel: '🚜 廠內動產 (機具)',
     aliases: ['堆高機', '叉車', '2.5噸堆高機'],
     status: 'ACTIVE',
     purchaseDate: '2023-11-20',
@@ -273,10 +303,12 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
   {
     id: 'asset-fac-roof',
     code: 'FAC-ROOF',
-    name: '總廠廠務 - 屋頂翻修',
+    name: '總廠廠務 - 屋頂與遮雨棚修繕',
+    assetCategory: 'REAL_ESTATE',
     type: 'FACILITY',
-    categoryLabel: '🏠 廠區修繕',
+    categoryLabel: '🏢 廠內不動產 (設施修繕)',
     aliases: ['屋頂', '屋頂翻修', '翻修', '浪板修繕', '廠務修繕'],
+    locationOrAddress: '五股總廠主廠房屋頂與側邊棚架',
     status: 'ACTIVE',
     purchaseDate: '2025-06-01',
     purchaseCost: 350000,
@@ -285,20 +317,92 @@ export const DEFAULT_INTERNAL_ASSETS: InternalAsset[] = [
     maintenanceRecords: []
   },
   {
-    id: 'asset-stock-central',
-    code: 'STOCK-CENTRAL',
-    name: '廠內公共儲備庫存',
-    type: 'CENTRAL_STOCK',
-    categoryLabel: '📦 常備庫存',
-    aliases: ['廠內', '庫存', '放廠', '備料', '倉庫', '放廠裡', '留庫存', '常備料', '總廠庫存'],
+    id: 'asset-fac-main',
+    code: 'FAC-MAIN',
+    name: '五股總廠主廠房與固定天車設備',
+    assetCategory: 'REAL_ESTATE',
+    type: 'FACILITY',
+    categoryLabel: '🏢 廠內不動產 (廠房建物)',
+    aliases: ['總廠', '主廠房', '天車', '工廠', '廠辦'],
+    locationOrAddress: '新北市五股區成泰路三段廠區',
     status: 'ACTIVE',
-    notes: '先買來放廠內之通用備料（黑鐵線、手套、螺絲五金、水泥備料等），自然消耗不二次分攤',
+    purchaseDate: '2020-01-15',
+    purchaseCost: 18500000,
+    notes: '鋼構廠房主體結構、水電消防基礎設施與固定天車起重桁架',
     createdAt: '2026-01-01',
     maintenanceRecords: []
   },
+  {
+    id: 'asset-stock-central',
+    code: 'STOCK-CENTRAL',
+    name: '廠內公共儲備庫存',
+    assetCategory: 'INVENTORY',
+    type: 'CENTRAL_STOCK',
+    categoryLabel: '📦 廠內庫存 (常備儲備)',
+    aliases: ['廠內', '庫存', '放廠', '備料', '倉庫', '放廠裡', '留庫存', '常備料', '總廠庫存'],
+    locationOrAddress: '總廠 A 區常備材料儲放架',
+    status: 'ACTIVE',
+    notes: '先買來放廠內之通用備料（黑鐵線、手套、螺絲五金、水泥備料等），進貨直接入庫登記，消耗時不強求出庫扣帳，供進貨與耗資追蹤登記',
+    createdAt: '2026-01-01',
+    maintenanceRecords: []
+  },
+  {
+    id: 'asset-stock-steel',
+    code: 'STOCK-STEEL',
+    name: '常備型鋼與板材公共庫存',
+    assetCategory: 'INVENTORY',
+    type: 'CENTRAL_STOCK',
+    categoryLabel: '📦 廠內庫存 (常備型鋼)',
+    aliases: ['型鋼庫存', '鋼板庫存', '常備鋼料', '鐵板備料'],
+    locationOrAddress: '總廠鋼材堆置專區',
+    status: 'ACTIVE',
+    notes: '通用 H 型鋼、C 型鋼與鐵板備料，進貨入庫直接登記',
+    createdAt: '2026-01-01',
+    maintenanceRecords: []
+  },
+  {
+    id: 'asset-veh-old-168',
+    code: 'VEH-168',
+    name: '舊三噸半貨車 [168-XY]',
+    assetCategory: 'MOVABLE',
+    type: 'VEHICLE',
+    categoryLabel: '🚗 廠內動產 (舊車已淘汰)',
+    aliases: ['168', '168-XY', '舊貨車', '老爺車'],
+    licensePlate: '168-XY',
+    driverOrCustodian: '原專責司機 (已由 358-AB 接棒)',
+    status: 'RETIRED',
+    purchaseDate: '2016-04-12',
+    purchaseCost: 750000,
+    retiredDate: '2025-12-15',
+    retiredReason: '車齡 10 年，引擎漏油修復成本過高，經評估報廢並由 358-AB 接替服役',
+    disposalMethod: 'SCRAPPED',
+    salvageAmount: 38000,
+    replacedByAssetId: 'asset-veh-358',
+    replacedByAssetName: '廠內貨車 [358-AB]',
+    notes: '歷史老爺車，已淘汰移至歷史存檔區，保留完整審計歷程',
+    createdAt: '2026-01-01',
+    maintenanceRecords: [
+      {
+        id: 'maint-168-old-1',
+        assetId: 'asset-veh-old-168',
+        recordDate: '2025-08-20',
+        maintenanceType: 'REPAIR',
+        title: '冷氣壓縮機與水箱總成換修',
+        vendorName: '弘揚汽車修配廠',
+        cost: 18500,
+        invoiceNumber: 'HY-202508-41',
+        mileageOrHours: '198,200 km',
+        status: 'COMPLETED',
+        description: '壓縮機軸承咬死更換，更換加大銅水箱總成。',
+        handledBy: '專責司機',
+        createdAt: '2025-08-20'
+      }
+    ]
+  }
 ];
 
-export function loadStoredInternalAssets(): InternalAsset[] {
+// 載入廠內資產清單 (預設 includeDeleted = false，一般 User 與 Admin 100% 隱蔽已刪除資產)
+export function loadStoredInternalAssets(includeDeleted: boolean = false): InternalAsset[] {
   try {
     const raw = localStorage.getItem(INTERNAL_ASSETS_STORAGE_KEY);
     if (!raw) {
@@ -306,7 +410,18 @@ export function loadStoredInternalAssets(): InternalAsset[] {
       return DEFAULT_INTERNAL_ASSETS;
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_INTERNAL_ASSETS;
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      saveStoredInternalAssets(DEFAULT_INTERNAL_ASSETS);
+      return DEFAULT_INTERNAL_ASSETS;
+    }
+    const mapped = parsed.map((a: InternalAsset) => ({
+      ...a,
+      assetCategory: a.assetCategory || getAssetCategory(a)
+    }));
+    if (includeDeleted) {
+      return mapped;
+    }
+    return mapped.filter((a: InternalAsset) => !a.isDeleted);
   } catch (e) {
     console.warn('載入廠內資產清單失敗:', e);
     return DEFAULT_INTERNAL_ASSETS;
@@ -318,6 +433,111 @@ export function saveStoredInternalAssets(assets: InternalAsset[]) {
     localStorage.setItem(INTERNAL_ASSETS_STORAGE_KEY, JSON.stringify(assets));
   } catch (e) {
     console.error('儲存廠內資產清單失敗:', e);
+  }
+}
+
+// 取得所有已被軟刪除之廠內資產 (Superadmin 救援中心專用)
+export function getDeletedInternalAssets(): InternalAsset[] {
+  return loadStoredInternalAssets(true).filter(a => a.isDeleted);
+}
+
+// 軟刪除廠內資產 (一般同仁與Admin均隱蔽，僅 Superadmin 可在救援中心檢視並救回)
+export function softDeleteInternalAsset(
+  assetId: string, 
+  operatorName: string = '系統管理員', 
+  reason: string = '日常管理刪除 (可由 Superadmin 救回)'
+): boolean {
+  try {
+    const all = loadStoredInternalAssets(true);
+    const target = all.find(a => a.id === assetId);
+    if (!target) return false;
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const updated = all.map(a => a.id === assetId ? {
+      ...a,
+      isDeleted: true,
+      deletedAt: now,
+      deletedBy: operatorName,
+      deleteReason: reason,
+    } : a);
+    saveStoredInternalAssets(updated);
+    recordAuditLog(
+      operatorName,
+      '軟刪除',
+      '廠內資產維護',
+      assetId,
+      {
+        '資產名稱': target.name,
+        '資產代碼': target.code,
+        '資產類別': target.categoryLabel,
+        '原狀態': target.status || 'ACTIVE',
+        '軟刪除說明': '一般用戶與Admin均不可見，僅Superadmin可檢視並救援還原'
+      }
+    );
+    return true;
+  } catch (e) {
+    console.error('軟刪除廠內資產失敗:', e);
+    return false;
+  }
+}
+
+// 🛡️ Superadmin 救援還原廠內資產
+export function restoreInternalAsset(assetId: string, operatorName: string = 'Superadmin'): boolean {
+  try {
+    const all = loadStoredInternalAssets(true);
+    const target = all.find(a => a.id === assetId);
+    if (!target) return false;
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const updated = all.map(a => a.id === assetId ? {
+      ...a,
+      isDeleted: false,
+      deletedAt: undefined,
+      deletedBy: undefined,
+      deleteReason: undefined,
+    } : a);
+    saveStoredInternalAssets(updated);
+    recordAuditLog(
+      operatorName,
+      '救援還原',
+      '廠內資產維護',
+      assetId,
+      {
+        '資產名稱': target.name,
+        '資產代碼': target.code,
+        '原刪除人': target.deletedBy || '未知',
+        '原刪除時間': target.deletedAt || '未知',
+        '救援說明': 'Superadmin 成功救援恢復服役，一般人員已立即可見'
+      }
+    );
+    return true;
+  } catch (e) {
+    console.error('救援廠內資產失敗:', e);
+    return false;
+  }
+}
+
+// 🗑️ Superadmin 永久物理抹除廠內資產
+export function purgeInternalAsset(assetId: string, operatorName: string = 'Superadmin'): boolean {
+  try {
+    const all = loadStoredInternalAssets(true);
+    const target = all.find(a => a.id === assetId);
+    if (!target) return false;
+    const updated = all.filter(a => a.id !== assetId);
+    saveStoredInternalAssets(updated);
+    recordAuditLog(
+      operatorName,
+      '永久抹除',
+      '廠內資產維護',
+      assetId,
+      {
+        '資產名稱': target.name,
+        '資產代碼': target.code,
+        '抹除說明': 'Superadmin 永久物理清除資產記錄'
+      }
+    );
+    return true;
+  } catch (e) {
+    console.error('永久抹除廠內資產失敗:', e);
+    return false;
   }
 }
 
@@ -1267,7 +1487,7 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
     setInternalAssets(current);
     saveStoredInternalAssets(current);
     setEditingAsset(null);
-    triggerToast('已成功儲存廠內車輛/資產設定！', 'success');
+    triggerToast('已成功儲存廠內資產設定！', 'success');
   };
 
   // 刪除廠內資產
@@ -1278,16 +1498,18 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
     triggerToast('已刪除該項廠內資產', 'success');
   };
 
-  // 快速從打單格中就地建立新車輛/資產並回填
+  // 快速從打單格中就地建立新廠內資產並回填
   const handleQuickCreateAsset = (rowId: string, inputName: string) => {
     const trimmed = inputName.trim();
     if (!trimmed) return;
     const isVeh = Boolean(trimmed.match(/[A-Z0-9]{2,4}-[A-Z0-9]{2,4}/i)) || trimmed.includes('車');
+    const isStock = trimmed.includes('庫存') || trimmed.includes('備料') || trimmed.includes('倉庫');
     const newAsset: InternalAsset = {
       id: `asset-${Date.now()}`,
-      code: isVeh ? `VEH-${Date.now().toString().slice(-3)}` : `FAC-${Date.now().toString().slice(-3)}`,
+      code: isVeh ? `VEH-${Date.now().toString().slice(-3)}` : isStock ? `STOCK-${Date.now().toString().slice(-3)}` : `FAC-${Date.now().toString().slice(-3)}`,
       name: trimmed,
-      type: isVeh ? 'VEHICLE' : 'FACILITY',
+      assetCategory: isVeh ? 'MOVABLE' : isStock ? 'INVENTORY' : 'REAL_ESTATE',
+      type: isVeh ? 'VEHICLE' : isStock ? 'CENTRAL_STOCK' : 'FACILITY',
       categoryLabel: isVeh ? '🚚 廠內車輛' : '🏠 廠區修繕',
       aliases: [trimmed],
       createdAt: new Date().toISOString().slice(0, 10),
@@ -2323,14 +2545,14 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
             <span>匯出 CSV</span>
           </button>
 
-          {/* 🚚 廠內車輛/資產管理 */}
+          {/* 🚚 廠內資產維護 */}
           <button
             onClick={() => setIsAssetManagerOpen(true)}
             className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer"
             title="維護公務車換車、老舊報廢、重型機具與常備庫存別名"
           >
             <Truck className="w-3.5 h-3.5 text-blue-400" />
-            <span>🚚 車輛/資產管理</span>
+            <span>🚚 廠內資產維護</span>
           </button>
 
           <button
@@ -3203,7 +3425,12 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
             {/* 案場下拉選單 */}
             {field === 'site' && (() => {
               const query = activeRow.siteInputName.trim().toLowerCase();
+              
+              // 🏗️ 施工工程案場：預設僅抓取「正在施工」(ACTIVE) 的案場，避免已完工案場造成選單冗長
               const filteredProjects = projects.filter(p => {
+                if (p.isDeleted) return false;
+                const isCompletedOrLocked = p.status === 'COMPLETED' || p.status === 'LOCKED';
+                if (!query && isCompletedOrLocked) return false;
                 if (!query) return true;
                 return (
                   (p.name && p.name.toLowerCase().includes(query)) ||
@@ -3212,7 +3439,9 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
                 );
               });
 
+              // 🏢 廠內資產：僅抓取在勤使用中資產，已淘汰者移至歷史區不在此出現
               const filteredAssets = internalAssets.filter(a => {
+                if (a.status === 'RETIRED') return false;
                 if (!query) return true;
                 return (
                   a.name.toLowerCase().includes(query) ||
@@ -3227,96 +3456,115 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
                   <div className="px-3.5 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs shrink-0">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
                       <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>案場與廠內自用對齊選單</span>
+                      <span>案場與廠內資產對齊選單</span>
                     </span>
                     <span className="text-[11px] font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-                      共 {filteredProjects.length + filteredAssets.length} 項
+                      施工中案場 {filteredProjects.length} · 廠內資產 {filteredAssets.length}
                     </span>
                   </div>
 
                   <div className="overflow-y-auto flex-1 divide-y divide-slate-100 p-1">
-                    {/* 區塊 1: 廠內自用 / 車輛資產與常備庫存 (免建案場) */}
+                    {/* 區塊 1: 廠內資產 (動產 / 不動產 / 庫存登記) */}
                     {filteredAssets.length > 0 && (
                       <div className="pb-1 mb-1">
                         <div className="px-2.5 py-1 text-[10px] font-bold text-blue-900 bg-blue-50/90 rounded flex items-center justify-between mb-1">
                           <span className="flex items-center gap-1">
                             <Truck className="w-3 h-3 text-blue-600" />
-                            <span>🏢 廠內自用 / 車輛資產與常備庫存（免建案場）</span>
+                            <span>🏢 廠內資產（動產 · 不動產 · 庫存登記）</span>
                           </span>
                           <span className="text-[9px] font-mono text-blue-700">{filteredAssets.length} 項目</span>
                         </div>
-                        {filteredAssets.map(a => (
-                          <div
-                            key={a.id}
-                            onClick={() => handleSelectInternalAsset(rowId, a)}
-                            className="px-3 py-1.5 hover:bg-blue-50/80 rounded-lg cursor-pointer transition-colors group flex items-center justify-between gap-2 mb-0.5 border border-transparent hover:border-blue-200"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs font-bold text-slate-900 group-hover:text-blue-900 flex items-center gap-1.5">
-                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-100 text-slate-700 font-normal shrink-0">
-                                  {a.categoryLabel}
-                                </span>
-                                <span className="truncate">{a.name}</span>
-                                {a.licensePlate && (
-                                  <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-blue-100 text-blue-800 font-bold shrink-0">
-                                    {a.licensePlate}
+                        {filteredAssets.map(a => {
+                          const cat = getAssetCategory(a);
+                          return (
+                            <div
+                              key={a.id}
+                              onClick={() => handleSelectInternalAsset(rowId, a)}
+                              className="px-3 py-1.5 hover:bg-blue-50/80 rounded-lg cursor-pointer transition-colors group flex items-center justify-between gap-2 mb-0.5 border border-transparent hover:border-blue-200"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-bold text-slate-900 group-hover:text-blue-900 flex items-center gap-1.5">
+                                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold shrink-0 ${
+                                    cat === 'MOVABLE' ? 'bg-amber-100 text-amber-800' :
+                                    cat === 'REAL_ESTATE' ? 'bg-purple-100 text-purple-800' :
+                                    'bg-emerald-100 text-emerald-800'
+                                  }`}>
+                                    {cat === 'MOVABLE' ? '🚗 動產' : cat === 'REAL_ESTATE' ? '🏢 不動產' : '📦 庫存'}
                                   </span>
-                                )}
+                                  <span className="truncate">{a.name}</span>
+                                  {a.licensePlate && (
+                                    <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-blue-100 text-blue-800 font-bold shrink-0">
+                                      {a.licensePlate}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-slate-500 font-mono">
+                                  <span>代碼: <strong className="text-slate-700">{a.code}</strong></span>
+                                  {a.driverOrCustodian && <span>保管/司機: {a.driverOrCustodian}</span>}
+                                  {a.aliases.length > 0 && (
+                                    <span className="text-slate-400 truncate max-w-[200px]">
+                                      別名: {a.aliases.slice(0, 3).join(', ')}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                              <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-slate-500 font-mono">
-                                <span>代碼: <strong className="text-slate-700">{a.code}</strong></span>
-                                {a.driverOrCustodian && <span>保管/司機: {a.driverOrCustodian}</span>}
-                                {a.aliases.length > 0 && (
-                                  <span className="text-slate-400 truncate max-w-[200px]">
-                                    別名: {a.aliases.slice(0, 3).join(', ')}
-                                  </span>
-                                )}
-                              </div>
+                              <span className="text-[10px] text-blue-700 opacity-0 group-hover:opacity-100 font-bold shrink-0">
+                                帶入 ↵
+                              </span>
                             </div>
-                            <span className="text-[10px] text-blue-700 opacity-0 group-hover:opacity-100 font-bold shrink-0">
-                              帶入 ↵
-                            </span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
 
-                    {/* 區塊 2: 進行中工程案場清冊 */}
+                    {/* 區塊 2: 施工中工程案場清冊 */}
                     <div>
                       <div className="px-2.5 py-1 text-[10px] font-bold text-amber-900 bg-amber-50/90 rounded flex items-center justify-between mb-1">
                         <span className="flex items-center gap-1">
                           <Building2 className="w-3 h-3 text-amber-600" />
-                          <span>🏗️ 進行中工程專案案場</span>
+                          <span>🏗️ 施工工程案場（正在施工中）</span>
                         </span>
                         <span className="text-[9px] font-mono text-amber-700">{filteredProjects.length} 案場</span>
                       </div>
                       {filteredProjects.length === 0 && filteredAssets.length === 0 ? (
                         <div className="p-4 text-center text-xs text-slate-400">
-                          查無「{activeRow.siteInputName}」之案場或車輛，可在下方直接登記！
+                          查無「{activeRow.siteInputName}」之施工中案場或廠內資產，可在下方直接登記！
                         </div>
                       ) : (
-                        filteredProjects.map(p => (
-                          <div
-                            key={p.id}
-                            onClick={() => handleSelectProject(rowId, p)}
-                            className="px-3 py-1.5 hover:bg-amber-50/70 rounded-lg cursor-pointer transition-colors group flex items-start justify-between gap-2 mb-0.5"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-xs font-bold text-slate-900 group-hover:text-amber-800 flex items-center gap-1.5">
-                                <span className="truncate">{p.name}</span>
-                                <span className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200 shrink-0">
-                                  {p.projectCode}
-                                </span>
+                        filteredProjects.map(p => {
+                          const isCompleted = p.status === 'COMPLETED' || p.status === 'LOCKED';
+                          return (
+                            <div
+                              key={p.id}
+                              onClick={() => handleSelectProject(rowId, p)}
+                              className="px-3 py-1.5 hover:bg-amber-50/70 rounded-lg cursor-pointer transition-colors group flex items-start justify-between gap-2 mb-0.5"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-bold text-slate-900 group-hover:text-amber-800 flex items-center gap-1.5">
+                                  <span className="truncate">{p.name}</span>
+                                  <span className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200 shrink-0">
+                                    {p.projectCode}
+                                  </span>
+                                  {isCompleted ? (
+                                    <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-300 shrink-0">
+                                      已完工/封存
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-mono bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200 shrink-0">
+                                      施工中
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-slate-500">
+                                  {p.ownerName && <span>業主: {p.ownerName}</span>}
+                                </div>
                               </div>
-                              <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-slate-500">
-                                {p.ownerName && <span>業主: {p.ownerName}</span>}
-                              </div>
+                              <span className="text-[10px] text-amber-700 opacity-0 group-hover:opacity-100 font-bold shrink-0 self-center">
+                                帶入 ↵
+                              </span>
                             </div>
-                            <span className="text-[10px] text-amber-700 opacity-0 group-hover:opacity-100 font-bold shrink-0 self-center">
-                              帶入 ↵
-                            </span>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -3328,10 +3576,10 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
                         type="button"
                         onClick={() => handleQuickCreateAsset(rowId, activeRow.siteInputName)}
                         className="flex-1 py-1.5 px-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                        title="將此名稱直接登記為廠內公務車或自用資產（免建案場）"
+                        title="將此名稱直接登記為廠內資產（動產/不動產/庫存）"
                       >
                         <Truck className="w-3 h-3" />
-                        <span>登記「{activeRow.siteInputName}」為廠內車輛/資產</span>
+                        <span>登記「{activeRow.siteInputName}」為廠內資產</span>
                       </button>
                     )}
                     <button

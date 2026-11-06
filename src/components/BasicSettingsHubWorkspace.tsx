@@ -83,7 +83,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
 import { InternalAssetManagerModal } from './widgets/InternalAssetManagerModal';
-import { loadStoredInternalAssets, InternalAsset } from './inbound/ExcelInboundGridModal';
+import { loadStoredInternalAssets, InternalAsset, getAssetCategory, getAssetCategoryLabel } from './inbound/ExcelInboundGridModal';
 
 interface BasicSettingsHubWorkspaceProps {
   companies: Company[];
@@ -910,9 +910,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
             }`}
           >
             <Truck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>廠內公務車輛與廠務資產 (換車/維護)</span>
+            <span>廠內資產維護 (動產 · 不動產 · 庫存)</span>
             <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.2 rounded font-mono font-bold">
-              {internalAssets.length} 項
+              {internalAssets.filter(a => (a as any).status !== 'RETIRED').length} 在勤 / {internalAssets.filter(a => (a as any).status === 'RETIRED').length} 淘汰
             </span>
           </button>
         </div>
@@ -2575,13 +2575,13 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <span>廠內自用公務車輛與廠務資產維護中心</span>
+                    <span>廠內資產維護中心</span>
                     <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full font-mono">
-                      SSoT 資產防斷鏈設計
+                      動產 · 不動產 · 庫存 三大領域 SSoT
                     </span>
                   </h3>
                   <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-                    公務貨車可能老舊損壞、汰舊換新。本中心提供「換車/汰換作業」：舊車標記 RETIRED 保留三年歷史簽收與會計帳目完整性，新車自動建立接棒打單；常備備料自然消耗，徹底解決現場與會計資產認知分歧。
+                    車輛機具可能老舊損壞、汰舊換新。本中心分流「在勤使用資產」與「歷史淘汰存檔區」：淘汰物件完整保留歷史簽收、保養修繕履歷與總耗資，新物件自動接棒打單；廠房固定設施與庫存進料登記分門別類，主畫面清爽乾淨。
                   </p>
                 </div>
               </div>
@@ -2592,42 +2592,46 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                 className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer shrink-0"
               >
                 <Truck className="w-4 h-4" />
-                <span>🚚 開啟資產維護中心 (含換車作業)</span>
+                <span>🚚 開啟廠內資產維護中心</span>
               </button>
             </div>
 
             {/* 資產統計卡片 */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-                <div className="text-xs font-semibold text-slate-500">總計資產筆數</div>
+                <div className="text-xs font-semibold text-slate-500">在勤總資產 (現役)</div>
                 <div className="text-2xl font-bold font-mono text-slate-900 mt-1">
-                  {internalAssets.length} <span className="text-xs font-normal text-slate-400">項</span>
+                  {internalAssets.filter(a => (a as any).status !== 'RETIRED').length} <span className="text-xs font-normal text-slate-400">項</span>
                 </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">車輛、機具與備料</div>
+                <div className="text-[11px] text-slate-400 mt-0.5">動產 / 不動產 / 庫存</div>
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-                <div className="text-xs font-semibold text-blue-600">公務運輸車輛</div>
+                <div className="text-xs font-semibold text-blue-600">🚗 在勤動產</div>
                 <div className="text-2xl font-bold font-mono text-blue-900 mt-1">
-                  {internalAssets.filter(a => a.type === 'VEHICLE').length} <span className="text-xs font-normal text-blue-400">輛</span>
+                  {internalAssets.filter(a => (a as any).status !== 'RETIRED' && getAssetCategory(a) === 'MOVABLE').length} <span className="text-xs font-normal text-blue-400">項</span>
                 </div>
-                <div className="text-[11px] text-blue-500 mt-0.5">貨車、公務小卡</div>
+                <div className="text-[11px] text-blue-500 mt-0.5">公務貨車、重型施工機具</div>
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-                <div className="text-xs font-semibold text-amber-600">重型施工機具</div>
+                <div className="text-xs font-semibold text-amber-600">🏢 廠內不動產</div>
                 <div className="text-2xl font-bold font-mono text-amber-900 mt-1">
-                  {internalAssets.filter(a => a.type === 'EQUIPMENT').length} <span className="text-xs font-normal text-amber-400">台</span>
+                  {internalAssets.filter(a => (a as any).status !== 'RETIRED' && getAssetCategory(a) === 'REAL_ESTATE').length} <span className="text-xs font-normal text-amber-400">項</span>
                 </div>
-                <div className="text-[11px] text-amber-500 mt-0.5">挖土機、堆高機</div>
+                <div className="text-[11px] text-amber-500 mt-0.5">廠房建物、固定設施</div>
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
-                <div className="text-xs font-semibold text-purple-600">常備庫存與廠務</div>
+                <div className="text-xs font-semibold text-purple-600">📦 廠內庫存 / 🏛️ 淘汰存檔</div>
                 <div className="text-2xl font-bold font-mono text-purple-900 mt-1">
-                  {internalAssets.filter(a => a.type === 'CENTRAL_STOCK' || a.type === 'FACILITY').length} <span className="text-xs font-normal text-purple-400">處</span>
+                  {internalAssets.filter(a => (a as any).status !== 'RETIRED' && getAssetCategory(a) === 'INVENTORY').length}{' '}
+                  <span className="text-xs font-normal text-slate-400">庫存 /</span>{' '}
+                  <span className="text-slate-500 font-normal text-sm">
+                    {internalAssets.filter(a => (a as any).status === 'RETIRED').length} 淘汰
+                  </span>
                 </div>
-                <div className="text-[11px] text-purple-500 mt-0.5">倉庫庫存、廠區修繕</div>
+                <div className="text-[11px] text-purple-500 mt-0.5">公共備料與歷史汰除存檔</div>
               </div>
             </div>
 
@@ -2635,9 +2639,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
               <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                 <div>
-                  <h4 className="text-xs font-bold text-slate-800">現行廠內資產與公務車輛總冊</h4>
+                  <h4 className="text-xs font-bold text-slate-800">現行廠內資產清冊 (動產 · 不動產 · 庫存)</h4>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    進貨管理工作台與極速打單模組均自動對齊此主檔，支援輸入代碼或別名（如 358）精準對應
+                    進貨簽收與極速打單模組均對齊此主檔；已淘汰資產移入歷史存檔區，保留簽收歷史防斷鏈
                   </p>
                 </div>
                 <button
@@ -2671,8 +2675,14 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                       return (
                         <tr key={ast.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="py-3 px-4">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                              {ast.categoryLabel}
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              getAssetCategory(ast) === 'MOVABLE'
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : getAssetCategory(ast) === 'REAL_ESTATE'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-purple-50 text-purple-700 border-purple-200'
+                            }`}>
+                              {getAssetCategoryLabel(getAssetCategory(ast))}
                             </span>
                           </td>
                           <td className="py-3 px-4 font-bold text-slate-900">

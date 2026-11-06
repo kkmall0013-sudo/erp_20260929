@@ -34,16 +34,28 @@ import {
   Check,
   FileCheck2,
   Building2,
-  BadgeAlert
+  BadgeAlert,
+  Archive,
+  Undo2,
+  Layers,
+  ShieldAlert
 } from 'lucide-react';
 import {
   InternalAsset,
+  InternalAssetCategory,
+  getAssetCategory,
+  getAssetCategoryLabel,
   AssetMaintenanceRecord,
   DEFAULT_INTERNAL_ASSETS,
   loadStoredInternalAssets,
-  saveStoredInternalAssets
+  saveStoredInternalAssets,
+  getDeletedInternalAssets,
+  softDeleteInternalAsset,
+  restoreInternalAsset,
+  purgeInternalAsset
 } from '../inbound/ExcelInboundGridModal';
 import { getAllInboundReceipts } from '../../db/sqlite';
+import { useAuth } from '../../context/AuthContext';
 
 interface InternalAssetManagerModalProps {
   isOpen: boolean;
@@ -58,9 +70,13 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
   onAssetsUpdated,
   triggerToast
 }) => {
-  const [assets, setAssets] = useState<InternalAsset[]>(() => loadStoredInternalAssets());
-  const [activeTypeTab, setActiveTypeTab] = useState<'ALL' | 'VEHICLE' | 'EQUIPMENT' | 'CENTRAL_STOCK' | 'FACILITY'>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'MAINTENANCE' | 'RETIRED'>('ALL');
+  const { currentUser, isSuperadmin } = useAuth();
+  const [assets, setAssets] = useState<InternalAsset[]>(() => loadStoredInternalAssets(false));
+  // 檢視模式：在勤使用中資產 (預設乾淨畫面) vs 歷史淘汰存檔區 vs Superadmin 軟刪除救援區
+  const [viewSection, setViewSection] = useState<'ACTIVE_ASSETS' | 'RETIRED_ARCHIVE' | 'SUPERADMIN_RECOVERY'>('ACTIVE_ASSETS');
+  // 三大分類：全部 | 動產 (車輛/機具/設備) | 不動產 (廠房/土地/設施) | 庫存 (公共備料登記)
+  const [activeCategoryTab, setActiveCategoryTab] = useState<'ALL' | 'MOVABLE' | 'REAL_ESTATE' | 'INVENTORY'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'MAINTENANCE'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
   // 1. 編輯 / 新增資產表單狀態
@@ -179,46 +195,88 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
     };
   };
 
-  // 篩選資產
-  const filteredAssets = useMemo(() => {
-    return assets.filter(a => {
-      if (activeTypeTab !== 'ALL' && a.type !== activeTypeTab) return false;
-      const currentStatus = a.status || 'ACTIVE';
-      if (statusFilter !== 'ALL' && currentStatus !== statusFilter) return false;
+  // 1. 在勤使用中資產 (排除 RETIRED 淘汰資產，確保主畫面乾淨)
+  const activeAssets = useMemo(() => {
+    return assets.filter(a => a.status !== 'RETIRED');
+  }, [assets]);
 
+  // 2. 歷史淘汰存檔區資產 (所有淘汰、報廢、舊換新資產歸檔於此)
+  const retiredAssets = useMemo(() => {
+    return assets.filter(a => a.status === 'RETIRED');
+  }, [assets]);
+
+  // 3. Superadmin 專屬軟刪除救援資產清單 (Admin 與一般同仁 100% 隱蔽)
+  const deletedAssets = useMemo(() => {
+    return isSuperadmin ? getDeletedInternalAssets() : [];
+  }, [isSuperadmin, assets]);
+
+  // 3. 當前呈現之過濾清單
+  const displayAssets = useMemo(() => {
+    const baseList = viewSection === 'ACTIVE_ASSETS' ? activeAssets : retiredAssets;
+    return baseList.filter(a => {
+      const cat = getAssetCategory(a);
+      if (viewSection === 'ACTIVE_ASSETS' && activeCategoryTab !== 'ALL' && cat !== activeCategoryTab) {
+        return false;
+      }
+      const currentStatus = a.status || 'ACTIVE';
+      if (statusFilter !== 'ALL' && currentStatus !== statusFilter) {
+        return false;
+      }
       if (searchTerm.trim()) {
         const kw = searchTerm.toLowerCase();
         const matchName = a.name.toLowerCase().includes(kw);
         const matchCode = a.code.toLowerCase().includes(kw);
         const matchPlate = (a.licensePlate || '').toLowerCase().includes(kw);
         const matchDriver = (a.driverOrCustodian || '').toLowerCase().includes(kw);
+        const matchLoc = (a.locationOrAddress || '').toLowerCase().includes(kw);
         const matchNotes = (a.notes || '').toLowerCase().includes(kw);
         const matchAlias = (a.aliases || []).some(al => al.toLowerCase().includes(kw));
-        return matchName || matchCode || matchPlate || matchDriver || matchNotes || matchAlias;
+        const matchReason = (a.retiredReason || '').toLowerCase().includes(kw);
+        return matchName || matchCode || matchPlate || matchDriver || matchLoc || matchNotes || matchAlias || matchReason;
       }
       return true;
     });
-  }, [assets, activeTypeTab, statusFilter, searchTerm]);
+  }, [viewSection, activeAssets, retiredAssets, activeCategoryTab, statusFilter, searchTerm]);
+
+  // 復歸服役 (從淘汰區還原回在勤區)
+  const handleRestoreAssetToActive = (asset: InternalAsset) => {
+    const nextList = assets.map(a => {
+      if (a.id === asset.id) {
+        return {
+          ...a,
+          name: a.name.replace(/\s*\(已汰除\)/g, '').replace(/\s*\(已報廢\)/g, ''),
+          status: 'ACTIVE' as const,
+          retiredDate: undefined,
+          retiredReason: undefined,
+          disposalMethod: undefined,
+          salvageAmount: undefined,
+          replacedByAssetId: undefined,
+          replacedByAssetName: undefined,
+        };
+      }
+      return a;
+    });
+    setAssets(nextList);
+    saveStoredInternalAssets(nextList);
+    if (triggerToast) triggerToast(`✓ 已將【${asset.name}】復歸服役至在勤資產清單！`, 'success');
+    onAssetsUpdated();
+  };
 
   // 開啟新增資產表單
   const handleOpenCreate = () => {
     setEditingAsset(null);
-    const defaultPrefix = activeTypeTab === 'VEHICLE' ? 'VEH' : activeTypeTab === 'EQUIPMENT' ? 'EQ' : activeTypeTab === 'CENTRAL_STOCK' ? 'STOCK' : 'FAC';
+    const cat: InternalAssetCategory = activeCategoryTab === 'ALL' ? 'MOVABLE' : activeCategoryTab;
+    const defaultPrefix = cat === 'MOVABLE' ? 'VEH' : cat === 'REAL_ESTATE' ? 'FAC' : 'STOCK';
     setFormData({
       code: `${defaultPrefix}-${Math.floor(100 + Math.random() * 900)}`,
       name: '',
-      type: activeTypeTab === 'ALL' ? 'VEHICLE' : activeTypeTab,
-      categoryLabel:
-        activeTypeTab === 'VEHICLE'
-          ? '🚚 廠內車輛'
-          : activeTypeTab === 'EQUIPMENT'
-          ? '🚜 重型機具'
-          : activeTypeTab === 'CENTRAL_STOCK'
-          ? '📦 常備庫存'
-          : '🏠 廠區修繕',
+      assetCategory: cat,
+      type: cat === 'MOVABLE' ? 'VEHICLE' : cat === 'REAL_ESTATE' ? 'FACILITY' : 'CENTRAL_STOCK',
+      categoryLabel: cat === 'MOVABLE' ? '🚗 廠內動產' : cat === 'REAL_ESTATE' ? '🏢 廠內不動產' : '📦 廠內庫存',
       aliases: [],
       licensePlate: '',
       driverOrCustodian: '',
+      locationOrAddress: '',
       status: 'ACTIVE',
       purchaseDate: new Date().toISOString().slice(0, 10),
       purchaseCost: 0,
@@ -231,7 +289,10 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
   // 開啟編輯資產表單
   const handleOpenEdit = (asset: InternalAsset) => {
     setEditingAsset(asset);
-    setFormData({ ...asset });
+    setFormData({
+      ...asset,
+      assetCategory: getAssetCategory(asset)
+    });
     setAliasesInput((asset.aliases || []).join(', '));
     setIsFormOpen(true);
   };
@@ -261,6 +322,14 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
       if (pureDigits && !parsedAliases.includes(pureDigits)) parsedAliases.push(pureDigits);
     }
 
+    const cat: InternalAssetCategory = formData.assetCategory || 'MOVABLE';
+    let subType = formData.type || (cat === 'MOVABLE' ? 'VEHICLE' : cat === 'REAL_ESTATE' ? 'FACILITY' : 'CENTRAL_STOCK');
+    const catLabel = cat === 'MOVABLE'
+      ? (formData.licensePlate ? '🚗 廠內動產 (車輛)' : '🚜 廠內動產 (機具/設備)')
+      : cat === 'REAL_ESTATE'
+      ? '🏢 廠內不動產 (廠房/設施)'
+      : '📦 廠內庫存 (公共備料)';
+
     let updatedList: InternalAsset[] = [];
 
     if (editingAsset) {
@@ -269,7 +338,11 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
           return {
             ...a,
             ...formData,
+            assetCategory: cat,
+            type: subType,
+            categoryLabel: catLabel,
             purchaseCost: Number(formData.purchaseCost) || 0,
+            locationOrAddress: formData.locationOrAddress?.trim(),
             aliases: Array.from(new Set([...(formData.aliases || []), ...parsedAliases])),
           } as InternalAsset;
         }
@@ -277,23 +350,18 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
       });
       if (triggerToast) triggerToast(`✓ 廠內資產【${formData.name}】資料已成功更新！`, 'success');
     } else {
-      const newId = `asset-${formData.type?.toLowerCase()}-${Date.now().toString().slice(-6)}`;
+      const newId = `asset-${cat.toLowerCase()}-${Date.now().toString().slice(-6)}`;
       const newAsset: InternalAsset = {
         id: newId,
         code: formData.code.trim(),
         name: formData.name.trim(),
-        type: formData.type || 'VEHICLE',
-        categoryLabel:
-          formData.type === 'VEHICLE'
-            ? '🚚 廠內車輛'
-            : formData.type === 'EQUIPMENT'
-            ? '🚜 重型機具'
-            : formData.type === 'CENTRAL_STOCK'
-            ? '📦 常備庫存'
-            : '🏠 廠區修繕',
+        assetCategory: cat,
+        type: subType,
+        categoryLabel: catLabel,
         aliases: Array.from(new Set(parsedAliases)),
         licensePlate: formData.licensePlate?.trim(),
         driverOrCustodian: formData.driverOrCustodian?.trim(),
+        locationOrAddress: formData.locationOrAddress?.trim(),
         status: formData.status || 'ACTIVE',
         purchaseDate: formData.purchaseDate || new Date().toISOString().slice(0, 10),
         purchaseCost: Number(formData.purchaseCost) || 0,
@@ -524,11 +592,11 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
   const handleConfirmDraftDelete = () => {
     if (!confirmDraftDeleteModal) return;
     const target = confirmDraftDeleteModal;
-    const nextList = assets.filter(a => a.id !== target.id);
-    setAssets(nextList);
-    saveStoredInternalAssets(nextList);
+    const operator = currentUser?.fullName || '系統操作員';
+    softDeleteInternalAsset(target.id, operator, '現場刪除建檔錯誤或未購入之預建資產');
+    setAssets(loadStoredInternalAssets(false));
     setConfirmDraftDeleteModal(null);
-    if (triggerToast) triggerToast(`已刪除建檔錯誤或未購入之預建資產【${target.name}】`, 'success');
+    if (triggerToast) triggerToast(`✅ 已軟刪除資產【${target.name}】（Admin 與一般人員隱蔽，Superadmin 可於救援區救回）`, 'success');
     onAssetsUpdated();
   };
 
@@ -556,14 +624,17 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white tracking-tight">
-                  廠內自用動產與公務車輛維護中心 (生命週期履歷)
+                  廠內資產維護中心
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950">
-                  SSoT 動產防斷鏈
+                  動產 · 不動產 · 庫存
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-mono">
+                  SSoT 防斷鏈
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                公司動產生命週期管理 · 支援「維修維護紀錄」、「全物件以新換舊 / 汰除除役」與「累計歷史耗資統計」
+                廠內動產 (車輛/機具/設備) · 不動產 (廠房/土地/設施) · 庫存 (公共備料進庫登記) 全生命週期管理
               </p>
             </div>
           </div>
@@ -575,7 +646,7 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
               className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>新增動產/廠內資產</span>
+              <span>新增廠內資產</span>
             </button>
 
             <button
@@ -590,12 +661,12 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
         </div>
 
         {/* 實務指南說明 Banner */}
-        <div className="px-6 py-2.5 bg-indigo-50/80 border-b border-indigo-200 text-xs text-indigo-950 flex items-start gap-2.5">
+        <div className="px-6 py-2 bg-indigo-50/80 border-b border-indigo-200 text-xs text-indigo-950 flex items-start gap-2.5">
           <ShieldCheck className="w-4 h-4 text-indigo-700 shrink-0 mt-0.5" />
-          <div className="flex-1 leading-relaxed">
-            <span className="font-bold">公司動產嚴格管理原則：</span>
-            動產入列後擁有完整生命週期與維護履歷，<strong>凡曾有關聯進貨單或維修單者，依法規與會計原則嚴禁物理刪除</strong>。
-            車輛、機具或設備老舊時，請點擊「<strong>🔄 汰換/除役</strong>」；送修保養請點擊「<strong>🔧 維修與履歷</strong>」，系統永久追蹤該物件累積花費與零件紀錄！
+          <div className="flex-1 leading-relaxed text-[11px]">
+            <span className="font-bold">資產法規與管理原則：</span>
+            廠內資產分為<strong>動產</strong>、<strong>不動產</strong>與<strong>庫存</strong>；動產淘汰後自動移至「<strong>歷史淘汰區</strong>」歸檔留存，主畫面保持清爽。
+            凡具備歷史進料或維修工單者，嚴禁物理刪除以維護會計審計；僅建檔錯誤或取消購入之無紀錄草稿允許刪除。
           </div>
           <button
             type="button"
@@ -607,66 +678,134 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
           </button>
         </div>
 
+        {/* 🌟 核心雙視圖主分頁：在勤使用資產 vs 歷史淘汰存檔區 */}
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 pt-2.5 bg-slate-100/70">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { setViewSection('ACTIVE_ASSETS'); setActiveCategoryTab('ALL'); }}
+              className={`pb-2.5 px-4 font-bold text-xs flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                viewSection === 'ACTIVE_ASSETS'
+                  ? 'border-indigo-600 text-indigo-700 bg-white rounded-t-lg shadow-xs'
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>目前在勤使用資產</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-100 text-emerald-800 font-bold">
+                {activeAssets.length} 項
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setViewSection('RETIRED_ARCHIVE'); }}
+              className={`pb-2.5 px-4 font-bold text-xs flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                viewSection === 'RETIRED_ARCHIVE'
+                  ? 'border-amber-600 text-amber-800 bg-white rounded-t-lg shadow-xs'
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Archive className="w-4 h-4 text-amber-600" />
+              <span>🏛️ 歷史淘汰存檔區</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-slate-200 text-slate-700 font-bold">
+                {retiredAssets.length} 項除役
+              </span>
+            </button>
+
+            {isSuperadmin && (
+              <button
+                type="button"
+                onClick={() => { setViewSection('SUPERADMIN_RECOVERY'); }}
+                className={`pb-2.5 px-4 font-bold text-xs flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                  viewSection === 'SUPERADMIN_RECOVERY'
+                    ? 'border-rose-600 text-rose-800 bg-white rounded-t-lg shadow-xs'
+                    : 'border-transparent text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ShieldAlert className="w-4 h-4 text-rose-600" />
+                <span>🛡️ 軟刪除救援區</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-rose-100 text-rose-800 font-bold">
+                  {deletedAssets.length} 筆
+                </span>
+              </button>
+            )}
+          </div>
+
+          <div className="text-[11px] text-slate-500 pb-2 hidden sm:block">
+            {viewSection === 'ACTIVE_ASSETS' 
+              ? '僅顯示服役在勤物件 · 淘汰物件已封存至淘汰區' 
+              : viewSection === 'RETIRED_ARCHIVE' 
+              ? '歷史除役資產永久歸檔 · 保留進貨與保修紀錄' 
+              : '最高架構師專用：可檢視並救援被軟刪除之資產'}
+          </div>
+        </div>
+
         {/* 工具列：分類分頁、搜尋、狀態切換 */}
         <div className="px-6 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3">
           
-          {/* 類別分頁切換 */}
-          <div className="flex items-center gap-1 bg-slate-200/80 p-1 rounded-xl text-xs font-semibold">
-            <button
-              onClick={() => setActiveTypeTab('ALL')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                activeTypeTab === 'ALL'
-                  ? 'bg-white text-slate-900 shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              全部物件 ({assets.length})
-            </button>
-            <button
-              onClick={() => setActiveTypeTab('VEHICLE')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                activeTypeTab === 'VEHICLE'
-                  ? 'bg-white text-indigo-700 shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Truck className="w-3.5 h-3.5" />
-              <span>公務車輛 ({assets.filter(a => a.type === 'VEHICLE').length})</span>
-            </button>
-            <button
-              onClick={() => setActiveTypeTab('EQUIPMENT')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                activeTypeTab === 'EQUIPMENT'
-                  ? 'bg-white text-amber-700 shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Wrench className="w-3.5 h-3.5" />
-              <span>重型機具 ({assets.filter(a => a.type === 'EQUIPMENT').length})</span>
-            </button>
-            <button
-              onClick={() => setActiveTypeTab('CENTRAL_STOCK')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                activeTypeTab === 'CENTRAL_STOCK'
-                  ? 'bg-white text-emerald-700 shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Package className="w-3.5 h-3.5" />
-              <span>常備庫存 ({assets.filter(a => a.type === 'CENTRAL_STOCK').length})</span>
-            </button>
-            <button
-              onClick={() => setActiveTypeTab('FACILITY')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                activeTypeTab === 'FACILITY'
-                  ? 'bg-white text-purple-700 shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Home className="w-3.5 h-3.5" />
-              <span>廠務設施 ({assets.filter(a => a.type === 'FACILITY').length})</span>
-            </button>
-          </div>
+          {/* 在勤模式下的三大領域分類切換 */}
+          {viewSection === 'SUPERADMIN_RECOVERY' ? (
+            <div className="flex items-center gap-2 text-xs font-bold text-rose-700 bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200">
+              <ShieldAlert className="w-4 h-4 text-rose-600" />
+              <span>最高架構師專屬：軟刪除資產救援清單（共 {deletedAssets.length} 筆已安全隔離物件）</span>
+            </div>
+          ) : viewSection === 'ACTIVE_ASSETS' ? (
+            <div className="flex items-center gap-1 bg-slate-200/80 p-1 rounded-xl text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setActiveCategoryTab('ALL')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  activeCategoryTab === 'ALL'
+                    ? 'bg-white text-slate-900 shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                全部在勤 ({activeAssets.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveCategoryTab('MOVABLE')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  activeCategoryTab === 'MOVABLE'
+                    ? 'bg-white text-amber-700 shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Truck className="w-3.5 h-3.5" />
+                <span>🚗 動產 ({activeAssets.filter(a => getAssetCategory(a) === 'MOVABLE').length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveCategoryTab('REAL_ESTATE')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  activeCategoryTab === 'REAL_ESTATE'
+                    ? 'bg-white text-purple-700 shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>🏢 不動產 ({activeAssets.filter(a => getAssetCategory(a) === 'REAL_ESTATE').length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveCategoryTab('INVENTORY')}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                  activeCategoryTab === 'INVENTORY'
+                    ? 'bg-white text-emerald-700 shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span>📦 庫存 ({activeAssets.filter(a => getAssetCategory(a) === 'INVENTORY').length})</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+              <Archive className="w-4 h-4 text-amber-600" />
+              <span>歷史淘汰除役物件清單（共 {displayAssets.length} 筆）</span>
+            </div>
+          )}
 
           {/* 搜尋與狀態篩選 */}
           <div className="flex items-center gap-2.5">
@@ -674,33 +813,170 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="搜尋名稱、車牌、別名、保管人..."
+                placeholder="搜尋名稱、車牌、代碼、別名、保管人..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-56"
+                className="pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-60"
               />
             </div>
 
-            <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-700"
-            >
-              <option value="ALL">全部運作狀態</option>
-              <option value="ACTIVE">✅ 現役服役中</option>
-              <option value="MAINTENANCE">🔧 保養檢修中</option>
-              <option value="RETIRED">📦 已汰除/報廢 (保留歷程)</option>
-            </select>
+            {viewSection === 'ACTIVE_ASSETS' && (
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value as any)}
+                className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium text-slate-700"
+              >
+                <option value="ALL">全部運作狀態</option>
+                <option value="ACTIVE">✅ 現役服役中</option>
+                <option value="MAINTENANCE">🔧 保養檢修中</option>
+              </select>
+            )}
           </div>
         </div>
 
-        {/* 資產清單表格 */}
+        {/* 資產清單主內容區 */}
         <div className="flex-1 overflow-y-auto p-6">
-          {filteredAssets.length === 0 ? (
-            <div className="p-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
-              查無符合篩選條件之廠內自用動產或公務資產。
+          
+          {/* 🛡️ Superadmin 專屬軟刪除救援區視圖 */}
+          {viewSection === 'SUPERADMIN_RECOVERY' && (
+            <div className="space-y-4">
+              <div className="mb-4 p-4 bg-slate-900 text-white rounded-xl border border-slate-700 flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold shrink-0 border border-rose-500/30">
+                    <ShieldAlert className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>廠內資產軟刪除救援中心 (Superadmin 專用)</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500 text-white">
+                        一般人員完全隱蔽
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      一般 Admin 與現場同仁刪除之資產均自動轉為「軟刪除」並留存日誌。您可以在此一鍵救援還原回在勤狀態，或進行物理抹除。
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewSection('ACTIVE_ASSETS')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-lg text-xs font-bold shrink-0 cursor-pointer transition-colors"
+                >
+                  ← 返回在勤資產
+                </button>
+              </div>
+
+              {deletedAssets.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
+                  目前無任何被軟刪除的廠內資產。
+                </div>
+              ) : (
+                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-200">
+                        <th className="py-2.5 px-3">類別</th>
+                        <th className="py-2.5 px-3">資產名稱</th>
+                        <th className="py-2.5 px-3">代碼</th>
+                        <th className="py-2.5 px-3">刪除人</th>
+                        <th className="py-2.5 px-3">刪除時間</th>
+                        <th className="py-2.5 px-3">備註原因</th>
+                        <th className="py-2.5 px-3 text-right">Superadmin 處置</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {deletedAssets.map(ast => (
+                        <tr key={ast.id} className="hover:bg-amber-50/50 transition-colors">
+                          <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                              {getAssetCategoryLabel(getAssetCategory(ast))}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-bold text-slate-900">{ast.name}</td>
+                          <td className="py-2.5 px-3 font-mono font-semibold text-indigo-700">{ast.code}</td>
+                          <td className="py-2.5 px-3 text-slate-700 font-medium">{ast.deletedBy || '管理員'}</td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500">{ast.deletedAt || '—'}</td>
+                          <td className="py-2.5 px-3 text-slate-500 text-[11px]">{ast.deleteReason || '草稿刪除'}</td>
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  restoreInternalAsset(ast.id, currentUser?.fullName || 'Superadmin');
+                                  setAssets(loadStoredInternalAssets(false));
+                                  if (triggerToast) triggerToast(`✅ 已救援還原資產【${ast.name}】！各模組同仁已立即可見`, 'success');
+                                  onAssetsUpdated();
+                                }}
+                                className="px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-300 flex items-center gap-1 cursor-pointer transition-colors"
+                              >
+                                <Undo2 className="w-3.5 h-3.5" />
+                                <span>↩️ 救回還原</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!window.confirm(`確定要永久物理抹除【${ast.name}】嗎？此操作不可復原。`)) return;
+                                  purgeInternalAsset(ast.id, currentUser?.fullName || 'Superadmin');
+                                  setAssets(loadStoredInternalAssets(false));
+                                  if (triggerToast) triggerToast(`🗑️ 已永久抹除【${ast.name}】`, 'warn');
+                                  onAssetsUpdated();
+                                }}
+                                className="px-2 py-1 text-xs font-semibold text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="物理抹除"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          ) : (
+          )}
+
+          {/* 歷史淘汰存檔區專用頂部說明 Banner */}
+          {viewSection === 'RETIRED_ARCHIVE' && (
+            <div className="mb-4 p-4 bg-slate-900 text-white rounded-xl border border-slate-700 flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold shrink-0 border border-amber-500/30">
+                  <Archive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>廠內資產歷史淘汰與除役存檔區</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-400 text-slate-950">
+                      永久封存不刪單
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    動產一旦淘汰除役即自動歸檔於此，<strong>主畫面完全淨化，僅保留服役在勤之物件</strong>。
+                    此區物件之歷史進貨單據、發票金額與保修工單永久完整保留，隨時可調閱全生命週期總耗資；若操作失誤，亦可點擊「復歸服役」還原。
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewSection('ACTIVE_ASSETS')}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-lg text-xs font-bold shrink-0 cursor-pointer transition-colors"
+              >
+                ← 返回在勤資產
+              </button>
+            </div>
+          )}
+
+          {displayAssets.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
+              {viewSection === 'ACTIVE_ASSETS'
+                ? '查無符合條件之在勤資產（可點擊右上角「+ 新增廠內資產」）。'
+                : '目前歷史淘汰存檔區尚無任何除役資產。'}
+            </div>
+          ) : viewSection === 'ACTIVE_ASSETS' ? (
+            /* ============================================================== */
+            /* A. 目前在勤使用資產表格 (乾淨畫面) */
+            /* ============================================================== */
             <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
@@ -708,27 +984,25 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                     <th className="py-2.5 px-3 w-12 text-center">#</th>
                     <th className="py-2.5 px-3 min-w-[210px]">資產全名 / 車牌機號</th>
                     <th className="py-2.5 px-3 w-28 text-center">資產代碼</th>
-                    <th className="py-2.5 px-3 w-24">分類</th>
+                    <th className="py-2.5 px-3 w-24">領域分類</th>
                     <th className="py-2.5 px-3 min-w-[150px]">快速比對別名</th>
-                    <th className="py-2.5 px-3 w-24">保管人/司機</th>
+                    <th className="py-2.5 px-3 w-28">保管人/司機/位置</th>
                     <th className="py-2.5 px-3 w-24 text-center">運作狀態</th>
                     <th className="py-2.5 px-3 w-32 text-right">進料 / 維修總耗資</th>
-                    <th className="py-2.5 px-3 w-44 text-center">動產生命週期管理</th>
+                    <th className="py-2.5 px-3 w-48 text-center">動產生命週期管理</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredAssets.map((asset, idx) => {
+                  {displayAssets.map((asset, idx) => {
                     const stats = getAssetLifecycleStats(asset);
                     const currentStatus = asset.status || 'ACTIVE';
-                    const isRetired = currentStatus === 'RETIRED';
+                    const cat = getAssetCategory(asset);
                     const hasRecords = stats.inboundCount > 0 || stats.maintCount > 0;
 
                     return (
                       <tr
                         key={asset.id}
-                        className={`hover:bg-slate-50/80 transition-colors ${
-                          isRetired ? 'bg-slate-50/60 text-slate-400' : 'text-slate-800'
-                        }`}
+                        className="hover:bg-slate-50/80 transition-colors text-slate-800"
                       >
                         <td className="py-2.5 px-3 text-center font-mono text-slate-400">
                           {idx + 1}
@@ -736,10 +1010,9 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                         <td className="py-2.5 px-3">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-slate-900 flex items-center gap-1.5">
-                              {asset.type === 'VEHICLE' && <Truck className="w-4 h-4 text-indigo-600 shrink-0" />}
-                              {asset.type === 'EQUIPMENT' && <Wrench className="w-4 h-4 text-amber-600 shrink-0" />}
-                              {asset.type === 'CENTRAL_STOCK' && <Package className="w-4 h-4 text-emerald-600 shrink-0" />}
-                              {asset.type === 'FACILITY' && <Home className="w-4 h-4 text-purple-600 shrink-0" />}
+                              {cat === 'MOVABLE' && <Truck className="w-4 h-4 text-amber-600 shrink-0" />}
+                              {cat === 'REAL_ESTATE' && <Home className="w-4 h-4 text-purple-600 shrink-0" />}
+                              {cat === 'INVENTORY' && <Package className="w-4 h-4 text-emerald-600 shrink-0" />}
                               <span>{asset.name}</span>
                             </span>
 
@@ -759,8 +1032,12 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                           {asset.code}
                         </td>
                         <td className="py-2.5 px-3 font-medium">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
-                            {asset.categoryLabel}
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            cat === 'MOVABLE' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            cat === 'REAL_ESTATE' ? 'bg-purple-50 text-purple-800 border-purple-200' :
+                            'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          }`}>
+                            {cat === 'MOVABLE' ? '🚗 動產' : cat === 'REAL_ESTATE' ? '🏢 不動產' : '📦 庫存'}
                           </span>
                         </td>
                         <td className="py-2.5 px-3">
@@ -781,6 +1058,10 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                               <User className="w-3 h-3 text-slate-400" />
                               <span>{asset.driverOrCustodian}</span>
                             </span>
+                          ) : asset.locationOrAddress ? (
+                            <span className="text-slate-500 text-[11px] truncate max-w-[120px] block" title={asset.locationOrAddress}>
+                              📍 {asset.locationOrAddress}
+                            </span>
                           ) : (
                             <span className="text-slate-400">—</span>
                           )}
@@ -798,11 +1079,6 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                               檢修保養中
                             </span>
                           )}
-                          {currentStatus === 'RETIRED' && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 border border-slate-300">
-                              已除役/汰換
-                            </span>
-                          )}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono">
                           <div className="font-bold text-indigo-700">
@@ -816,7 +1092,7 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                         </td>
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
-                            {/* 🔧 維修與生命週期履歷按鈕 (所有物件均可開啟) */}
+                            {/* 🔧 維修與生命週期履歷按鈕 */}
                             <button
                               type="button"
                               onClick={() => handleOpenMaintenance(asset)}
@@ -827,22 +1103,16 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                               <span>維修/履歷</span>
                             </button>
 
-                            {/* 🔄 全物件汰換 / 汰除 / 報廢按鈕 */}
-                            {!isRetired ? (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenRetireModal(asset)}
-                                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                                title="老舊或損壞資產汰換（可無縫接替新機/新車，或純粹除役報廢）"
-                              >
-                                <ArrowRightLeft className="w-3 h-3 text-amber-700" />
-                                <span>汰換/除役</span>
-                              </button>
-                            ) : (
-                              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-400 text-[10px] font-mono rounded border border-slate-200">
-                                已除役
-                              </span>
-                            )}
+                            {/* 🔄 全物件汰換 / 汰除 / 報廢按鈕 (移至淘汰區) */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRetireModal(asset)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                              title="老舊或損壞資產汰換（可換新接替或純除役，完成後自動移入歷史淘汰區）"
+                            >
+                              <ArrowRightLeft className="w-3 h-3 text-amber-700" />
+                              <span>汰換/除役</span>
+                            </button>
 
                             {/* ✏️ 編輯按鈕 */}
                             <button
@@ -879,15 +1149,154 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                 </tbody>
               </table>
             </div>
+          ) : (
+            /* ============================================================== */
+            /* B. 歷史淘汰存檔區表格 (已除役/報廢資產專用檢視) */
+            /* ============================================================== */
+            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-200/90 text-slate-800 font-bold border-b border-slate-300">
+                    <th className="py-2.5 px-3 w-12 text-center">#</th>
+                    <th className="py-2.5 px-3 min-w-[200px]">已淘汰資產全名 / 原車牌</th>
+                    <th className="py-2.5 px-3 w-24 text-center">原代碼</th>
+                    <th className="py-2.5 px-3 w-20">領域分類</th>
+                    <th className="py-2.5 px-3 w-24 text-center">淘汰日期</th>
+                    <th className="py-2.5 px-3 w-24 text-center">處分方式</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">除役原因 / 接棒新資產</th>
+                    <th className="py-2.5 px-3 w-24 text-right">回收殘值</th>
+                    <th className="py-2.5 px-3 w-32 text-right">一生累積耗資</th>
+                    <th className="py-2.5 px-3 w-44 text-center">歷史管理與還原</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-slate-50/50">
+                  {displayAssets.map((asset, idx) => {
+                    const stats = getAssetLifecycleStats(asset);
+                    const cat = getAssetCategory(asset);
+                    const hasRecords = stats.inboundCount > 0 || stats.maintCount > 0;
+
+                    return (
+                      <tr
+                        key={asset.id}
+                        className="hover:bg-slate-100/80 transition-colors text-slate-700"
+                      >
+                        <td className="py-2.5 px-3 text-center font-mono text-slate-400">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-800 line-through decoration-slate-400">
+                              {asset.name}
+                            </span>
+                            {asset.licensePlate && (
+                              <span className="font-mono bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">
+                                {asset.licensePlate}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-amber-800 font-semibold inline-block mt-0.5">
+                            已封存於淘汰區 · 現場打單選單自動隱藏
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-500">
+                          {asset.code}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-700">
+                            {cat === 'MOVABLE' ? '🚗 動產' : cat === 'REAL_ESTATE' ? '🏢 不動產' : '📦 庫存'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono text-slate-600">
+                          {asset.retiredDate || '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                            {asset.disposalMethod === 'SCRAPPED' ? '報廢拆解' :
+                             asset.disposalMethod === 'SOLD' ? '二手變賣' :
+                             asset.disposalMethod === 'TRADE_IN' ? '舊換新折抵' :
+                             asset.disposalMethod === 'STORED' ? '停用封存' : '除役'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="text-slate-800 text-[11px] font-medium">
+                            {asset.retiredReason || '使用年限屆滿除役'}
+                          </div>
+                          {asset.replacedByAssetName && (
+                            <div className="text-[10px] text-indigo-700 font-semibold flex items-center gap-1 mt-0.5">
+                              <span>接替新機：</span>
+                              <strong className="underline">{asset.replacedByAssetName}</strong>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-700">
+                          {asset.salvageAmount ? `NT$ ${asset.salvageAmount.toLocaleString()}` : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono">
+                          <div className="font-bold text-slate-900">
+                            NT$ {stats.totalLifetimeSpend.toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            進料:{stats.inboundCount}筆 · 維修:{stats.maintCount}次
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {/* 🔧 查看歷史工單與生命週期花費 */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenMaintenance(asset)}
+                              className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                              title="調閱該資產服役期間的所有進貨簽收單與維修紀錄"
+                            >
+                              <History className="w-3 h-3 text-slate-700" />
+                              <span>歷史履歷</span>
+                            </button>
+
+                            {/* ↩️ 復歸服役 (還原至在勤清單) */}
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreAssetToActive(asset)}
+                              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                              title="操作失誤或重新啟用？點擊一鍵還原回在勤使用資產"
+                            >
+                              <Undo2 className="w-3 h-3 text-emerald-700" />
+                              <span>復歸服役</span>
+                            </button>
+
+                            {/* 🗑️ 刪除 (嚴格防呆) */}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteAssetAttempt(asset)}
+                              className={`p-1 rounded transition-colors ${
+                                hasRecords
+                                  ? 'text-slate-300 hover:text-rose-400 hover:bg-rose-50 cursor-pointer'
+                                  : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer'
+                              }`}
+                              title={
+                                hasRecords
+                                  ? '已有歷史帳目，依法規禁止刪除'
+                                  : '無任何紀錄之錯誤草稿可徹底刪除'
+                              }
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
         {/* 底部總覽狀態列 */}
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-500">
           <div className="flex items-center gap-4">
-            <span>現役服役：<strong className="text-emerald-700">{assets.filter(a => (a.status || 'ACTIVE') === 'ACTIVE').length}</strong> 項</span>
-            <span>檢修中：<strong className="text-amber-700">{assets.filter(a => a.status === 'MAINTENANCE').length}</strong> 項</span>
-            <span>已汰除報廢：<strong className="text-slate-600">{assets.filter(a => a.status === 'RETIRED').length}</strong> 項（歷史帳目完整留存）</span>
+            <span>服役在勤中：<strong className="text-emerald-700 font-bold">{activeAssets.length}</strong> 項（主畫面乾淨）</span>
+            <span>歷史淘汰存檔：<strong className="text-amber-800 font-bold">{retiredAssets.length}</strong> 項（歷史帳目完整留存）</span>
+            <span className="hidden md:inline">三大領域：動產 {assets.filter(a => getAssetCategory(a) === 'MOVABLE').length} · 不動產 {assets.filter(a => getAssetCategory(a) === 'REAL_ESTATE').length} · 庫存 {assets.filter(a => getAssetCategory(a) === 'INVENTORY').length}</span>
           </div>
           <button
             type="button"
@@ -909,62 +1318,138 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
               <div className="flex items-center gap-2">
                 <Truck className="w-4 h-4 text-amber-400" />
                 <h3 className="font-bold text-sm">
-                  {editingAsset ? '編輯廠內自用動產項目' : '新增廠內自用動產項目'}
+                  {editingAsset ? '編輯廠內資產項目' : '新增廠內資產項目'}
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsFormOpen(false)}
-                className="text-slate-400 hover:text-white p-1"
+                className="text-slate-400 hover:text-white p-1 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <form onSubmit={handleSaveAsset} className="p-5 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    資產類型分類 <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={formData.type}
-                    onChange={e => {
-                      const t = e.target.value as any;
+              
+              {/* 核心三大領域分類選擇 */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">
+                  資產核心領域分類 <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
                       setFormData({
                         ...formData,
-                        type: t,
-                        categoryLabel:
-                          t === 'VEHICLE'
-                            ? '🚚 廠內車輛'
-                            : t === 'EQUIPMENT'
-                            ? '🚜 重型機具'
-                            : t === 'CENTRAL_STOCK'
-                            ? '📦 常備庫存'
-                            : '🏠 廠區修繕'
+                        assetCategory: 'MOVABLE',
+                        type: 'VEHICLE',
+                        categoryLabel: '🚗 廠內動產'
                       });
                     }}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
+                    className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                      (formData.assetCategory || 'MOVABLE') === 'MOVABLE'
+                        ? 'bg-amber-50 border-amber-500 text-amber-900 font-bold ring-2 ring-amber-400/40 shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
                   >
-                    <option value="VEHICLE">🚚 廠內公務車輛 (貨車/公務車)</option>
-                    <option value="EQUIPMENT">🚜 重型施工機具 (怪手/堆高機/發電機)</option>
-                    <option value="FACILITY">🏠 廠區公共修繕 (屋頂/鐵捲門/水電)</option>
-                    <option value="CENTRAL_STOCK">📦 廠內公共儲備庫存 (通用耗材備料)</option>
-                  </select>
+                    <div className="text-base mb-0.5">🚗</div>
+                    <div className="text-xs font-bold">動產</div>
+                    <div className="text-[10px] text-slate-400">車輛 · 機具 · 設備</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormData({
+                        ...formData,
+                        assetCategory: 'REAL_ESTATE',
+                        type: 'FACILITY',
+                        categoryLabel: '🏢 廠內不動產'
+                      });
+                    }}
+                    className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                      formData.assetCategory === 'REAL_ESTATE'
+                        ? 'bg-purple-50 border-purple-500 text-purple-900 font-bold ring-2 ring-purple-400/40 shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-base mb-0.5">🏢</div>
+                    <div className="text-xs font-bold">不動產</div>
+                    <div className="text-[10px] text-slate-400">廠房 · 土地 · 設施</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormData({
+                        ...formData,
+                        assetCategory: 'INVENTORY',
+                        type: 'CENTRAL_STOCK',
+                        categoryLabel: '📦 廠內庫存'
+                      });
+                    }}
+                    className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                      formData.assetCategory === 'INVENTORY'
+                        ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-bold ring-2 ring-emerald-400/40 shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="text-base mb-0.5">📦</div>
+                    <div className="text-xs font-bold">庫存</div>
+                    <div className="text-[10px] text-slate-400">常備備料進庫登記</div>
+                  </button>
                 </div>
 
+                {formData.assetCategory === 'INVENTORY' && (
+                  <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] text-emerald-900 leading-relaxed">
+                    💡 <strong>庫存進貨登記說明：</strong>進貨時若選取此項目，貨物將直接登記進廠內公共庫存；依作業慣例，材料消耗時不強制做系統出庫扣帳，主要用於進貨追蹤與總花費累計。
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
                     系統識別代碼 <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
-                    placeholder="如: VEH-358、EQ-PC200"
+                    placeholder={
+                      formData.assetCategory === 'MOVABLE' ? '如: VEH-358、EQ-PC200' :
+                      formData.assetCategory === 'REAL_ESTATE' ? '如: FAC-MAIN、FAC-ROOF' :
+                      '如: STOCK-01、STOCK-STEEL'
+                    }
                     value={formData.code || ''}
                     onChange={e => setFormData({ ...formData, code: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
                     required
                   />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    子項屬性
+                  </label>
+                  {formData.assetCategory === 'MOVABLE' ? (
+                    <select
+                      value={formData.type}
+                      onChange={e => setFormData({ ...formData, type: e.target.value as any })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-medium"
+                    >
+                      <option value="VEHICLE">🚚 公務車輛 (貨車/卡車)</option>
+                      <option value="EQUIPMENT">🚜 重型機具 (怪手/堆高機/發電機)</option>
+                    </select>
+                  ) : formData.assetCategory === 'REAL_ESTATE' ? (
+                    <div className="py-2 px-3 bg-purple-50 text-purple-900 font-semibold rounded-lg border border-purple-200">
+                      🏢 廠區土地/廠房建物/固定設施
+                    </div>
+                  ) : (
+                    <div className="py-2 px-3 bg-emerald-50 text-emerald-900 font-semibold rounded-lg border border-emerald-200">
+                      📦 廠內常備儲備材料庫存
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -974,7 +1459,11 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                 </label>
                 <input
                   type="text"
-                  placeholder="如: 廠內貨車 [358-AB]、PC-200 挖土機 (怪手)"
+                  placeholder={
+                    formData.assetCategory === 'MOVABLE' ? '如: 廠內貨車 [358-AB]、PC-200 挖土機 (怪手)' :
+                    formData.assetCategory === 'REAL_ESTATE' ? '如: 五股總廠主廠房、天車起重桁架' :
+                    '如: 廠內公共儲備庫存、常備型鋼庫存'
+                  }
                   value={formData.name || ''}
                   onChange={e => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold"
@@ -982,15 +1471,16 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                 />
               </div>
 
-              {formData.type === 'VEHICLE' ? (
+              {/* 動態分類對應欄位 */}
+              {formData.assetCategory === 'MOVABLE' ? (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      車牌號碼 (車輛專用)
+                      車牌號碼 / 機具編號
                     </label>
                     <input
                       type="text"
-                      placeholder="如: 358-AB"
+                      placeholder="如: 358-AB 或 PC-200"
                       value={formData.licensePlate || ''}
                       onChange={e => setFormData({ ...formData, licensePlate: e.target.value })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold uppercase"
@@ -1003,7 +1493,35 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                     </label>
                     <input
                       type="text"
-                      placeholder="如: 陳司機 或 公務組"
+                      placeholder="如: 陳司機 或 機具組"
+                      value={formData.driverOrCustodian || ''}
+                      onChange={e => setFormData({ ...formData, driverOrCustodian: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+              ) : formData.assetCategory === 'REAL_ESTATE' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      坐落地點 / 建物廠房標號
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="如: 新北市五股區成泰路三段廠區"
+                      value={formData.locationOrAddress || ''}
+                      onChange={e => setFormData({ ...formData, locationOrAddress: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">
+                      廠區責任管理同仁
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="如: 廠務主管 / 總務組"
                       value={formData.driverOrCustodian || ''}
                       onChange={e => setFormData({ ...formData, driverOrCustodian: e.target.value })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -1014,47 +1532,46 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      保管人 / 專責維修技師
+                      存放庫位 / 倉區說明
                     </label>
                     <input
                       type="text"
-                      placeholder="如: 機械組 / 廠務組"
-                      value={formData.driverOrCustodian || ''}
-                      onChange={e => setFormData({ ...formData, driverOrCustodian: e.target.value })}
+                      placeholder="如: 總廠 A 區常備料架、鋼材堆置區"
+                      value={formData.locationOrAddress || ''}
+                      onChange={e => setFormData({ ...formData, locationOrAddress: e.target.value })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
 
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">
-                      原始購入金額 (選填)
+                      庫存負責同仁
                     </label>
                     <input
-                      type="number"
-                      placeholder="NT$"
-                      value={formData.purchaseCost || 0}
-                      onChange={e => setFormData({ ...formData, purchaseCost: Number(e.target.value) })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                      type="text"
+                      placeholder="如: 倉管組 / 現場物料員"
+                      value={formData.driverOrCustodian || ''}
+                      onChange={e => setFormData({ ...formData, driverOrCustodian: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                 </div>
               )}
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 flex items-center justify-between">
-                  <span>常用辨識別名 (以逗點或空格分隔)</span>
-                  <span className="text-[10px] text-slate-400 font-normal">現場登打時輸入別名系統會精準自動對齊</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="如: 358, 358-AB, 怪手, 叉車, 堆高機"
-                  value={aliasesInput}
-                  onChange={e => setAliasesInput(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-                />
-              </div>
-
               <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    原始購入 / 取得金額 (選填)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="NT$"
+                    value={formData.purchaseCost || 0}
+                    onChange={e => setFormData({ ...formData, purchaseCost: Number(e.target.value) })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                  />
+                </div>
+
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
                     購置 / 啟用日期
@@ -1066,7 +1583,23 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
                   />
                 </div>
+              </div>
 
+              <div>
+                <label className="block font-bold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>常用辨識別名 (以逗點或空格分隔)</span>
+                  <span className="text-[10px] text-slate-400 font-normal">現場打單輸入此別名系統會精準自動對齊</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="如: 358, 358-AB, 怪手, 叉車, 備料, 倉庫"
+                  value={aliasesInput}
+                  onChange={e => setAliasesInput(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
                     運作狀態
@@ -1078,22 +1611,22 @@ export const InternalAssetManagerModal: React.FC<InternalAssetManagerModalProps>
                   >
                     <option value="ACTIVE">✅ 現役服役中 (可於進貨單選取)</option>
                     <option value="MAINTENANCE">🔧 保養檢修中 (暫時送修)</option>
-                    <option value="RETIRED">📦 已除役/汰除 (日常選單隱藏，保留歷程)</option>
+                    <option value="RETIRED">📦 已除役/汰除 (自動移入歷史淘汰區)</option>
                   </select>
                 </div>
-              </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  備註說明
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="備註規格、購置年份、固定配合修配廠等備忘..."
-                  value={formData.notes || ''}
-                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    備註說明
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="規格說明、購置年份、固定配合修配廠等備忘..."
+                    value={formData.notes || ''}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-200">

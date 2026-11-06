@@ -3820,17 +3820,115 @@ export function updateProjectRecord(
   return getProjectById(id)!;
 }
 
-// 軟刪除案場
-export function deleteProjectRecord(id: string, operatorName: string = '系統管理員'): boolean {
+// 軟刪除案場 (一般同仁與Admin均隱蔽，僅 Superadmin 可在救援中心檢視並救回)
+export function deleteProjectRecord(id: string, operatorName: string = '系統管理員', reason: string = '日常管理刪除'): boolean {
   if (!dbInstance) return false;
   const existing = getProjectById(id);
   if (!existing) return false;
   const now = new Date().toISOString();
   dbInstance.run(`UPDATE projects SET isDeleted = 1, updatedAt = '${now}', version = version + 1 WHERE id = '${id}';`);
-  logAudit(dbInstance, operatorName, '刪除資料', '專案案場工程', existing.name, { '刪除狀態': '正常' }, { '刪除狀態': '已刪除' });
+  logAudit(dbInstance, operatorName, '軟刪除', '專案案場工程', existing.name, {
+    '案場代碼': existing.projectCode,
+    '案場名稱': existing.name,
+    '業主名稱': existing.ownerName,
+    '合約金額': existing.contractAmount,
+    '原狀態': '正常有效'
+  }, {
+    '刪除狀態': '已軟刪除 (一般同仁與Admin隱蔽，Superadmin 可在救援中心救回)',
+    '刪除人': operatorName,
+    '刪除原因': reason,
+    '刪除時間': now
+  });
   saveDatabaseSnapshot();
   notifyListeners();
   return true;
+}
+
+// 🛡️ Superadmin 救援還原專案案場
+export function restoreProjectRecord(id: string, operatorName: string = 'Superadmin'): boolean {
+  if (!dbInstance) return false;
+  const res = dbInstance.exec(`SELECT name, projectCode FROM projects WHERE id = '${id}';`);
+  const name = res[0]?.values[0]?.[0] ? String(res[0].values[0][0]) : id;
+  const code = res[0]?.values[0]?.[1] ? String(res[0].values[0][1]) : '';
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE projects SET isDeleted = 0, updatedAt = '${now}', version = version + 1 WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '救援還原', '專案案場工程', id, {
+    '案場名稱': name,
+    '案場代碼': code,
+    '刪除狀態': '已軟刪除'
+  }, {
+    '案場名稱': name,
+    '案場代碼': code,
+    '刪除狀態': '已救援還原服役 (所有同仁立即可見)',
+    '救援人': operatorName,
+    '救援時間': now
+  });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🗑️ Superadmin 永久物理抹除專案案場
+export function purgeProjectRecord(id: string, operatorName: string = 'Superadmin'): boolean {
+  if (!dbInstance) return false;
+  const res = dbInstance.exec(`SELECT name, projectCode FROM projects WHERE id = '${id}';`);
+  const name = res[0]?.values[0]?.[0] ? String(res[0].values[0][0]) : id;
+  const now = new Date().toISOString();
+  dbInstance.run(`DELETE FROM project_sites WHERE projectId = '${id}';`);
+  dbInstance.run(`DELETE FROM projects WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '永久抹除', '專案案場工程', id, {
+    '案場名稱': name
+  }, {
+    '狀態': '已永久自資料庫物理清除',
+    '執行人': operatorName,
+    '抹除時間': now
+  });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 取得所有已被軟刪除之專案案場 (Superadmin 救援中心專用)
+export function getDeletedProjects(): Project[] {
+  if (!dbInstance) return [];
+  ensureDatabaseIntegrity(dbInstance);
+  const sql = `SELECT * FROM projects WHERE isDeleted = 1 ORDER BY updatedAt DESC;`;
+  const res = dbInstance.exec(sql);
+  if (!res.length || !res[0].values) return [];
+  const cols = res[0].columns;
+  const colMap = new Map<string, number>();
+  cols.forEach((c, idx) => colMap.set(c, idx));
+  const getVal = (row: any[], col: string) => {
+    const idx = colMap.get(col);
+    return idx !== undefined ? row[idx] : undefined;
+  };
+
+  return res[0].values.map(v => {
+    const pId = String(getVal(v, 'id') || '');
+    return {
+      id: pId,
+      projectCode: String(getVal(v, 'projectCode') || ''),
+      name: String(getVal(v, 'name') || ''),
+      ownerName: String(getVal(v, 'ownerName') || ''),
+      ownerTaxId: String(getVal(v, 'ownerTaxId') || ''),
+      buildingType: getVal(v, 'buildingType') ? String(getVal(v, 'buildingType')) : undefined,
+      workScope: getVal(v, 'workScope') ? String(getVal(v, 'workScope')) : undefined,
+      contractAmount: Number(getVal(v, 'contractAmount') || 0),
+      budgetAmount: Number(getVal(v, 'budgetAmount') || 0),
+      committedCost: Number(getVal(v, 'committedCost') || 0),
+      actualCost: Number(getVal(v, 'actualCost') || 0),
+      startDate: String(getVal(v, 'startDate') || ''),
+      endDate: String(getVal(v, 'endDate') || ''),
+      status: (getVal(v, 'status') || 'ACTIVE') as Project['status'],
+      isLocked: Boolean(getVal(v, 'isLocked')),
+      companyId: String(getVal(v, 'companyId') || ''),
+      budgetPartners: getProjectBudgetPartners(pId),
+      isDeleted: true,
+      version: Number(getVal(v, 'version') || 1),
+      createdAt: String(getVal(v, 'createdAt') || ''),
+      updatedAt: String(getVal(v, 'updatedAt') || ''),
+    };
+  });
 }
 
 
@@ -4620,21 +4718,133 @@ export function batchImportBusinessPartners(
   return { imported, updated, errors };
 }
 
-// 軟刪除商業夥伴
-export function deleteBusinessPartner(id: string, operatorName: string = '系統管理員'): boolean {
+// 軟刪除商業夥伴 (一般同仁與Admin均隱蔽，僅 Superadmin 可在救援中心檢視並救回)
+export function deleteBusinessPartner(id: string, operatorName: string = '系統管理員', reason: string = '日常管理刪除'): boolean {
   if (!dbInstance) return false;
-  const partner = getBusinessPartnerById(id);
-  if (!partner) return false;
+  const res = dbInstance.exec(`SELECT name, bpCode, taxId, type FROM business_partners WHERE id = '${id}';`);
+  if (!res.length || !res[0].values.length) return false;
+  const pName = String(res[0].values[0][0] || '');
+  const pCode = String(res[0].values[0][1] || '');
+  const pTaxId = String(res[0].values[0][2] || '');
+  const pType = String(res[0].values[0][3] || '');
+  const now = new Date().toISOString();
 
-  dbInstance.run(`UPDATE business_partners SET isDeleted = 1, updatedAt = '${new Date().toISOString()}' WHERE id = '${id}';`);
+  dbInstance.run(`UPDATE business_partners SET isDeleted = 1, updatedAt = '${now}' WHERE id = '${id}';`);
 
-  try {
-    recordAuditLog(operatorName, '刪除資料', '商業夥伴', id, { 夥伴名稱: partner.name, 夥伴編號: partner.bpCode });
-  } catch (e) {}
+  logAudit(dbInstance, operatorName, '軟刪除', '商業夥伴', id, {
+    '夥伴名稱': pName,
+    '夥伴代碼': pCode,
+    '統一編號': pTaxId,
+    '類型': pType,
+    '原狀態': '正常有效'
+  }, {
+    '刪除狀態': '已軟刪除 (一般同仁與Admin隱蔽，Superadmin 可在救援中心救回)',
+    '刪除人': operatorName,
+    '刪除原因': reason,
+    '刪除時間': now
+  });
 
   saveDatabaseSnapshot();
   notifyListeners();
   return true;
+}
+
+// 🛡️ Superadmin 救援還原商業夥伴
+export function restoreBusinessPartner(id: string, operatorName: string = 'Superadmin'): boolean {
+  if (!dbInstance) return false;
+  const res = dbInstance.exec(`SELECT name, bpCode FROM business_partners WHERE id = '${id}';`);
+  const name = res[0]?.values[0]?.[0] ? String(res[0].values[0][0]) : id;
+  const code = res[0]?.values[0]?.[1] ? String(res[0].values[0][1]) : '';
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE business_partners SET isDeleted = 0, updatedAt = '${now}' WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '救援還原', '商業夥伴', id, {
+    '夥伴名稱': name,
+    '夥伴代碼': code,
+    '刪除狀態': '已軟刪除'
+  }, {
+    '夥伴名稱': name,
+    '夥伴代碼': code,
+    '刪除狀態': '已救援還原服役 (所有同仁立即可見)',
+    '救援人': operatorName,
+    '救援時間': now
+  });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🗑️ Superadmin 永久物理抹除商業夥伴
+export function purgeBusinessPartner(id: string, operatorName: string = 'Superadmin'): boolean {
+  if (!dbInstance) return false;
+  const res = dbInstance.exec(`SELECT name, bpCode FROM business_partners WHERE id = '${id}';`);
+  const name = res[0]?.values[0]?.[0] ? String(res[0].values[0][0]) : id;
+  const now = new Date().toISOString();
+  dbInstance.run(`DELETE FROM partner_addresses WHERE partnerId = '${id}';`);
+  dbInstance.run(`DELETE FROM bp_bank_accounts WHERE bpId = '${id}';`);
+  dbInstance.run(`DELETE FROM business_partners WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '永久抹除', '商業夥伴', id, {
+    '夥伴名稱': name
+  }, {
+    '狀態': '已永久自資料庫物理清除',
+    '執行人': operatorName,
+    '抹除時間': now
+  });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 取得所有已被軟刪除之商業夥伴 (Superadmin 救援中心專用)
+export function getDeletedBusinessPartners(): BusinessPartner[] {
+  if (!dbInstance) return [];
+  ensureDatabaseIntegrity(dbInstance);
+  const bpRes = dbInstance.exec(`
+    SELECT 
+      id, bpCode, name, taxId, entityType, type, isCustomer, isVendor, convertedFromVendorId,
+      serviceCategoryMain, serviceCategorySub, ownerIdNumber, representative, contactPerson,
+      phone, email, address, bankName, bankCode, bankAccount, bankAccountName, bankFeePayer,
+      hasInvoice, paymentTermsDays, isHighRisk, riskReason, currentScore, status, companyId,
+      isDeleted, version, createdAt, updatedAt, serviceCategories,
+      isIndividual, categoryMain, categorySub, categoryTags
+    FROM business_partners
+    WHERE isDeleted = 1
+    ORDER BY updatedAt DESC;
+  `);
+  if (!bpRes.length) return [];
+  const cols = bpRes[0].columns;
+  const colMap = new Map<string, number>();
+  cols.forEach((c, idx) => colMap.set(c, idx));
+  const getVal = (row: any[], col: string) => {
+    const idx = colMap.get(col);
+    return idx !== undefined ? row[idx] : undefined;
+  };
+
+  return bpRes[0].values.map(row => {
+    const pId = String(getVal(row, 'id'));
+    return {
+      id: pId,
+      bpCode: String(getVal(row, 'bpCode')),
+      name: String(getVal(row, 'name')),
+      taxId: getVal(row, 'taxId') ? String(getVal(row, 'taxId')) : undefined,
+      entityType: (getVal(row, 'entityType') as BusinessPartner['entityType']) || 'COMPANY',
+      type: (getVal(row, 'type') as BusinessPartner['type']) || 'VENDOR',
+      isCustomer: Boolean(getVal(row, 'isCustomer')),
+      isVendor: Boolean(getVal(row, 'isVendor')),
+      serviceCategoryMain: getVal(row, 'serviceCategoryMain') ? String(getVal(row, 'serviceCategoryMain')) : undefined,
+      serviceCategorySub: getVal(row, 'serviceCategorySub') ? String(getVal(row, 'serviceCategorySub')) : undefined,
+      representative: getVal(row, 'representative') ? String(getVal(row, 'representative')) : undefined,
+      contactPerson: getVal(row, 'contactPerson') ? String(getVal(row, 'contactPerson')) : undefined,
+      phone: getVal(row, 'phone') ? String(getVal(row, 'phone')) : undefined,
+      email: getVal(row, 'email') ? String(getVal(row, 'email')) : undefined,
+      address: getVal(row, 'address') ? String(getVal(row, 'address')) : undefined,
+      status: (getVal(row, 'status') as BusinessPartner['status']) || 'ACTIVE',
+      companyId: String(getVal(row, 'companyId') || 'COMP-01'),
+      isDeleted: true,
+      version: Number(getVal(row, 'version') || 1),
+      createdAt: String(getVal(row, 'createdAt') || ''),
+      updatedAt: String(getVal(row, 'updatedAt') || '')
+    };
+  });
 }
 
 // 一鍵自合作廠商引薦/加入變業主 (One-Click Vendor-to-Client Conversion)
@@ -9682,11 +9892,17 @@ export function getAllInboundReceipts(filters?: {
   vendorId?: string;
   status?: string;
   billingStatus?: string;
+  includeDeleted?: boolean;
+  onlyDeleted?: boolean;
 }): InboundReceipt[] {
   if (!dbInstance) return [];
   ensureDatabaseIntegrity(dbInstance);
 
-  let query = `SELECT * FROM inbound_receipts WHERE isDeleted = 0`;
+  let query = filters?.onlyDeleted
+    ? `SELECT * FROM inbound_receipts WHERE isDeleted = 1`
+    : filters?.includeDeleted
+    ? `SELECT * FROM inbound_receipts WHERE 1=1`
+    : `SELECT * FROM inbound_receipts WHERE isDeleted = 0`;
   const params: string[] = [];
 
   if (filters?.companyId) {
@@ -10194,7 +10410,12 @@ export function voidInboundReceipt(id: string, notes?: string): InboundReceipt {
   return getInboundReceiptById(id)!;
 }
 
-export function deleteInboundReceipt(id: string): boolean {
+// 軟刪除進貨簽收單 (一般同仁與Admin均隱蔽，僅 Superadmin 可在救援中心檢視並救回)
+export function deleteInboundReceipt(
+  id: string, 
+  operatorName: string = '系統操作員',
+  reason: string = '現場日常管理刪除'
+): boolean {
   if (!dbInstance) return false;
   const existing = getInboundReceiptById(id);
   if (!existing) return false;
@@ -10203,10 +10424,72 @@ export function deleteInboundReceipt(id: string): boolean {
     throw new Error('已過帳或已對帳之進貨單據禁止物理刪除，請使用「作廢」功能');
   }
 
-  dbInstance.run(`UPDATE inbound_receipts SET isDeleted = 1 WHERE id = '${id}';`);
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE inbound_receipts SET isDeleted = 1, updatedAt = '${now}' WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '軟刪除', '現場進貨簽收單', id, {
+    '單據編號': existing.receiptNumber,
+    '廠商送貨單號': existing.deliveryNoteNumber,
+    '進貨廠商': existing.vendorNameSnapshot,
+    '總金額': existing.totalAmount,
+    '原狀態': '正常有效'
+  }, {
+    '刪除狀態': '已軟刪除 (一般用戶與Admin均隱蔽，Superadmin 可在救援中心檢視並救回)',
+    '刪除人': operatorName,
+    '刪除原因': reason,
+    '刪除時間': now
+  });
   saveDatabaseSnapshot();
   notifyListeners();
   return true;
+}
+
+// 🛡️ Superadmin 救援還原進貨簽收單
+export function restoreInboundReceipt(id: string, operatorName: string = 'Superadmin'): boolean {
+  if (!dbInstance) return false;
+  const res = dbInstance.exec(`SELECT receiptNumber, vendorNameSnapshot, deliveryNoteNumber FROM inbound_receipts WHERE id = '${id}';`);
+  const receiptNumber = res[0]?.values[0]?.[0] ? String(res[0].values[0][0]) : id;
+  const vendorName = res[0]?.values[0]?.[1] ? String(res[0].values[0][1]) : '';
+  const now = new Date().toISOString();
+  dbInstance.run(`UPDATE inbound_receipts SET isDeleted = 0, updatedAt = '${now}' WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '救援還原', '現場進貨簽收單', id, {
+    '單據編號': receiptNumber,
+    '刪除狀態': '已軟刪除'
+  }, {
+    '單據編號': receiptNumber,
+    '廠商': vendorName,
+    '刪除狀態': '已救援還原服役 (所有同仁立即可見)',
+    '救援人': operatorName,
+    '救援時間': now
+  });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 🗑️ Superadmin 永久物理抹除進貨簽收單
+export function purgeInboundReceipt(id: string, operatorName: string = 'Superadmin'): boolean {
+  if (!dbInstance) return false;
+  const res = dbInstance.exec(`SELECT receiptNumber, vendorNameSnapshot FROM inbound_receipts WHERE id = '${id}';`);
+  const receiptNumber = res[0]?.values[0]?.[0] ? String(res[0].values[0][0]) : id;
+  const now = new Date().toISOString();
+  dbInstance.run(`DELETE FROM inbound_receipt_items WHERE receiptId = '${id}';`);
+  dbInstance.run(`DELETE FROM inbound_receipts WHERE id = '${id}';`);
+  logAudit(dbInstance, operatorName, '永久抹除', '現場進貨簽收單', id, {
+    '單據編號': receiptNumber,
+    '狀態': '已軟刪除'
+  }, {
+    '狀態': '已自資料庫永久抹除物理清除',
+    '執行人': operatorName,
+    '抹除時間': now
+  });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
+}
+
+// 取得所有已被軟刪除之進貨單據 (供 Superadmin 救援中心調閱)
+export function getDeletedInboundReceipts(): InboundReceipt[] {
+  return getAllInboundReceipts({ onlyDeleted: true });
 }
 
 // 🌊 取得廠商往來大水池水位總表 (Vendor Ledger Pool)

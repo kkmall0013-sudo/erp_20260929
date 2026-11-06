@@ -37,10 +37,12 @@ import {
   FileSpreadsheet,
   FolderTree,
   List,
-  RotateCcw
+  RotateCcw,
+  ShieldAlert
 } from 'lucide-react';
-import { ExcelInboundGridModal, loadStoredInternalAssets, InternalAsset } from './inbound/ExcelInboundGridModal';
+import { ExcelInboundGridModal, loadStoredInternalAssets, InternalAsset, getAssetCategory } from './inbound/ExcelInboundGridModal';
 import { InternalAssetManagerModal } from './widgets/InternalAssetManagerModal';
+import { SuperadminRecoveryCenterModal } from './widgets/SuperadminRecoveryCenterModal';
 import { ProjectEditorModal } from './projects/ProjectEditorModal';
 import { PartnerEditorModal } from './partners/PartnerEditorModal';
 import {
@@ -82,7 +84,8 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
   onDataChanged,
   triggerToast = () => {},
 }) => {
-  const { currentUser, can } = useAuth();
+  const { currentUser, can, isSuperadmin } = useAuth();
+  const [isRecoveryCenterOpen, setIsRecoveryCenterOpen] = useState(false);
 
   // 職責分離模擬身份
   const [demoRole, setDemoRole] = useState<DemoRole>('ALL_PERMS');
@@ -137,6 +140,7 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
   const [isAssetManagerModalOpen, setIsAssetManagerModalOpen] = useState<boolean>(false);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState<boolean>(false);
   const [isNewVendorModalOpen, setIsNewVendorModalOpen] = useState<boolean>(false);
+  const [showCompletedProjectsInForm, setShowCompletedProjectsInForm] = useState<boolean>(false);
 
   // 防呆確認 Modal
   const [voidModalTarget, setVoidModalTarget] = useState<InboundReceipt | null>(null);
@@ -307,6 +311,43 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
       }
     }
   }, [activeVendorsInDateRange, selectedVendorId]);
+
+  // 🏗️ 施工工程案場 (區隔「正在施工中」與「已完工/封存」案場，保持現場打單視圖乾淨)
+  const activeProjects = useMemo(() => {
+    return projects.filter(p => !p.isDeleted && (p.status === 'ACTIVE' || (!p.status && p.status !== 'COMPLETED' && p.status !== 'LOCKED')));
+  }, [projects]);
+
+  const completedProjects = useMemo(() => {
+    return projects.filter(p => !p.isDeleted && (p.status === 'COMPLETED' || p.status === 'LOCKED'));
+  }, [projects]);
+
+  // 🚚 廠內三大資產領域 (動產、不動產、庫存) 且排除歷史已淘汰退役者
+  const activeInternalAssets = useMemo(() => {
+    return internalAssets.filter(a => (a as any).status !== 'RETIRED');
+  }, [internalAssets]);
+
+  const movableAssets = useMemo(() => {
+    return activeInternalAssets.filter(a => getAssetCategory(a) === 'MOVABLE');
+  }, [activeInternalAssets]);
+
+  const realEstateAssets = useMemo(() => {
+    return activeInternalAssets.filter(a => getAssetCategory(a) === 'REAL_ESTATE');
+  }, [activeInternalAssets]);
+
+  const inventoryAssets = useMemo(() => {
+    return activeInternalAssets.filter(a => getAssetCategory(a) === 'INVENTORY');
+  }, [activeInternalAssets]);
+
+  // 若當前編輯的單據剛好屬於已淘汰資產或已完工案場，予以保留顯示以利審計歷史
+  const retiredAssetInUse = useMemo(() => {
+    if (!formData.projectId) return null;
+    return internalAssets.find(a => a.id === formData.projectId && (a as any).status === 'RETIRED');
+  }, [formData.projectId, internalAssets]);
+
+  const completedProjectInUse = useMemo(() => {
+    if (!formData.projectId) return null;
+    return completedProjects.find(p => p.id === formData.projectId);
+  }, [formData.projectId, completedProjects]);
 
   // ⚡ 歸屬案場/廠內資產全即時動態連動解析 (100% 同步專案庫與廠內資產庫最新全名)
   const getReceiptProjectInfo = useCallback((r: InboundReceipt) => {
@@ -887,15 +928,9 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
   const handleConfirmDelete = () => {
     if (!deleteModalTarget) return;
     try {
-      deleteInboundReceipt(deleteModalTarget.id);
-      recordAuditLog(
-        currentUser?.fullName || '系統操作員',
-        '刪除草稿進貨單',
-        '進貨管理',
-        deleteModalTarget.id,
-        { '送貨單號': deleteModalTarget.deliveryNoteNumber }
-      );
-      triggerToast('✅ 草稿進貨單已刪除', 'success');
+      const operator = currentUser?.fullName || '系統操作員';
+      deleteInboundReceipt(deleteModalTarget.id, operator, '現場操作員刪除草稿進貨單');
+      triggerToast('✅ 草稿進貨單已軟刪除（一般同仁已隱蔽，Superadmin 可於救援中心救回）', 'success');
       setDeleteModalTarget(null);
       loadData();
       if (onDataChanged) onDataChanged();
@@ -1017,14 +1052,14 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
               )}
             </button>
 
-            {/* 🚚 廠內車輛與廠務資產維護 */}
+            {/* 🚚 廠內資產維護 */}
             <button
               onClick={() => setIsAssetManagerModalOpen(true)}
               className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-slate-100 font-semibold rounded-lg text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer border border-slate-700"
               title="維護公務車輛換車/汰換報廢、重型機具、常備庫存與廠區修繕項目，支援別名與進貨單關聯"
             >
               <Truck className="w-4 h-4 text-emerald-400" />
-              <span>🚚 廠內車輛/資產維護</span>
+              <span>🚚 廠內資產維護</span>
             </button>
 
             {/* 新增單筆進貨簽收單 */}
@@ -1909,10 +1944,10 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                         type="button"
                         onClick={() => setIsAssetManagerModalOpen(true)}
                         className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-800 hover:underline flex items-center gap-0.5 cursor-pointer"
-                        title="公務車輛換車/報廢、重型機具與廠區修繕資產管理中心"
+                        title="廠內動產、不動產、備料庫存與歷史淘汰資產維護中心"
                       >
                         <Truck className="w-3 h-3" />
-                        管理車輛/資產
+                        廠內資產維護
                       </button>
                     </div>
                   </div>
@@ -1941,21 +1976,77 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
                   >
                     <option value="">請選擇專案案場或廠內資產</option>
-                    <optgroup label="🏗️ 施工工程案場">
-                      {projects.map(p => (
+                    
+                    <optgroup label="🏗️ 施工工程案場 (正在施工中)">
+                      {activeProjects.map(p => (
                         <option key={p.id} value={p.id}>
                           {p.name} ({p.projectCode})
                         </option>
                       ))}
                     </optgroup>
-                    <optgroup label="🚚 廠內自用 / 車輛資產與公共儲備">
-                      {internalAssets.map(a => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.code})
+
+                    {(showCompletedProjectsInForm || completedProjectInUse) && completedProjects.length > 0 && (
+                      <optgroup label="🏛️ 施工工程案場 (已完工/保固特許)">
+                        {completedProjects.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.projectCode}) [已完工封存]
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {movableAssets.length > 0 && (
+                      <optgroup label="🚗 廠內動產 (公務車輛 / 重型施工機具)">
+                        {movableAssets.map(a => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.code}){a.licensePlate ? ` [${a.licensePlate}]` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {realEstateAssets.length > 0 && (
+                      <optgroup label="🏢 廠內不動產 (廠房建物 / 固定設施 / 天車水電)">
+                        {realEstateAssets.map(a => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.code})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {inventoryAssets.length > 0 && (
+                      <optgroup label="📦 廠內庫存 (公共備料 / 型鋼材料進庫登記)">
+                        {inventoryAssets.map(a => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.code})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {retiredAssetInUse && (
+                      <optgroup label="🏛️ 歷史淘汰資產 (已退役/僅供舊單歷史審計)">
+                        <option value={retiredAssetInUse.id}>
+                          {retiredAssetInUse.name} ({retiredAssetInUse.code}) [已汰除/歷史保留]
                         </option>
-                      ))}
-                    </optgroup>
+                      </optgroup>
+                    )}
                   </select>
+                  <div className="flex items-center justify-between mt-1 text-[11px] text-slate-500">
+                    <span>
+                      在建施工案場 {activeProjects.length} 個 · 廠內資產 {activeInternalAssets.length} 項
+                    </span>
+                    {completedProjects.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCompletedProjectsInForm(!showCompletedProjectsInForm)}
+                        className="text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                      >
+                        {showCompletedProjectsInForm ? '隱藏已完工案場' : `顯示已完工案場 (${completedProjects.length}) (保固特許)`}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div>

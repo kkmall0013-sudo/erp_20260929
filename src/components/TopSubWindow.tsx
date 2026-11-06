@@ -23,9 +23,11 @@ import {
   X,
   Check,
   AlertTriangle,
-  ShieldCheck
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { SuperadminRecoveryCenterModal } from './widgets/SuperadminRecoveryCenterModal';
 import {
   changeSelfPassword,
   getAppConfigMap,
@@ -61,6 +63,7 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
   const { currentUser, allUsers, isSuperadmin, isAdmin, isBoss, switchUser } = useAuth();
   const [isDbMenuOpen, setIsDbMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isRecoveryCenterOpen, setIsRecoveryCenterOpen] = useState(false);
 
   // 系統架構師 (Superadmin) 隱身回歸驗證對話框
   const [isDevAuthModalOpen, setIsDevAuthModalOpen] = useState(false);
@@ -351,6 +354,18 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
 
       {/* 右區：長駐功能群 (簡潔專注：一般同仁僅顯示個人身分與必要功能) */}
       <div className="flex items-center gap-1.5 sm:gap-2.5 text-xs text-slate-300">
+        {/* 🛡️ 最高架構師軟刪除救援中心 (Superadmin 專屬救援通道，Admin 與一般同仁 100% 隱蔽) */}
+        {isSuperadmin && (
+          <button
+            onClick={() => setIsRecoveryCenterOpen(true)}
+            title="最高架構師軟刪除救援中心：檢視並救回被軟刪除的進貨單、廠內資產、專案與夥伴，並保留完整日誌軌跡"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition-all shadow-xs cursor-pointer"
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">軟刪除救援中心</span>
+          </button>
+        )}
+
         {/* 資料庫匯出/匯入快捷工具 (僅限最高架構師、BOSS與系統管理員) */}
         {(isSuperadmin || isBoss || isAdmin) && (
           <div className="relative">
@@ -850,6 +865,14 @@ export const TopSubWindow: React.FC<TopSubWindowProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* 🛡️ 最高架構師軟刪除救援中心 Modal */}
+      {isSuperadmin && (
+        <SuperadminRecoveryCenterModal
+          isOpen={isRecoveryCenterOpen}
+          onClose={() => setIsRecoveryCenterOpen(false)}
+        />
       )}
     </header>
   );
