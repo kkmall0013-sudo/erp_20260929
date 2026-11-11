@@ -39,7 +39,8 @@ import {
   CheckCheck,
   Upload,
   CreditCard,
-  Truck
+  Truck,
+  X
 } from 'lucide-react';
 import {
   Company,
@@ -78,7 +79,9 @@ import {
   restoreFromSqlScript,
   resetToSeedData,
   getAllCompanyBankAccounts,
-  updateBankAccountCheckSequence
+  updateBankAccountCheckSequence,
+  saveCompanyBankAccount,
+  deleteCompanyBankAccount
 } from '../db/sqlite';
 import { useAuth } from '../context/AuthContext';
 import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
@@ -242,6 +245,134 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
       triggerToast(`❌ 儲存失敗: ${e.message}`);
     } finally {
       setSavingBankId(null);
+    }
+  };
+
+  // 銀行帳戶新增與編輯 Modal 狀態
+  const [isBankModalOpen, setIsBankModalOpen] = useState(false);
+  const [bankFormData, setBankFormData] = useState<Partial<CompanyBankAccount>>({
+    companyId: companies[0]?.id || 'COMP-01',
+    bankCode: '004',
+    bankName: '臺灣銀行',
+    branchName: '營業部',
+    accountNumber: '',
+    accountName: '',
+    isVirtualAccount: false,
+    status: 'ACTIVE',
+    checkPrefix: 'CQ',
+    nextCheckNumber: 1001,
+    checkDigits: 6,
+    initialBalance: 0,
+    currentBalance: 0,
+    currency: 'TWD',
+  });
+  const [isSavingBankModal, setIsSavingBankModal] = useState(false);
+
+  // 刪除確認 Modal 狀態
+  const [isDeleteBankModalOpen, setIsDeleteBankModalOpen] = useState(false);
+  const [bankToDelete, setBankToDelete] = useState<CompanyBankAccount | null>(null);
+
+  const handleOpenAddBankModal = (defaultCompId?: string) => {
+    const compId = defaultCompId || selectedCompanyId || companies[0]?.id || 'COMP-01';
+    const comp = companies.find(c => c.id === compId);
+    setBankFormData({
+      companyId: compId,
+      bankCode: '004',
+      bankName: '臺灣銀行',
+      branchName: '營業部',
+      accountNumber: '',
+      accountName: comp?.name || '',
+      isVirtualAccount: false,
+      status: 'ACTIVE',
+      checkPrefix: 'CQ',
+      nextCheckNumber: 1001,
+      checkDigits: 6,
+      initialBalance: 0,
+      currentBalance: 0,
+      currency: 'TWD',
+    });
+    setIsBankModalOpen(true);
+  };
+
+  const handleOpenEditBankModal = (b: CompanyBankAccount) => {
+    setBankFormData({
+      id: b.id,
+      companyId: b.companyId,
+      bankCode: b.bankCode || '004',
+      bankName: b.bankName,
+      branchName: b.branchName || '',
+      accountNumber: b.accountNumber,
+      accountName: b.accountName || b.bankName,
+      isVirtualAccount: Boolean(b.isVirtualAccount),
+      status: b.status || 'ACTIVE',
+      checkPrefix: b.checkPrefix || 'CQ',
+      nextCheckNumber: b.nextCheckNumber || 1001,
+      checkDigits: b.checkDigits || 6,
+      initialBalance: b.initialBalance || 0,
+      currentBalance: b.currentBalance || 0,
+      currency: b.currency || 'TWD',
+    });
+    setIsBankModalOpen(true);
+  };
+
+  const handleSaveBankForm = () => {
+    if (!bankFormData.companyId) {
+      triggerToast('請選擇所屬公司法人');
+      return;
+    }
+    if (!bankFormData.bankName?.trim()) {
+      triggerToast('請填寫銀行名稱');
+      return;
+    }
+    if (!bankFormData.accountNumber?.trim()) {
+      triggerToast('請填寫銀行帳號');
+      return;
+    }
+
+    try {
+      setIsSavingBankModal(true);
+      saveCompanyBankAccount(
+        {
+          id: bankFormData.id,
+          companyId: bankFormData.companyId,
+          bankCode: bankFormData.bankCode || '004',
+          bankName: bankFormData.bankName.trim(),
+          branchName: bankFormData.branchName?.trim() || '',
+          accountNumber: bankFormData.accountNumber.trim(),
+          accountName: bankFormData.accountName?.trim() || bankFormData.bankName.trim(),
+          isVirtualAccount: Boolean(bankFormData.isVirtualAccount),
+          status: bankFormData.status || 'ACTIVE',
+          checkPrefix: (bankFormData.checkPrefix || 'CQ').trim().toUpperCase(),
+          nextCheckNumber: Math.max(1, Number(bankFormData.nextCheckNumber) || 1001),
+          checkDigits: Number(bankFormData.checkDigits) || 6,
+          initialBalance: Number(bankFormData.initialBalance) || 0,
+          currentBalance: Number(bankFormData.currentBalance) || Number(bankFormData.initialBalance) || 0,
+          currency: bankFormData.currency || 'TWD',
+        },
+        currentUser?.fullName || '系統管理員'
+      );
+      triggerToast(bankFormData.id ? '✅ 銀行帳戶與支票簿已成功更新！' : '✅ 已成功新增公司出款銀行專戶！');
+      setIsBankModalOpen(false);
+      loadData();
+      onDataChanged();
+    } catch (e: any) {
+      triggerToast(`❌ 儲存失敗: ${e.message}`);
+    } finally {
+      setIsSavingBankModal(false);
+    }
+  };
+
+  const handleDeleteBankConfirm = () => {
+    if (!bankToDelete) return;
+    try {
+      deleteCompanyBankAccount(bankToDelete.id, currentUser?.fullName || '系統管理員');
+      triggerToast(`✅ 銀行帳戶【${bankToDelete.bankName} ${bankToDelete.accountNumber}】已成功刪除！`);
+      setIsDeleteBankModalOpen(false);
+      setBankToDelete(null);
+      loadData();
+      onDataChanged();
+    } catch (e: any) {
+      triggerToast(`❌ 刪除攔截: ${e.message}`);
     }
   };
 
@@ -637,25 +768,36 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
   };
 
   // 🏦 銀行支票簿起始號與連貫序號管理卡片
+  // 🏦 銀行帳戶主檔與支票簿連貫序號全功能管理卡片 (CRUD)
   const renderBankCheckSequencesTable = () => (
     <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-      <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-200">
             <CreditCard className="w-5 h-5 text-emerald-600" />
           </div>
           <div>
             <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
-              <span>各銀行帳戶支票簿起始字軌與連貫序號設定 (Bank Checkbook Continuous Sequences)</span>
+              <span>公司出款銀行專戶與支票簿起始字軌序號管理 (Company Bank Accounts & Checkbooks)</span>
               <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full font-bold">
                 防跳號・自動遞增
               </span>
             </h4>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              每間銀行支票簿字軌前綴（如台灣銀行 TW、中國信託 CT、玉山銀行 ES）與起號各異。在此設定後，出納開立支票放款時自動依序給號並自動加一，防止重號與人工輸入錯誤。
+              各公司法人出款銀行專戶主檔維護。可在此新增帳號、修改銀行戶名、設定支票簿專屬字軌前綴與起始號，出納放款自動連貫給號。
             </p>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => handleOpenAddBankModal()}
+          disabled={!canWriteModule}
+          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer shrink-0 disabled:opacity-50"
+        >
+          <Plus className="w-4 h-4" />
+          <span>＋ 新增公司出款銀行專戶</span>
+        </button>
       </div>
 
       <div className="overflow-x-auto">
@@ -663,19 +805,21 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
           <thead>
             <tr className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-200">
               <th className="p-3.5">所屬公司法人</th>
-              <th className="p-3.5">銀行帳戶與專戶性質</th>
-              <th className="p-3.5">支票字軌前綴 (Prefix)</th>
-              <th className="p-3.5">號碼位數 (碼長)</th>
-              <th className="p-3.5">下一筆發放票號</th>
-              <th className="p-3.5">下張開立票號預覽</th>
+              <th className="p-3.5">銀行機構與分行</th>
+              <th className="p-3.5">銀行帳號與開戶名稱</th>
+              <th className="p-3.5">帳戶性質 / 狀態</th>
+              <th className="p-3.5">支票字軌前綴</th>
+              <th className="p-3.5">碼長</th>
+              <th className="p-3.5">下一筆票號</th>
+              <th className="p-3.5">開票預覽</th>
               <th className="p-3.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
             {hubBankAccounts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-slate-400">
-                  尚未建立銀行帳戶主檔
+                <td colSpan={9} className="p-6 text-center text-slate-400">
+                  尚未建立銀行帳戶主檔，請點擊右上角「＋ 新增公司出款銀行專戶」建立
                 </td>
               </tr>
             ) : (
@@ -700,11 +844,37 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                       <div className="text-[11px] text-slate-500 font-mono">統編 {taxId}</div>
                     </td>
                     <td className="p-3.5 align-middle">
-                      <div className="font-bold text-slate-900">{b.bankName} {b.branchName || ''}</div>
-                      <div className="font-mono text-slate-600 text-xs flex items-center gap-1.5 mt-0.5">
-                        <span>{b.accountNumber}</span>
-                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                          {b.accountName}
+                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <span>{b.bankName}</span>
+                        {b.bankCode && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                            {b.bankCode}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500">{b.branchName || '總行 / 營業部'}</div>
+                    </td>
+                    <td className="p-3.5 align-middle">
+                      <div className="font-mono text-slate-900 font-bold">{b.accountNumber}</div>
+                      <div className="text-[11px] text-slate-600 mt-0.5">戶名: {b.accountName}</div>
+                    </td>
+                    <td className="p-3.5 align-middle">
+                      <div className="flex flex-col gap-1 items-start">
+                        {b.isVirtualAccount ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                            老闆私人專戶
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
+                            公司實體帳戶
+                          </span>
+                        )}
+                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                          b.status === 'ACTIVE'
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'bg-amber-50 text-amber-700'
+                        }`}>
+                          {b.status === 'ACTIVE' ? '● 正常啟用' : '○ 停用列管'}
                         </span>
                       </div>
                     </td>
@@ -720,7 +890,7 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                           }));
                         }}
                         placeholder="例 TW / CT"
-                        className="w-24 px-2.5 py-1.5 font-mono font-bold text-xs rounded border border-slate-300 focus:ring-1 focus:ring-indigo-500 bg-white"
+                        className="w-20 px-2 py-1.5 font-mono font-bold text-xs rounded border border-slate-300 focus:ring-1 focus:ring-indigo-500 bg-white"
                         disabled={!canWriteModule}
                       />
                     </td>
@@ -739,7 +909,7 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                       >
                         <option value={4}>4 位數</option>
                         <option value={5}>5 位數</option>
-                        <option value={6}>6 位數 (標準)</option>
+                        <option value={6}>6 位數</option>
                         <option value={7}>7 位數</option>
                         <option value={8}>8 位數</option>
                       </select>
@@ -756,26 +926,50 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                             [b.id]: { ...(prev[b.id] || edit), nextCheckNumber: val }
                           }));
                         }}
-                        className="w-28 px-2.5 py-1.5 font-mono font-bold text-xs rounded border border-slate-300 focus:ring-1 focus:ring-indigo-500 bg-white"
+                        className="w-24 px-2 py-1.5 font-mono font-bold text-xs rounded border border-slate-300 focus:ring-1 focus:ring-indigo-500 bg-white"
                         disabled={!canWriteModule}
                       />
                     </td>
                     <td className="p-3.5 align-middle font-mono">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs shadow-2xs">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
                         <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
                         <span>{previewCheckNo}</span>
                       </span>
                     </td>
                     <td className="p-3.5 align-middle text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleSaveBankCheckSequence(b.id)}
-                        disabled={!canWriteModule || isSaving}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors cursor-pointer border border-emerald-700 shadow-2xs inline-flex items-center gap-1.5 disabled:opacity-50"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>{isSaving ? '儲存中...' : '儲存序號'}</span>
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveBankCheckSequence(b.id)}
+                          disabled={!canWriteModule || isSaving}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors cursor-pointer border border-emerald-700 shadow-2xs inline-flex items-center gap-1 disabled:opacity-50"
+                          title="儲存此行支票序號"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>{isSaving ? '...' : '存序號'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditBankModal(b)}
+                          disabled={!canWriteModule}
+                          className="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition-colors cursor-pointer border border-indigo-200 inline-flex items-center gap-1 disabled:opacity-50"
+                          title="編輯完整帳戶資料與銀行名稱"
+                        >
+                          <span>修改</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBankToDelete(b);
+                            setIsDeleteBankModalOpen(true);
+                          }}
+                          disabled={!canWriteModule}
+                          className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors cursor-pointer border border-rose-200 disabled:opacity-40"
+                          title="刪除此銀行帳戶"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -784,6 +978,293 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
           </tbody>
         </table>
       </div>
+
+      {/* 🏦 新增/修改公司銀行帳戶 Modal */}
+      {isBankModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-100 rounded-xl text-indigo-800">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {bankFormData.id ? '編輯公司出款銀行專戶與支票簿' : '新增公司出款銀行專戶 (Bank Account Setup)'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    維護營造集團各公司之實體或私帳出金專戶，設定專屬支票簿連續序號。
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBankModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+              {/* 所屬公司與帳戶性質 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    所屬公司法人 (Owner Company) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={bankFormData.companyId}
+                    onChange={(e) => {
+                      const cId = e.target.value;
+                      const c = companies.find(item => item.id === cId);
+                      setBankFormData(prev => ({
+                        ...prev,
+                        companyId: cId,
+                        accountName: prev.accountName || c?.name || ''
+                      }));
+                    }}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                  >
+                    {companies.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.taxId ? `(統編: ${c.taxId})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    帳戶專戶性質 (Account Type)
+                  </label>
+                  <select
+                    value={bankFormData.isVirtualAccount ? 'VIRTUAL' : 'STANDARD'}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, isVirtualAccount: e.target.value === 'VIRTUAL' }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                  >
+                    <option value="STANDARD">公司實體營運帳戶 (甲存支票戶 / 活儲專戶)</option>
+                    <option value="VIRTUAL">老闆私人調度專戶 (代墊 / 私人代付週轉)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* 銀行名稱、代碼、分行 */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    銀行金融代碼 (3碼)
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.bankCode || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, bankCode: e.target.value }))}
+                    placeholder="例: 004 (台銀), 012 (富邦), 822 (中信)"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    銀行金融機構名稱 <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.bankName || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, bankName: e.target.value }))}
+                    placeholder="例: 臺灣銀行 / 國泰世華 / 中國信託"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    所屬分行名稱 (Branch)
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.branchName || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, branchName: e.target.value }))}
+                    placeholder="例: 營業部 / 板橋分行 / 敦南分行"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-800 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* 帳號與戶名 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    銀行帳號 (Account Number) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.accountNumber || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
+                    placeholder="例: 004-001-12345678"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    帳戶開戶名稱 / 戶名 (Account Holder)
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.accountName || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, accountName: e.target.value }))}
+                    placeholder="例: 寶佳營造股份有限公司"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-800 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* 支票簿設定區 (核心功能：字軌、起號、碼長) */}
+              <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-200 space-y-3">
+                <div className="flex items-center justify-between border-b border-emerald-200/60 pb-2">
+                  <span className="font-bold text-emerald-950 text-xs flex items-center gap-1.5">
+                    <CreditCard className="w-4 h-4 text-emerald-600" />
+                    <span>本帳戶支票簿設定 (連續票號自動跳號)</span>
+                  </span>
+                  <span className="text-[11px] text-emerald-800 font-mono font-bold">
+                    下張開立票號: {bankFormData.checkPrefix ? `${bankFormData.checkPrefix}-` : ''}
+                    {String(bankFormData.nextCheckNumber || 1001).padStart(bankFormData.checkDigits || 6, '0')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      支票字軌前綴 (Prefix)
+                    </label>
+                    <input
+                      type="text"
+                      value={bankFormData.checkPrefix || ''}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, checkPrefix: e.target.value.toUpperCase() }))}
+                      placeholder="例: TW / CT / ES"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      號碼位數 (Check Digits)
+                    </label>
+                    <select
+                      value={bankFormData.checkDigits || 6}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, checkDigits: Number(e.target.value) }))}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
+                    >
+                      <option value={4}>4 位數</option>
+                      <option value={5}>5 位數</option>
+                      <option value={6}>6 位數 (標準)</option>
+                      <option value={7}>7 位數</option>
+                      <option value={8}>8 位數</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      起始連貫序號 (Next Number)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={bankFormData.nextCheckNumber || 1001}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, nextCheckNumber: Math.max(1, Number(e.target.value) || 1) }))}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 帳戶狀態與幣別 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    帳戶狀態 (Status)
+                  </label>
+                  <select
+                    value={bankFormData.status || 'ACTIVE'}
+                    onChange={(e: any) => setBankFormData(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                  >
+                    <option value="ACTIVE">正常啟用 (Active · 可出納放款與開票)</option>
+                    <option value="DISABLED">停用列管 (Disabled · 暫不允許新單據選取)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    帳戶計價幣別 (Currency)
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.currency || 'TWD'}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, currency: e.target.value.toUpperCase() }))}
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setIsBankModalOpen(false)}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 font-bold hover:bg-slate-100 transition-colors cursor-pointer text-xs"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveBankForm}
+                disabled={isSavingBankModal}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors cursor-pointer text-xs shadow-2xs inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{isSavingBankModal ? '儲存中...' : bankFormData.id ? '更新帳戶主檔' : '確認建立帳戶'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 刪除確認 Modal */}
+      {isDeleteBankModalOpen && bankToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <AlertTriangle className="w-6 h-6" />
+              <h3 className="text-sm font-bold text-slate-900">確認刪除出款銀行專戶？</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              您即將刪除銀行專戶【<b className="text-slate-900">{bankToDelete.bankName} {bankToDelete.branchName || ''}</b> 帳號：<span className="font-mono font-bold text-indigo-700">{bankToDelete.accountNumber}</span>】。
+              <br /><br />
+              <span className="text-rose-600 font-bold">⚠️ 安全稽核檢核：</span>若該帳戶已存在任何開立之放款付款單或支票記錄，系統將自動攔截禁止物理刪除，以維護四柱財務平衡歷史紀錄。
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDeleteBankModalOpen(false);
+                  setBankToDelete(null);
+                }}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 text-xs font-bold hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteBankConfirm}
+                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-2xs"
+              >
+                確認刪除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

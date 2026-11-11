@@ -750,6 +750,10 @@ export interface AccountsPayableReconciliation {
   invoiceNumber?: string; // 發票字軌
   hasInvoice: boolean; // 是否具備發票
   paymentDueDate: string; // 預計付款日
+  designatedPaymentMethod?: PaymentMethod; // 會計核定出款方式 (CHECK / TT / CASH)
+  designatedBankAccountId?: string; // 會計指定出款銀行帳戶 ID
+  designatedBankAccountName?: string; // 出款銀行帳戶快照 (如: 臺灣銀行 004001998822)
+  paymentTermNotes?: string; // 會計付款條件與出款說明備註
   status: ReconciliationStatus;
   reconciledBy?: string; // 對帳人員
   approvedBy?: string; // 覆核主管

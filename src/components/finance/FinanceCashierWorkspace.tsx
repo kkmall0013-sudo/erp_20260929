@@ -127,6 +127,16 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
   const [recBillingPeriod, setRecBillingPeriod] = useState<string>(new Date().toISOString().slice(0, 7));
   const [recNotes, setRecNotes] = useState<string>('');
 
+  // 🏛️ 會計核定出款規劃狀態 (建立對帳單時指定付款公司與出款銀行專戶)
+  const [recCompanyId, setRecCompanyId] = useState<string>('COMP-01');
+  const [recDesignatedPaymentMethod, setRecDesignatedPaymentMethod] = useState<'CHECK' | 'TT' | 'CASH'>('CHECK');
+  const [recDesignatedBankAccountId, setRecDesignatedBankAccountId] = useState<string>('');
+  const [recPaymentTermNotes, setRecPaymentTermNotes] = useState<string>('固定每月10日開立期票');
+
+  // 廠商未結進貨單正中央彈出全螢幕檢視 Modal 狀態
+  const [viewingVendorPool, setViewingVendorPool] = useState<any | null>(null);
+  const [viewingModalExpandedReceiptIds, setViewingModalExpandedReceiptIds] = useState<string[]>([]);
+
   // 大水池清單與進貨單明細展開檢視狀態
   const [expandedVendorPoolIds, setExpandedVendorPoolIds] = useState<string[]>([]);
   const [expandedReceiptIds, setExpandedReceiptIds] = useState<string[]>([]);
@@ -300,10 +310,20 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
     setRecHasInvoice(bp?.hasInvoice !== false);
     setRecBillingPeriod(new Date().toISOString().slice(0, 7));
     setRecNotes('');
+
+    // 會計指定出款規劃：優先帶入廠商關聯公司或第一間公司
+    const preferredCompanyId = bp?.companyId || (companies.length > 0 ? companies[0].id : 'COMP-01');
+    setRecCompanyId(preferredCompanyId);
+    setRecDesignatedPaymentMethod('CHECK');
+    const compBanks = bankAccounts.filter(b => b.companyId === preferredCompanyId && b.status === 'ACTIVE');
+    const defaultBank = compBanks[0] || bankAccounts.find(b => b.companyId === preferredCompanyId) || bankAccounts[0];
+    setRecDesignatedBankAccountId(defaultBank?.id || '');
+    setRecPaymentTermNotes('固定每月10日開立期票');
+
     setIsCreateRecModalOpen(true);
   };
 
-  // 當選定廠商切換時，連動重設待選單據
+  // 當選定廠商切換時，連動重設待選單據與預設出款公司
   const handleVendorChangeInModal = (vId: string) => {
     setRecTargetVendorId(vId);
     const vPending = inboundReceipts.filter(r => r.vendorId === vId && r.billingStatus === 'PENDING_BILLING' && r.status === 'POSTED');
@@ -313,6 +333,21 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
     setRecPaymentDueDate(computeNextMonthPaymentDate(10));
     const bp = partners.find(p => p.id === vId);
     setRecHasInvoice(bp?.hasInvoice !== false);
+
+    // 連動預設付款公司與出款銀行
+    const preferredCompanyId = bp?.companyId || (companies.length > 0 ? companies[0].id : 'COMP-01');
+    setRecCompanyId(preferredCompanyId);
+    const compBanks = bankAccounts.filter(b => b.companyId === preferredCompanyId && b.status === 'ACTIVE');
+    const defaultBank = compBanks[0] || bankAccounts.find(b => b.companyId === preferredCompanyId) || bankAccounts[0];
+    setRecDesignatedBankAccountId(defaultBank?.id || '');
+  };
+
+  // 當會計在對帳單切換出款法人公司時，連動更新可選之銀行帳戶
+  const handleRecCompanyChange = (cId: string) => {
+    setRecCompanyId(cId);
+    const compBanks = bankAccounts.filter(b => b.companyId === cId && b.status === 'ACTIVE');
+    const defaultBank = compBanks[0] || bankAccounts.find(b => b.companyId === cId) || bankAccounts[0];
+    setRecDesignatedBankAccountId(defaultBank?.id || '');
   };
 
   // 對帳單試算金額計算
@@ -355,7 +390,7 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
     };
   }, [inboundReceipts, recSelectedReceiptIds, recDiscountAmount, recTaxType, recManualTax, taxTolerance]);
 
-  // 儲存/覆核應付對帳單
+  // 儲存/覆核應付對帳單 (包含會計核定之付款公司、支付方式與指定出款帳戶)
   const handleSaveReconciliation = (isApproved: boolean) => {
     if (!recTargetVendorId) {
       onNotify('請先選擇廠商', 'error');
@@ -377,12 +412,13 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
     const targetPartner = partners.find(p => p.id === recTargetVendorId);
     const vendorName = targetPartner?.name || '未知廠商';
     const recNumber = `REC-${recBillingPeriod.replace('-', '')}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+    const designatedBank = bankAccounts.find(b => b.id === recDesignatedBankAccountId);
 
     try {
       createApReconciliation(
         {
           reconciliationNumber: recNumber,
-          companyId: targetPartner?.companyId || 'COMP-01',
+          companyId: recCompanyId,
           vendorId: recTargetVendorId,
           vendorName,
           billingPeriod: recBillingPeriod,
@@ -397,6 +433,10 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
           status: isApproved ? 'APPROVED' : 'DRAFT',
           notes: recNotes,
           receiptIds: recSelectedReceiptIds,
+          designatedPaymentMethod: recDesignatedPaymentMethod,
+          designatedBankAccountId: recDesignatedBankAccountId,
+          designatedBankAccountName: designatedBank ? `${designatedBank.bankName} (${designatedBank.accountNumber})` : undefined,
+          paymentTermNotes: recPaymentTermNotes,
         },
         currentUser?.fullName || '張會計長'
       );
@@ -428,7 +468,7 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
     }
   };
 
-  // 開啟放款出金 Modal
+  // 開啟放款出金 Modal (自動承接會計核定之公司、指定帳號、支付方式與票號)
   const handleOpenPaymentModal = (rec: AccountsPayableReconciliation) => {
     setSelectedRecForPayment(rec);
     const bp = partners.find(p => p.id === rec.vendorId);
@@ -436,26 +476,39 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
     // 預設匯費負擔方
     const feePayer = bp?.bankFeePayer || 'COMPANY';
     setPayIsFeeAbsorbed(feePayer === 'COMPANY');
-    setPayFeeAmount(30);
 
-    // 優先挑選該請款發票買受法人之銀行帳戶 (跟著法人帳戶走)
-    const companyBanks = bankAccounts.filter(b => b.companyId === rec.companyId && b.status === 'ACTIVE');
-    const defaultBank = companyBanks[0] || bankAccounts.find(b => b.id === 'BANK-01') || bankAccounts[0];
-    const targetBankId = defaultBank?.id || 'BANK-01';
+    // 優先遵循會計核定之指定付款方式
+    const targetMethod = (rec.designatedPaymentMethod || 'CHECK') as 'CHECK' | 'TT' | 'CASH';
+    setPayMethod(targetMethod);
+
+    // 優先遵循會計核定之出款銀行專戶
+    let targetBankId = rec.designatedBankAccountId;
+    if (!targetBankId || !bankAccounts.some(b => b.id === targetBankId)) {
+      const companyBanks = bankAccounts.filter(b => b.companyId === rec.companyId && b.status === 'ACTIVE');
+      const defaultBank = companyBanks[0] || bankAccounts.find(b => b.id === 'BANK-01') || bankAccounts[0];
+      targetBankId = defaultBank?.id || 'BANK-01';
+    }
     setPayBankAccountId(targetBankId);
 
-    setPayMethod('TT');
+    const targetBank = bankAccounts.find(b => b.id === targetBankId);
 
-    // 依該銀行帳戶之支票簿連續序號自動帶入
-    const prefix = defaultBank?.checkPrefix || 'CQ';
-    const nextSeq = defaultBank?.nextCheckNumber || 1001;
-    const digits = defaultBank?.checkDigits || 6;
-    setPayCheckNumber(`${prefix}-${String(nextSeq).padStart(digits, '0')}`);
+    // 連續票號或手續費
+    if (targetMethod === 'CHECK') {
+      const prefix = targetBank?.checkPrefix || 'CQ';
+      const nextSeq = targetBank?.nextCheckNumber || 1001;
+      const digits = targetBank?.checkDigits || 6;
+      setPayCheckNumber(`${prefix}-${String(nextSeq).padStart(digits, '0')}`);
+      setPayFeeAmount(0); // 支票手續費防呆為 0
+    } else if (targetMethod === 'CASH') {
+      setPayFeeAmount(0); // 現金手續費防呆為 0
+    } else {
+      setPayFeeAmount(30); // 電匯預設手續費 30 元
+    }
 
     setPayCheckDueDate(rec.paymentDueDate);
     setPayDeductionAmount(0);
     setPayDeductionNote('');
-    setPayNotes(`沖銷應付對帳單 [${rec.reconciliationNumber}]`);
+    setPayNotes(`沖銷應付對帳單 [${rec.reconciliationNumber}] ${rec.paymentTermNotes ? `(${rec.paymentTermNotes})` : ''}`);
     setIsPaymentModalOpen(true);
   };
 
@@ -999,15 +1052,13 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (isExpanded) {
-                                    setExpandedVendorPoolIds(expandedVendorPoolIds.filter(id => id !== v.vendorId));
-                                  } else {
-                                    setExpandedVendorPoolIds([...expandedVendorPoolIds, v.vendorId]);
-                                  }
+                                  setViewingVendorPool(v);
+                                  setViewingModalExpandedReceiptIds(v.receipts.map(r => r.id));
                                 }}
-                                className="px-2.5 py-1 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                                className="px-3 py-1.5 text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
                               >
-                                {isExpanded ? '收合' : '檢視單據'}
+                                <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>檢視單據</span>
                               </button>
                               <button
                                 onClick={() => handleOpenCreateRecModal(v.vendorId)}
@@ -1707,6 +1758,212 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
       )}
 
       {/* ======================================================== */}
+      {/* MODAL 0: 廠商待請款進貨簽收單正中央檢視視窗 (Centered Modal) */}
+      {/* ======================================================== */}
+      {viewingVendorPool && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            {/* Modal 頂部標題與快速資訊 */}
+            <div className="p-4 border-b border-slate-200 bg-slate-50/90 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-100 rounded-xl text-amber-800 border border-amber-200">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900">
+                      待對帳進貨簽收單清冊與送貨單明細
+                    </h3>
+                    <span className="font-bold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full text-xs font-mono">
+                      {viewingVendorPool.vendorName}
+                    </span>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold border border-slate-200">
+                      共 {viewingVendorPool.receipts.length} 筆簽收單
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-3">
+                    <span>統一編號: <b className="font-mono text-slate-700">{viewingVendorPool.vendorTaxId || '未載明'}</b></span>
+                    <span>約定付款天期: <b className="font-mono text-slate-700">T+{viewingVendorPool.paymentTermsDays} 天</b></span>
+                    <span>匯費約定: <b className="text-slate-700">{viewingVendorPool.bankFeePayer === 'COMPANY' ? '公司外加吸收' : '廠商內扣'}</b></span>
+                    <span>待請款未稅總原額: <b className="font-mono text-amber-900 font-black">NT$ {viewingVendorPool.totalAmount.toLocaleString()}</b></span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setViewingVendorPool(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                title="關閉視窗"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal 主體：進貨簽收單與展開送貨單明細列表 */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-3 text-xs">
+              <div className="flex items-center justify-between bg-amber-50/60 p-2.5 rounded-xl border border-amber-200/80">
+                <div className="flex items-center gap-2 text-amber-900 font-bold">
+                  <Info className="w-4 h-4 text-amber-700" />
+                  <span>現場紙本簽收單調取清單 · 各送貨單工料明細已同步關聯展示</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIds = viewingVendorPool.receipts.map((r: any) => r.id);
+                      setViewingModalExpandedReceiptIds(allIds);
+                    }}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-semibold cursor-pointer text-xs"
+                  >
+                    全部展開明細
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewingModalExpandedReceiptIds([])}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-slate-600 font-semibold cursor-pointer text-xs"
+                  >
+                    全部收合
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {viewingVendorPool.receipts.map((r: any) => {
+                  const isExp = viewingModalExpandedReceiptIds.includes(r.id);
+                  const items = r.items || [];
+
+                  return (
+                    <div key={r.id} className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                      {/* 單據摘要條 */}
+                      <div
+                        onClick={() => {
+                          if (isExp) {
+                            setViewingModalExpandedReceiptIds(viewingModalExpandedReceiptIds.filter(id => id !== r.id));
+                          } else {
+                            setViewingModalExpandedReceiptIds([...viewingModalExpandedReceiptIds, r.id]);
+                          }
+                        }}
+                        className="p-3.5 bg-slate-50/70 hover:bg-slate-100/70 transition-colors flex flex-wrap items-center justify-between gap-3 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            className="p-1 rounded text-slate-400 hover:text-indigo-600"
+                          >
+                            {isExp ? <ChevronDown className="w-4 h-4 text-indigo-600" /> : <ChevronRight className="w-4 h-4" />}
+                          </button>
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2 font-mono">
+                              <span className="font-bold text-slate-900 text-sm">{r.receiptNumber}</span>
+                              <span className="text-indigo-700 font-bold px-2 py-0.5 rounded bg-indigo-50 border border-indigo-100">
+                                送貨單號: {r.deliveryNoteNumber || '無單號'}
+                              </span>
+                              <span className="text-slate-600 font-sans text-xs">
+                                簽收日: {r.receivedDate}
+                              </span>
+                              <span className="text-[11px] font-sans px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
+                                {items.length} 項品名工料
+                              </span>
+                            </div>
+                            <div className="text-slate-500 font-sans text-xs mt-1 flex flex-wrap items-center gap-3">
+                              <span>工區案場: <b className="text-slate-700">{r.projectNameSnapshot || '未指定案場'}</b></span>
+                              <span>現場簽收人: <b className="text-slate-700">{r.receivedBy || '現場人員'}</b></span>
+                              {r.notes && <span>備註: <i className="text-slate-600">{r.notes}</i></span>}
+                              {r.attachmentFileName && (
+                                <span className="text-indigo-600 font-mono font-bold flex items-center gap-1">
+                                  📎 附件: {r.attachmentFileName}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-[11px] text-slate-400">進貨簽收金額 (未稅)</div>
+                          <div className="text-lg font-mono font-black text-slate-900">
+                            NT$ {r.totalAmount.toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 展開之完整送貨單品項清單 */}
+                      {isExp && (
+                        <div className="p-3 border-t border-slate-200 bg-white">
+                          {items.length === 0 ? (
+                            <div className="p-3 text-center text-slate-400 text-xs">無品項明細紀錄</div>
+                          ) : (
+                            <div className="overflow-x-auto rounded-lg border border-slate-200">
+                              <table className="w-full text-xs text-left border-collapse">
+                                <thead className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-200">
+                                  <tr>
+                                    <th className="p-2 w-10 text-center">#</th>
+                                    <th className="p-2">材料品名</th>
+                                    <th className="p-2">規格型號</th>
+                                    <th className="p-2 text-center">單位</th>
+                                    <th className="p-2 text-right">簽收數量</th>
+                                    <th className="p-2 text-right">採購單價</th>
+                                    <th className="p-2 text-right">小計金額</th>
+                                    <th className="p-2">現場備註</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-mono">
+                                  {items.map((it: any, itemIdx: number) => (
+                                    <tr key={it.id || itemIdx} className="hover:bg-slate-50/80">
+                                      <td className="p-2 text-center text-slate-400 font-sans">{itemIdx + 1}</td>
+                                      <td className="p-2 font-bold text-slate-900 font-sans">{it.itemName}</td>
+                                      <td className="p-2 text-slate-600 font-sans">{it.spec || '標準規格'}</td>
+                                      <td className="p-2 text-center text-slate-600 font-sans">{it.unit}</td>
+                                      <td className="p-2 text-right text-slate-800 font-bold">{it.quantity}</td>
+                                      <td className="p-2 text-right text-slate-600">NT$ {it.unitPrice.toLocaleString()}</td>
+                                      <td className="p-2 text-right font-black text-slate-900">NT$ {it.lineTotal.toLocaleString()}</td>
+                                      <td className="p-2 text-slate-500 font-sans truncate max-w-xs">{it.notes || '—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Modal 底部按鈕 */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50/90 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setViewingVendorPool(null)}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 font-bold hover:bg-slate-100 transition-colors cursor-pointer text-xs"
+              >
+                關閉視窗
+              </button>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-500">
+                  共檢閱 {viewingVendorPool.receipts.length} 筆進貨簽收單
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const vId = viewingVendorPool.vendorId;
+                    setViewingVendorPool(null);
+                    handleOpenCreateRecModal(vId);
+                  }}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold transition-colors cursor-pointer text-xs shadow-2xs inline-flex items-center gap-1.5"
+                >
+                  <Receipt className="w-4 h-4" />
+                  <span>直接建立對帳單 (帶入勾稽)</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
       {/* MODAL 1: 建立廠商應付對帳單 (抽屜勾稽大水池) */}
       {/* ======================================================== */}
       {isCreateRecModalOpen && (
@@ -1834,6 +2091,168 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
                     <option value="TAX_INCLUSIVE">內含 5% 營業稅</option>
                     <option value="TAX_EXEMPT">免稅 / 免用發票</option>
                   </select>
+                </div>
+              </div>
+
+              {/* 🏛️ 會計核定出款規劃 (由會計決定付款公司、出款帳號與支付方式，出納直接遵循) */}
+              <div className="bg-amber-50/40 p-4 rounded-xl border border-amber-200 space-y-3">
+                <div className="flex items-center justify-between border-b border-amber-200/60 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-amber-700" />
+                    <span className="font-bold text-slate-800 text-xs">
+                      會計核定出款規劃 (由會計決定付款法人、出款帳號與支付方式，出納直接遵循)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-amber-800 font-mono">
+                    發票買受主體：依發票買受方公司指定銀行出金
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* 1. 付款公司 */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      買受出款法人公司 (Company) <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={recCompanyId}
+                      onChange={(e) => handleRecCompanyChange(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                    >
+                      {companies.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} {c.taxId ? `(統編: ${c.taxId})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="text-[10px] text-slate-400 mt-1">
+                      發票開立對象法人，確保會計科目與憑證買受人一致。
+                    </div>
+                  </div>
+
+                  {/* 2. 核定支付方式 */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      核定支付方式 (Payment Method) <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setRecDesignatedPaymentMethod('CHECK')}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold border transition-all cursor-pointer text-center ${
+                          recDesignatedPaymentMethod === 'CHECK'
+                            ? 'bg-amber-600 text-white border-amber-700 shadow-2xs'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        期票支票
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecDesignatedPaymentMethod('TT')}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold border transition-all cursor-pointer text-center ${
+                          recDesignatedPaymentMethod === 'TT'
+                            ? 'bg-indigo-600 text-white border-indigo-700 shadow-2xs'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        電匯轉帳
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecDesignatedPaymentMethod('CASH')}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold border transition-all cursor-pointer text-center ${
+                          recDesignatedPaymentMethod === 'CASH'
+                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        現金支付
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1">
+                      {recDesignatedPaymentMethod === 'CHECK'
+                        ? '開立期票支票：出金時自動取下一張連續號碼'
+                        : recDesignatedPaymentMethod === 'TT'
+                        ? '電匯轉帳：需跨行手續費與受款帳戶'
+                        : '現金支付：出納櫃檯或零用金直付'}
+                    </div>
+                  </div>
+
+                  {/* 3. 指定出款銀行帳戶 */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      指定出款專戶 (Bank Account)
+                    </label>
+                    {(() => {
+                      const availableBanks = bankAccounts.filter(b => b.companyId === recCompanyId && b.status === 'ACTIVE');
+                      const displayBanks = availableBanks.length > 0 ? availableBanks : bankAccounts;
+                      const currentBank = bankAccounts.find(b => b.id === recDesignatedBankAccountId);
+                      const nextCheckPreview = currentBank && recDesignatedPaymentMethod === 'CHECK'
+                        ? `${currentBank.checkPrefix || 'CQ'}-${String(currentBank.nextCheckNumber || 1001).padStart(currentBank.checkDigits || 6, '0')}`
+                        : null;
+
+                      return (
+                        <>
+                          <select
+                            value={recDesignatedBankAccountId}
+                            onChange={(e) => setRecDesignatedBankAccountId(e.target.value)}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                          >
+                            {displayBanks.map(b => (
+                              <option key={b.id} value={b.id}>
+                                {b.bankName} {b.branchName || ''} - {b.accountNumber} ({b.accountName})
+                              </option>
+                            ))}
+                          </select>
+                          {nextCheckPreview && (
+                            <div className="mt-1 flex items-center gap-1.5 text-[11px] font-mono text-emerald-700 font-bold">
+                              <CreditCard className="w-3.5 h-3.5" />
+                              <span>預定下張票號: {nextCheckPreview}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    付款條款與固定日說明 (Payment Term Notes)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={recPaymentTermNotes}
+                      onChange={(e) => setRecPaymentTermNotes(e.target.value)}
+                      placeholder="例: 固定每月10日開立次月票 / 月結30天 / 工地驗收後放款"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-800 outline-none font-sans"
+                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setRecPaymentTermNotes('固定每月10日開立次月票')}
+                        className="px-2 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-[11px] rounded-lg text-slate-600 font-medium cursor-pointer"
+                      >
+                        每月10日票
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecPaymentTermNotes('固定每月15日開立支票')}
+                        className="px-2 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-[11px] rounded-lg text-slate-600 font-medium cursor-pointer"
+                      >
+                        每月15日票
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecPaymentTermNotes('月結30天電匯')}
+                        className="px-2 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-[11px] rounded-lg text-slate-600 font-medium cursor-pointer"
+                      >
+                        月結30天
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -2143,14 +2562,27 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
               {/* 單據來源快照 */}
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">
-                    {selectedRecForPayment.reconciliationNumber}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                      {selectedRecForPayment.reconciliationNumber}
+                    </span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-900 border border-purple-200">
+                      {companies.find(c => c.id === selectedRecForPayment.companyId)?.name || '指定公司'} 出款
+                    </span>
+                    {selectedRecForPayment.designatedPaymentMethod && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        會計指定: {selectedRecForPayment.designatedPaymentMethod === 'CHECK' ? '期票支票' : selectedRecForPayment.designatedPaymentMethod === 'TT' ? '電匯轉帳' : '現金'}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-sm font-bold text-slate-900 mt-1">
                     {selectedRecForPayment.vendorName}
                   </div>
                   <div className="text-slate-500 mt-0.5">
-                    到期日: {selectedRecForPayment.paymentDueDate} · 發票: {selectedRecForPayment.invoiceNumber}
+                    預計付款日: {selectedRecForPayment.paymentDueDate} · 發票: {selectedRecForPayment.invoiceNumber}
+                    {selectedRecForPayment.paymentTermNotes && (
+                      <span className="text-amber-800 font-semibold ml-2">【會計條款: {selectedRecForPayment.paymentTermNotes}】</span>
+                    )}
                   </div>
                 </div>
                 <div className="text-right">

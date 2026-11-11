@@ -4825,18 +4825,26 @@ export function getDeletedBusinessPartners(): BusinessPartner[] {
       id: pId,
       bpCode: String(getVal(row, 'bpCode')),
       name: String(getVal(row, 'name')),
-      taxId: getVal(row, 'taxId') ? String(getVal(row, 'taxId')) : undefined,
-      entityType: (getVal(row, 'entityType') as BusinessPartner['entityType']) || 'COMPANY',
+      taxId: String(getVal(row, 'taxId') || ''),
+      entityType: ((getVal(row, 'entityType') === 'NATURAL_PERSON') ? 'NATURAL_PERSON' : 'CORPORATION') as BusinessPartner['entityType'],
       type: (getVal(row, 'type') as BusinessPartner['type']) || 'VENDOR',
       isCustomer: Boolean(getVal(row, 'isCustomer')),
       isVendor: Boolean(getVal(row, 'isVendor')),
       serviceCategoryMain: getVal(row, 'serviceCategoryMain') ? String(getVal(row, 'serviceCategoryMain')) : undefined,
       serviceCategorySub: getVal(row, 'serviceCategorySub') ? String(getVal(row, 'serviceCategorySub')) : undefined,
       representative: getVal(row, 'representative') ? String(getVal(row, 'representative')) : undefined,
-      contactPerson: getVal(row, 'contactPerson') ? String(getVal(row, 'contactPerson')) : undefined,
-      phone: getVal(row, 'phone') ? String(getVal(row, 'phone')) : undefined,
-      email: getVal(row, 'email') ? String(getVal(row, 'email')) : undefined,
-      address: getVal(row, 'address') ? String(getVal(row, 'address')) : undefined,
+      contactPerson: String(getVal(row, 'contactPerson') || ''),
+      phone: String(getVal(row, 'phone') || ''),
+      email: String(getVal(row, 'email') || ''),
+      address: String(getVal(row, 'address') || ''),
+      bankName: String(getVal(row, 'bankName') || ''),
+      bankCode: String(getVal(row, 'bankCode') || ''),
+      bankAccount: String(getVal(row, 'bankAccount') || ''),
+      bankAccountName: String(getVal(row, 'bankAccountName') || ''),
+      bankFeePayer: (getVal(row, 'bankFeePayer') || 'COMPANY') as any,
+      hasInvoice: Boolean(getVal(row, 'hasInvoice')),
+      paymentTermsDays: Number(getVal(row, 'paymentTermsDays') || 30),
+      isHighRisk: Boolean(getVal(row, 'isHighRisk')),
       status: (getVal(row, 'status') as BusinessPartner['status']) || 'ACTIVE',
       companyId: String(getVal(row, 'companyId') || 'COMP-01'),
       isDeleted: true,
@@ -5586,8 +5594,25 @@ export function getAllBankChecks(): BankCheck[] {
 
 export function getAllApReconciliations(): AccountsPayableReconciliation[] {
   if (!dbInstance) return [];
+  ensureDatabaseIntegrity(dbInstance);
   try {
-    const res = dbInstance.exec(`SELECT * FROM ap_reconciliations WHERE isDeleted = 0 ORDER BY paymentDueDate ASC, reconciliationNumber DESC;`);
+    // 確保欄位存在
+    try { dbInstance.run(`ALTER TABLE ap_reconciliations ADD COLUMN designatedPaymentMethod TEXT DEFAULT 'CHECK';`); } catch (_) {}
+    try { dbInstance.run(`ALTER TABLE ap_reconciliations ADD COLUMN designatedBankAccountId TEXT;`); } catch (_) {}
+    try { dbInstance.run(`ALTER TABLE ap_reconciliations ADD COLUMN designatedBankAccountName TEXT;`); } catch (_) {}
+    try { dbInstance.run(`ALTER TABLE ap_reconciliations ADD COLUMN paymentTermNotes TEXT;`); } catch (_) {}
+
+    const res = dbInstance.exec(`
+      SELECT 
+        id, reconciliationNumber, companyId, vendorId, vendorName, billingPeriod,
+        inboundTotalAmount, discountAmount, taxType, taxAmount, netPayableAmount,
+        invoiceNumber, hasInvoice, paymentDueDate, status, reconciledBy, approvedBy,
+        disbursedAt, notes, receiptIds, isDeleted, version, createdAt, updatedAt,
+        designatedPaymentMethod, designatedBankAccountId, designatedBankAccountName, paymentTermNotes
+      FROM ap_reconciliations 
+      WHERE isDeleted = 0 
+      ORDER BY paymentDueDate ASC, reconciliationNumber DESC;
+    `);
     if (!res.length) return [];
     return res[0].values.map(v => ({
       id: String(v[0]),
@@ -5614,6 +5639,10 @@ export function getAllApReconciliations(): AccountsPayableReconciliation[] {
       version: Number(v[21] || 1),
       createdAt: v[22] ? String(v[22]) : undefined,
       updatedAt: v[23] ? String(v[23]) : undefined,
+      designatedPaymentMethod: (v[24] || 'CHECK') as AccountsPayableReconciliation['designatedPaymentMethod'],
+      designatedBankAccountId: v[25] ? String(v[25]) : undefined,
+      designatedBankAccountName: v[26] ? String(v[26]) : undefined,
+      paymentTermNotes: v[27] ? String(v[27]) : undefined,
     }));
   } catch (e) {
     console.error('getAllApReconciliations error', e);
@@ -5630,12 +5659,18 @@ export function createApReconciliation(
   const id = data.id || `REC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const receiptIdsJson = JSON.stringify(data.receiptIds || []);
 
+  const designatedMethod = data.designatedPaymentMethod || 'CHECK';
+  const designatedBankId = data.designatedBankAccountId ? `'${data.designatedBankAccountId.replace(/'/g, "''")}'` : 'NULL';
+  const designatedBankName = data.designatedBankAccountName ? `'${data.designatedBankAccountName.replace(/'/g, "''")}'` : 'NULL';
+  const paymentNotes = data.paymentTermNotes ? `'${data.paymentTermNotes.replace(/'/g, "''")}'` : 'NULL';
+
   dbInstance.run(`
     INSERT INTO ap_reconciliations (
       id, reconciliationNumber, companyId, vendorId, vendorName, billingPeriod,
       inboundTotalAmount, discountAmount, taxType, taxAmount, netPayableAmount,
       invoiceNumber, hasInvoice, paymentDueDate, status, reconciledBy, approvedBy,
-      disbursedAt, notes, receiptIds, isDeleted, version, createdAt, updatedAt
+      disbursedAt, notes, receiptIds, isDeleted, version, createdAt, updatedAt,
+      designatedPaymentMethod, designatedBankAccountId, designatedBankAccountName, paymentTermNotes
     ) VALUES (
       '${id}', '${data.reconciliationNumber}', '${data.companyId}', '${data.vendorId}',
       '${(data.vendorName || '').replace(/'/g, "''")}', '${data.billingPeriod}',
@@ -5644,7 +5679,8 @@ export function createApReconciliation(
       ${data.hasInvoice ? 1 : 0}, '${data.paymentDueDate}', '${data.status}',
       '${operatorName}', ${data.status === 'APPROVED' ? `'${operatorName}'` : 'NULL'},
       NULL, '${(data.notes || '').replace(/'/g, "''")}', '${receiptIdsJson}',
-      0, 1, '${now}', '${now}'
+      0, 1, '${now}', '${now}',
+      '${designatedMethod}', ${designatedBankId}, ${designatedBankName}, ${paymentNotes}
     );
   `);
 
@@ -6310,6 +6346,105 @@ export function updateBankAccountCheckSequence(
 
   saveDatabaseSnapshot();
   notifyListeners();
+}
+
+// 🏛️ 新增或修改公司出款銀行帳戶主檔 (含支票簿起號與字軌)
+export function saveCompanyBankAccount(
+  data: Partial<CompanyBankAccount> & { companyId: string; bankName: string; accountNumber: string },
+  operatorName: string = '系統管理員'
+): CompanyBankAccount {
+  if (!dbInstance) throw new Error('資料庫尚未初始化');
+  const id = data.id || `BANK-${Date.now().toString().slice(-6)}`;
+  const cleanBankName = data.bankName.replace(/'/g, "''");
+  const cleanBranch = (data.branchName || '').replace(/'/g, "''");
+  const cleanAccNo = data.accountNumber.replace(/'/g, "''");
+  const cleanAccName = (data.accountName || data.bankName).replace(/'/g, "''");
+  const prefix = (data.checkPrefix || 'CQ').replace(/'/g, "''").toUpperCase();
+  const nextCheck = Number(data.nextCheckNumber) || 1001;
+  const digits = Number(data.checkDigits) || 6;
+  const isVirt = data.isVirtualAccount ? 1 : 0;
+  const initBal = Number(data.initialBalance) || 0;
+  const currBal = data.currentBalance !== undefined ? Number(data.currentBalance) : initBal;
+  const status = data.status || 'ACTIVE';
+  const currency = data.currency || 'TWD';
+  const bankCode = (data.bankCode || '004').replace(/'/g, "''");
+
+  dbInstance.run(`
+    INSERT INTO company_bank_accounts (
+      id, companyId, bankCode, bankName, branchName, accountNumber, accountName,
+      isVirtualAccount, initialBalance, currentBalance, currency, status,
+      checkPrefix, nextCheckNumber, checkDigits
+    ) VALUES (
+      '${id}', '${data.companyId}', '${bankCode}', '${cleanBankName}', '${cleanBranch}',
+      '${cleanAccNo}', '${cleanAccName}', ${isVirt}, ${initBal}, ${currBal},
+      '${currency}', '${status}', '${prefix}', ${nextCheck}, ${digits}
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      companyId = excluded.companyId,
+      bankCode = excluded.bankCode,
+      bankName = excluded.bankName,
+      branchName = excluded.branchName,
+      accountNumber = excluded.accountNumber,
+      accountName = excluded.accountName,
+      isVirtualAccount = excluded.isVirtualAccount,
+      status = excluded.status,
+      checkPrefix = excluded.checkPrefix,
+      nextCheckNumber = excluded.nextCheckNumber,
+      checkDigits = excluded.checkDigits;
+  `);
+
+  recordAuditLog(
+    operatorName,
+    data.id ? '更新公司銀行帳戶' : '新增公司銀行帳戶',
+    '銀行帳戶管理',
+    id,
+    {
+      '帳戶ID': id,
+      '所屬法人': data.companyId,
+      '銀行名稱': cleanBankName,
+      '帳號': cleanAccNo,
+      '支票字軌': prefix,
+      '起始票號': nextCheck
+    }
+  );
+
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return {
+    id,
+    companyId: data.companyId,
+    bankCode,
+    bankName: data.bankName,
+    branchName: data.branchName,
+    accountNumber: data.accountNumber,
+    accountName: data.accountName || data.bankName,
+    isVirtualAccount: Boolean(data.isVirtualAccount),
+    initialBalance: initBal,
+    currentBalance: currBal,
+    currency,
+    status,
+    checkPrefix: prefix,
+    nextCheckNumber: nextCheck,
+    checkDigits: digits
+  };
+}
+
+// 刪除公司出款銀行帳戶
+export function deleteCompanyBankAccount(id: string, operatorName: string = '系統管理員'): boolean {
+  if (!dbInstance) return false;
+  // 檢查是否已有放款付款單或開出支票綁定
+  const resChk = dbInstance.exec(`
+    SELECT count(*) FROM payment_records WHERE bankAccountId = '${id}';
+  `);
+  if (resChk.length && Number(resChk[0].values[0][0]) > 0) {
+    throw new Error('此銀行帳戶已存在開立之付款單據紀錄，禁止物理刪除！若不再使用請在編輯中將狀態設為「停用」。');
+  }
+
+  dbInstance.run(`DELETE FROM company_bank_accounts WHERE id = '${id}';`);
+  recordAuditLog(operatorName, '刪除銀行帳戶', '銀行帳戶管理', id, { '帳戶ID': id });
+  saveDatabaseSnapshot();
+  notifyListeners();
+  return true;
 }
 
 // 讀取全域參數

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Company, PhoneItem, KeyPerson } from '../types/erp';
+import { Company, PhoneItem, KeyPerson, CompanyBankAccount } from '../types/erp';
 import {
   Building2,
   Users2,
@@ -29,9 +29,16 @@ import {
   X,
   ExternalLink,
   ChevronRight,
-  GitBranch
+  GitBranch,
+  CreditCard
 } from 'lucide-react';
-import { saveCompany, deleteCompany } from '../db/sqlite';
+import {
+  saveCompany,
+  deleteCompany,
+  getAllCompanyBankAccounts,
+  saveCompanyBankAccount,
+  deleteCompanyBankAccount
+} from '../db/sqlite';
 import { useAuth } from '../context/AuthContext';
 
 interface CompanySettingsWorkspaceProps {
@@ -161,6 +168,107 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
   const showToast = (msg: string) => {
     setToastNote(msg);
     setTimeout(() => setToastNote(null), 3200);
+  };
+
+  // 本公司所屬出款銀行專戶與支票簿管理狀態
+  const [companyBankAccounts, setCompanyBankAccounts] = useState<CompanyBankAccount[]>([]);
+  const [isBankModalOpen, setIsBankModalOpen] = useState(false);
+  const [bankFormData, setBankFormData] = useState<Partial<CompanyBankAccount>>({
+    companyId: activeCompanyId,
+    bankCode: '004',
+    bankName: '臺灣銀行',
+    branchName: '營業部',
+    accountNumber: '',
+    accountName: '',
+    isVirtualAccount: false,
+    status: 'ACTIVE',
+    checkPrefix: 'CQ',
+    nextCheckNumber: 1001,
+    checkDigits: 6,
+    currency: 'TWD',
+  });
+  const [isDeleteBankModalOpen, setIsDeleteBankModalOpen] = useState(false);
+  const [bankToDelete, setBankToDelete] = useState<CompanyBankAccount | null>(null);
+
+  const loadCompanyBankAccounts = () => {
+    try {
+      const allBanks = getAllCompanyBankAccounts();
+      setCompanyBankAccounts(allBanks.filter(b => b.companyId === activeCompanyId));
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    loadCompanyBankAccounts();
+  }, [activeCompanyId]);
+
+  const handleOpenAddBank = () => {
+    setBankFormData({
+      companyId: activeCompanyId,
+      bankCode: '004',
+      bankName: '臺灣銀行',
+      branchName: '營業部',
+      accountNumber: '',
+      accountName: targetCompany?.name || '',
+      isVirtualAccount: targetCompany?.entityType === 'PERSONAL',
+      status: 'ACTIVE',
+      checkPrefix: 'CQ',
+      nextCheckNumber: 1001,
+      checkDigits: 6,
+      currency: 'TWD',
+    });
+    setIsBankModalOpen(true);
+  };
+
+  const handleOpenEditBank = (b: CompanyBankAccount) => {
+    setBankFormData({ ...b });
+    setIsBankModalOpen(true);
+  };
+
+  const handleSaveBank = () => {
+    if (!bankFormData.bankName?.trim() || !bankFormData.accountNumber?.trim()) {
+      showToast('請完整填寫銀行機構名稱與帳號');
+      return;
+    }
+    try {
+      saveCompanyBankAccount(
+        {
+          id: bankFormData.id,
+          companyId: activeCompanyId,
+          bankCode: bankFormData.bankCode || '004',
+          bankName: bankFormData.bankName.trim(),
+          branchName: bankFormData.branchName?.trim() || '',
+          accountNumber: bankFormData.accountNumber.trim(),
+          accountName: bankFormData.accountName?.trim() || targetCompany?.name || bankFormData.bankName.trim(),
+          isVirtualAccount: Boolean(bankFormData.isVirtualAccount),
+          status: bankFormData.status || 'ACTIVE',
+          checkPrefix: (bankFormData.checkPrefix || 'CQ').trim().toUpperCase(),
+          nextCheckNumber: Math.max(1, Number(bankFormData.nextCheckNumber) || 1001),
+          checkDigits: Number(bankFormData.checkDigits) || 6,
+          currency: bankFormData.currency || 'TWD',
+        },
+        currentUser?.fullName || '系統管理員'
+      );
+      showToast(bankFormData.id ? '✅ 銀行帳戶與支票簿已成功更新！' : '✅ 已成功為本公司新增出款銀行專戶！');
+      setIsBankModalOpen(false);
+      loadCompanyBankAccounts();
+      onDataChanged();
+    } catch (e: any) {
+      showToast(`❌ 儲存失敗: ${e.message}`);
+    }
+  };
+
+  const handleDeleteBank = () => {
+    if (!bankToDelete) return;
+    try {
+      deleteCompanyBankAccount(bankToDelete.id, currentUser?.fullName || '系統管理員');
+      showToast(`✅ 銀行帳戶【${bankToDelete.bankName} ${bankToDelete.accountNumber}】已成功刪除！`);
+      setIsDeleteBankModalOpen(false);
+      setBankToDelete(null);
+      loadCompanyBankAccounts();
+      onDataChanged();
+    } catch (e: any) {
+      showToast(`❌ 刪除攔截: ${e.message}`);
+    }
   };
 
   // 當前選取的實體
@@ -1153,8 +1261,315 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
               </div>
             )}
           </div>
+
+          {/* 區塊 G：本公司出款銀行專戶與支票簿 (Bank Accounts & Continuous Checkbook) */}
+          <div className="space-y-3 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                <CreditCard className="w-4 h-4 text-emerald-600" />
+                <span>出款銀行專戶與支票簿設定 (Bank Accounts & Checkbooks)</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-bold border border-emerald-200">
+                  {companyBankAccounts.length} 個帳戶
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenAddBank}
+                disabled={!canWriteCompany}
+                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>＋ 為本公司新增出款銀行專戶</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              維護本公司專屬之出款帳戶（如台銀、富邦、中信或私帳）。開立對帳單時將直接關聯此處設定之銀行帳戶與連貫支票簿。
+            </p>
+
+            {companyBankAccounts.length === 0 ? (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-slate-400 text-xs">
+                尚未建立本公司出款專戶，點選右上角「＋ 為本公司新增出款銀行專戶」開始建立
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {companyBankAccounts.map((b) => {
+                  const prefix = b.checkPrefix || 'CQ';
+                  const nextNo = b.nextCheckNumber || 1001;
+                  const digits = b.checkDigits || 6;
+                  const previewCheck = `${prefix}-${String(nextNo).padStart(digits, '0')}`;
+
+                  return (
+                    <div
+                      key={b.id}
+                      className="p-3.5 bg-slate-50/70 border border-slate-200 rounded-xl flex flex-col justify-between hover:bg-white transition-all shadow-2xs"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                            <span>{b.bankName}</span>
+                            {b.branchName && <span className="text-slate-500 font-normal">({b.branchName})</span>}
+                          </span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                            b.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                          }`}>
+                            {b.status === 'ACTIVE' ? '正常啟用' : '暫停使用'}
+                          </span>
+                        </div>
+                        <div className="font-mono text-slate-700 font-bold text-xs mt-1">
+                          帳號: {b.accountNumber}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          戶名: {b.accountName}
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
+                          <span className="text-slate-500">支票下張票號:</span>
+                          <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            {previewCheck}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 mt-3 pt-2 border-t border-slate-200/60">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditBank(b)}
+                          disabled={!canWriteCompany}
+                          className="px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors cursor-pointer"
+                        >
+                          修改設定
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBankToDelete(b);
+                            setIsDeleteBankModalOpen(true);
+                          }}
+                          disabled={!canWriteCompany}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
+                          title="刪除帳戶"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* 🏦 新增/修改公司銀行帳戶 Modal */}
+      {isBankModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-100 rounded-xl text-emerald-800">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {bankFormData.id ? '編輯出款銀行專戶' : '新增本公司出款銀行專戶'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    所屬公司: {targetCompany?.name} ({targetCompany?.companyCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBankModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    銀行代碼 (3碼)
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.bankCode || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, bankCode: e.target.value }))}
+                    placeholder="例: 004, 012"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    銀行機構名稱 <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.bankName || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, bankName: e.target.value }))}
+                    placeholder="例: 臺灣銀行 / 台北富邦銀行"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    分行名稱 (Branch)
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.branchName || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, branchName: e.target.value }))}
+                    placeholder="例: 營業部 / 敦南分行"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-800 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    銀行帳號 <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.accountNumber || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
+                    placeholder="例: 004-001-12345678"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  帳戶開戶名稱 / 戶名
+                </label>
+                <input
+                  type="text"
+                  value={bankFormData.accountName || ''}
+                  onChange={(e) => setBankFormData(prev => ({ ...prev, accountName: e.target.value }))}
+                  placeholder="例: 寶佳營造股份有限公司"
+                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-800 outline-none"
+                />
+              </div>
+
+              {/* 支票簿設定 */}
+              <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-200 space-y-3">
+                <div className="font-bold text-emerald-950 text-xs flex items-center gap-1.5 border-b border-emerald-200/60 pb-2">
+                  <CreditCard className="w-4 h-4 text-emerald-600" />
+                  <span>支票簿起始設定 (連續號碼)</span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">字軌前綴</label>
+                    <input
+                      type="text"
+                      value={bankFormData.checkPrefix || ''}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, checkPrefix: e.target.value.toUpperCase() }))}
+                      placeholder="CQ"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">碼長</label>
+                    <select
+                      value={bankFormData.checkDigits || 6}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, checkDigits: Number(e.target.value) }))}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
+                    >
+                      <option value={4}>4 位</option>
+                      <option value={5}>5 位</option>
+                      <option value={6}>6 位</option>
+                      <option value={7}>7 位</option>
+                      <option value={8}>8 位</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">起始號</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={bankFormData.nextCheckNumber || 1001}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, nextCheckNumber: Math.max(1, Number(e.target.value) || 1) }))}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">狀態</label>
+                <select
+                  value={bankFormData.status || 'ACTIVE'}
+                  onChange={(e: any) => setBankFormData(prev => ({ ...prev, status: e.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
+                >
+                  <option value="ACTIVE">正常啟用 (Active)</option>
+                  <option value="DISABLED">停用列管 (Disabled)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setIsBankModalOpen(false)}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 font-bold hover:bg-slate-100 transition-colors cursor-pointer text-xs"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveBank}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition-colors cursor-pointer text-xs shadow-2xs inline-flex items-center gap-1.5"
+              >
+                <Save className="w-4 h-4" />
+                <span>{bankFormData.id ? '儲存帳戶修改' : '確認新增專戶'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 刪除銀行帳戶確認 Modal */}
+      {isDeleteBankModalOpen && bankToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <AlertTriangle className="w-6 h-6" />
+              <h3 className="text-sm font-bold text-slate-900">確認刪除出款銀行專戶？</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              您即將刪除銀行專戶【<b className="text-slate-900">{bankToDelete.bankName} {bankToDelete.branchName || ''}</b> 帳號：<span className="font-mono font-bold text-indigo-700">{bankToDelete.accountNumber}</span>】。
+              <br /><br />
+              <span className="text-rose-600 font-bold">⚠️ 安全檢核：</span>若該帳戶已存在任何開立之付款單據，系統將自動攔截禁止物理刪除，以維護歷史紀錄。
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDeleteBankModalOpen(false);
+                  setBankToDelete(null);
+                }}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 text-xs font-bold hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteBank}
+                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-2xs"
+              >
+                確認刪除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ======================================================== */}
       {/* 3. 內控防呆確認 Modal (嚴格禁止原生 window.confirm)         */}
