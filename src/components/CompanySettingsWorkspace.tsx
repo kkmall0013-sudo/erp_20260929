@@ -186,6 +186,9 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     nextCheckNumber: 1001,
     checkDigits: 6,
     currency: 'TWD',
+    supportsCheck: true,
+    supportsTransfer: true,
+    paymentScheduleDays: '',
   });
   const [isDeleteBankModalOpen, setIsDeleteBankModalOpen] = useState(false);
   const [bankToDelete, setBankToDelete] = useState<CompanyBankAccount | null>(null);
@@ -215,12 +218,20 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
       nextCheckNumber: 1001,
       checkDigits: 6,
       currency: 'TWD',
+      supportsCheck: true,
+      supportsTransfer: true,
+      paymentScheduleDays: '',
     });
     setIsBankModalOpen(true);
   };
 
   const handleOpenEditBank = (b: CompanyBankAccount) => {
-    setBankFormData({ ...b });
+    setBankFormData({
+      ...b,
+      supportsCheck: b.supportsCheck !== false,
+      supportsTransfer: b.supportsTransfer !== false,
+      paymentScheduleDays: b.paymentScheduleDays || '',
+    });
     setIsBankModalOpen(true);
   };
 
@@ -245,6 +256,9 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
           nextCheckNumber: Math.max(1, Number(bankFormData.nextCheckNumber) || 1001),
           checkDigits: Number(bankFormData.checkDigits) || 6,
           currency: bankFormData.currency || 'TWD',
+          supportsCheck: bankFormData.supportsCheck !== false,
+          supportsTransfer: bankFormData.supportsTransfer !== false,
+          paymentScheduleDays: bankFormData.paymentScheduleDays?.trim() || undefined,
         },
         currentUser?.fullName || '系統管理員'
       );
@@ -292,6 +306,7 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
         contactAddress: targetCompany.contactAddress || '',
         capitalAmount: targetCompany.capitalAmount || 0,
         baseCurrency: targetCompany.baseCurrency || 'TWD',
+        paymentScheduleDays: targetCompany.paymentScheduleDays || '',
         version: targetCompany.version,
         updatedAt: targetCompany.updatedAt,
       });
@@ -416,6 +431,7 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
       contactAddress: isCorp ? '台北市' : '',
       capitalAmount: isCorp ? 30000000 : isGroup ? 100000000 : 0,
       baseCurrency: 'TWD',
+      paymentScheduleDays: isCorp ? '7,17,27' : undefined,
     };
 
     try {
@@ -492,6 +508,7 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
         contactAddress: formData.entityType === 'CORPORATION' ? formData.contactAddress?.trim() : undefined,
         capitalAmount: formData.entityType !== 'PERSONAL' ? (Number(formData.capitalAmount) || 0) : 0,
         baseCurrency: formData.baseCurrency || 'TWD',
+        paymentScheduleDays: formData.paymentScheduleDays?.trim() || undefined,
       };
 
       saveCompany(payload, currentUser?.fullName || '系統管理員', currentUser?.id);
@@ -962,6 +979,42 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
                   placeholder="service@company.com.tw"
                 />
               </div>
+
+              <div className="md:col-span-3 bg-indigo-50/50 border border-indigo-200/80 rounded-lg p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-indigo-950 font-bold text-xs">
+                    本公司每月固定開票／付款排程日 (paymentScheduleDays)
+                  </label>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {['7,17,27', '5,15,25', '10,20,30', '10,25', ''].map(preset => (
+                      <button
+                        key={preset || 'GLOBAL'}
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, paymentScheduleDays: preset }))}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
+                          (formData.paymentScheduleDays || '') === preset
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        {preset || '跟隨系統全域'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <input
+                    type="text"
+                    value={formData.paymentScheduleDays || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, paymentScheduleDays: e.target.value }))}
+                    className="w-full sm:w-56 bg-white border border-indigo-300 rounded-md px-2.5 py-1.5 font-mono font-bold text-indigo-900 outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="留空則跟隨系統全域（如 7,17,27）"
+                  />
+                  <span className="text-[11px] text-slate-600">
+                    請以半形逗號分隔每月開票或匯款日 (1~31)。套用優先序：<strong>銀行專戶專屬設定</strong> &gt; <strong>本公司設定</strong> &gt; <strong>系統全域預設</strong>。
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1327,6 +1380,23 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
                             {previewCheck}
                           </span>
                         </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {b.supportsCheck !== false && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              支票
+                            </span>
+                          )}
+                          {b.supportsTransfer !== false && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-sky-50 text-sky-700 border border-sky-200">
+                              電匯
+                            </span>
+                          )}
+                          {b.paymentScheduleDays && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              排程 {b.paymentScheduleDays} 日
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex items-center justify-end gap-2 mt-3 pt-2 border-t border-slate-200/60">
@@ -1498,6 +1568,45 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
                       className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* 開放付款方式與專屬排程日 */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+                <div className="font-bold text-slate-800 text-[11px]">
+                  開放出款付款方式與帳戶專屬每月付款日
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={bankFormData.supportsCheck !== false}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, supportsCheck: e.target.checked }))}
+                      className="rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>支援開立支票 (CHECK)</span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={bankFormData.supportsTransfer !== false}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, supportsTransfer: e.target.checked }))}
+                      className="rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>支援電匯轉帳 (TT)</span>
+                  </label>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    本帳戶專屬每月固定出款日 (選填，留空依全域預設)
+                  </label>
+                  <input
+                    type="text"
+                    value={bankFormData.paymentScheduleDays || ''}
+                    onChange={(e) => setBankFormData(prev => ({ ...prev, paymentScheduleDays: e.target.value }))}
+                    placeholder="例: 7,17,27 或 10,25"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
+                  />
                 </div>
               </div>
 

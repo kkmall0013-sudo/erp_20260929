@@ -2597,6 +2597,21 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                       </div>
                     </div>
 
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        慣用付款方式備註 (自由填寫，對帳／請款時自動提示會計與出納)
+                      </label>
+                      <input
+                        type="text"
+                        value={editingPartner.paymentMethodNotes || ''}
+                        onChange={e =>
+                          setEditingPartner({ ...editingPartner, paymentMethodNotes: e.target.value })
+                        }
+                        placeholder="例：月結30天支票、每月7/17/27日對帳電匯、現場完工領現..."
+                        className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-lg"
+                      />
+                    </div>
+
                     {/* 風險控管 */}
                     <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
                       <label className="flex items-center gap-2 cursor-pointer">

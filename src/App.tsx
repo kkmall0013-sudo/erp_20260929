@@ -1,9 +1,12 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, Suspense, lazy } from 'react';
 import { TopSubWindow } from './components/TopSubWindow';
 import { LeftSubWindow, LeftNavId } from './components/LeftSubWindow';
 import { RightSubWindow } from './components/RightSubWindow';
-import { DatabaseManagementModal } from './components/DatabaseManagementModal';
 import { AuthProvider } from './context/AuthContext';
+
+const DatabaseManagementModal = lazy(() =>
+  import('./components/DatabaseManagementModal').then(m => ({ default: m.DatabaseManagementModal }))
+);
 
 import {
   getDatabase,
@@ -202,12 +205,16 @@ export const App: React.FC = () => {
         </div>
 
         {/* 資料庫管理與歷史封存中心 Modal */}
-        <DatabaseManagementModal
-          isOpen={isDbCenterOpen}
-          onClose={() => setIsDbCenterOpen(false)}
-          onDataChanged={reloadData}
-          showToast={showToast}
-        />
+        {isDbCenterOpen && (
+          <Suspense fallback={null}>
+            <DatabaseManagementModal
+              isOpen={isDbCenterOpen}
+              onClose={() => setIsDbCenterOpen(false)}
+              onDataChanged={reloadData}
+              showToast={showToast}
+            />
+          </Suspense>
+        )}
 
         {/* 浮動提示 Toast */}
         {toastMessage && (

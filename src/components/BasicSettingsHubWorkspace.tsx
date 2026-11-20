@@ -265,6 +265,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
     initialBalance: 0,
     currentBalance: 0,
     currency: 'TWD',
+    supportsCheck: true,
+    supportsTransfer: true,
+    paymentScheduleDays: '',
   });
   const [isSavingBankModal, setIsSavingBankModal] = useState(false);
 
@@ -290,6 +293,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
       initialBalance: 0,
       currentBalance: 0,
       currency: 'TWD',
+      supportsCheck: true,
+      supportsTransfer: true,
+      paymentScheduleDays: '',
     });
     setIsBankModalOpen(true);
   };
@@ -311,6 +317,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
       initialBalance: b.initialBalance || 0,
       currentBalance: b.currentBalance || 0,
       currency: b.currency || 'TWD',
+      supportsCheck: b.supportsCheck !== false,
+      supportsTransfer: b.supportsTransfer !== false,
+      paymentScheduleDays: b.paymentScheduleDays || '',
     });
     setIsBankModalOpen(true);
   };
@@ -348,6 +357,9 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
           initialBalance: Number(bankFormData.initialBalance) || 0,
           currentBalance: Number(bankFormData.currentBalance) || Number(bankFormData.initialBalance) || 0,
           currency: bankFormData.currency || 'TWD',
+          supportsCheck: bankFormData.supportsCheck !== false,
+          supportsTransfer: bankFormData.supportsTransfer !== false,
+          paymentScheduleDays: bankFormData.paymentScheduleDays?.trim() || undefined,
         },
         currentUser?.fullName || '系統管理員'
       );
@@ -384,6 +396,10 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
   const handleSaveConfig = (cfg: SystemConfig, overrideVal?: string) => {
     if (!canWriteModule) {
       triggerToast(`⛔ 權限攔截：您目前的身分（${currentUser?.fullName}）無【全域系統參數】寫入權限！`);
+      return;
+    }
+    if (cfg.configKey === 'BOSS_ACCOUNT_INVOICE_POLICY' && !isSuperadmin) {
+      triggerToast('⛔ 權限攔截：此為架構原則開關，僅限 Superadmin（最高架構管理員）切換！');
       return;
     }
 
@@ -869,6 +885,28 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                             公司實體帳戶
                           </span>
                         )}
+                        <div className="flex flex-wrap gap-1">
+                          {b.supportsCheck !== false && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              支票
+                            </span>
+                          )}
+                          {b.supportsTransfer !== false && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-sky-50 text-sky-700 border border-sky-200">
+                              電匯
+                            </span>
+                          )}
+                          {b.supportsCheck === false && b.supportsTransfer === false && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                              無支援線上出款
+                            </span>
+                          )}
+                        </div>
+                        {b.paymentScheduleDays && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            排程: {b.paymentScheduleDays} 日
+                          </span>
+                        )}
                         <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
                           b.status === 'ACTIVE'
                             ? 'bg-emerald-50 text-emerald-700'
@@ -1178,6 +1216,52 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
                 </div>
               </div>
 
+              {/* 支援付款方式與專屬排程日設定 */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <div className="font-bold text-slate-800 text-xs">
+                  開放出款付款方式與帳戶專屬每月付款日
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <span className="block text-[11px] font-bold text-slate-600">
+                      此專戶允許開立之付款工具 (未勾選者不顯示於付款選單)
+                    </span>
+                    <div className="flex flex-wrap gap-3 pt-1">
+                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bankFormData.supportsCheck !== false}
+                          onChange={(e) => setBankFormData(prev => ({ ...prev, supportsCheck: e.target.checked }))}
+                          className="rounded border-slate-300 text-indigo-600"
+                        />
+                        <span>開立支票 (CHECK)</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={bankFormData.supportsTransfer !== false}
+                          onChange={(e) => setBankFormData(prev => ({ ...prev, supportsTransfer: e.target.checked }))}
+                          className="rounded border-slate-300 text-indigo-600"
+                        />
+                        <span>銀行電匯 / 轉帳 (TT)</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      本帳戶專屬每月固定出款日 (選填，留空則依全域預設)
+                    </label>
+                    <input
+                      type="text"
+                      value={bankFormData.paymentScheduleDays || ''}
+                      onChange={(e) => setBankFormData(prev => ({ ...prev, paymentScheduleDays: e.target.value }))}
+                      placeholder="例: 7,17,27 或 10,25"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* 帳戶狀態與幣別 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
@@ -1270,7 +1354,14 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
 
   // 分類參數清單
   const taxConfigs = systemConfigs.filter(c => ['TAX_RATE', 'FIN_TAX_TOLERANCE', 'NHI_RATE', 'MINIMUM_WAGE'].includes(c.configKey));
-  const contractConfigs = systemConfigs.filter(c => ['DEFAULT_RETENTION_RATE', 'PAYMENT_TERM_DAYS', 'WARRANTY_MONTHS', 'PROJECT_LOCK_MODE'].includes(c.configKey));
+  const contractConfigs = systemConfigs.filter(c => [
+    'DEFAULT_RETENTION_RATE',
+    'PAYMENT_TERM_DAYS',
+    'PAYMENT_SCHEDULE_DAYS',
+    'BOSS_ACCOUNT_INVOICE_POLICY',
+    'WARRANTY_MONTHS',
+    'PROJECT_LOCK_MODE'
+  ].includes(c.configKey));
 
   return (
     <div className="space-y-6">
@@ -1691,8 +1782,187 @@ export const BasicSettingsHubWorkspace: React.FC<BasicSettingsHubWorkspaceProps>
               {contractConfigs.map(cfg => {
                 const isPaymentTerm = cfg.configKey === 'PAYMENT_TERM_DAYS';
                 const isLockMode = cfg.configKey === 'PROJECT_LOCK_MODE';
+                const isScheduleDays = cfg.configKey === 'PAYMENT_SCHEDULE_DAYS';
+                const isBossPolicy = cfg.configKey === 'BOSS_ACCOUNT_INVOICE_POLICY';
                 const currentVal = editingConfigs[cfg.id] ?? cfg.configValue;
                 const isTermDisabled = currentVal === '0' || currentVal === 'DISABLED';
+
+                if (isScheduleDays) {
+                  const parsedDays = Array.from(
+                    new Set(
+                      String(currentVal || '')
+                        .split(/[,，、\s]+/)
+                        .map(s => Number(s.trim()))
+                        .filter(n => Number.isInteger(n) && n >= 1 && n <= 31)
+                    )
+                  ).sort((a, b) => a - b);
+
+                  return (
+                    <div key={cfg.id} className="py-5 first:pt-0 last:pb-0 space-y-3">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-slate-900">
+                              {cfg.description || '每月固定匯款與開票排程日'}
+                            </span>
+                            <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                              {cfg.configKey}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            設定全域每個月固定放款／開票日（逗號分隔 1~31，如 <code className="font-mono font-bold text-slate-700">7,17,27</code>）。因為不同公司可能使用不同結帳與開票習慣，套用優先序為：<strong>銀行專戶設定</strong> &gt; <strong>各公司法人設定</strong> &gt; <strong>系統全域預設</strong>。
+                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            <span className="text-[11px] text-slate-400">預覽排程日：</span>
+                            {parsedDays.length > 0 ? parsedDays.map(d => (
+                              <span key={d} className="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                每月 {d} 日
+                              </span>
+                            )) : (
+                              <span className="text-[11px] text-rose-600 font-bold">⚠️ 請輸入 1~31 數字</span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('COMPANIES')}
+                              className="ml-2 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-0.5 rounded transition-colors cursor-pointer"
+                            >
+                              前往「營運法人實體」依各公司別單獨設定 →
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col items-start lg:items-end gap-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={currentVal}
+                              onChange={(e) => setEditingConfigs(prev => ({ ...prev, [cfg.id]: e.target.value }))}
+                              placeholder="7,17,27"
+                              className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-mono font-bold text-slate-800 bg-white w-44 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveConfig(cfg)}
+                              disabled={!canWriteModule || parsedDays.length === 0}
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              <span>儲存</span>
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {['7,17,27', '5,15,25', '10,20,30', '10,25'].map(preset => (
+                              <button
+                                key={preset}
+                                type="button"
+                                disabled={!canWriteModule}
+                                onClick={() => setEditingConfigs(prev => ({ ...prev, [cfg.id]: preset }))}
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
+                                  currentVal === preset
+                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                    : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                                }`}
+                              >
+                                {preset}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (isBossPolicy) {
+                  const isPolicyAllow = currentVal === 'ALLOW_BOSS_ADVANCE';
+                  return (
+                    <div key={cfg.id} className="py-5 first:pt-0 last:pb-0 space-y-3">
+                      <div className="flex flex-col gap-3 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-slate-900">
+                              {cfg.description || '有發票單據之老闆私帳代墊政策'}
+                            </span>
+                            <span className="font-mono text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                              {cfg.configKey}
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-900 text-amber-300">
+                              僅限 Superadmin 可切換
+                            </span>
+                          </div>
+                          {!isSuperadmin && (
+                            <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1">
+                              <Lock className="w-3.5 h-3.5" />
+                              <span>唯讀檢視（須 Superadmin 權限調整）</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          「無發票／免用發票（小包內帳）」無論切換哪一項，皆可選用老闆私帳付款且成本留於案場。此開關決定<strong>【已開立合法統一發票之應付單據】</strong>是否開放特例由老闆私帳代墊：
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            disabled={!isSuperadmin}
+                            onClick={() => {
+                              setEditingConfigs(prev => ({ ...prev, [cfg.id]: 'STRICT_INVOICE_MATCH' }));
+                              handleSaveConfig(cfg, 'STRICT_INVOICE_MATCH');
+                            }}
+                            className={`text-left p-3.5 rounded-xl border-2 transition-all cursor-pointer disabled:cursor-not-allowed ${
+                              !isPolicyAllow
+                                ? 'bg-indigo-50 border-indigo-600 shadow-xs'
+                                : 'bg-white border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900">
+                                做法 1：嚴格發票對應模式（預設建議）
+                              </span>
+                              {!isPolicyAllow && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-600 text-white">
+                                  使用中
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
+                              有發票時僅顯示該發票買受人公司的銀行帳戶與現金支付，完全隱藏老闆私帳，介面最簡潔、避免使用者誤選私帳導致稅務帳不符。
+                            </p>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={!isSuperadmin}
+                            onClick={() => {
+                              setEditingConfigs(prev => ({ ...prev, [cfg.id]: 'ALLOW_BOSS_ADVANCE' }));
+                              handleSaveConfig(cfg, 'ALLOW_BOSS_ADVANCE');
+                            }}
+                            className={`text-left p-3.5 rounded-xl border-2 transition-all cursor-pointer disabled:cursor-not-allowed ${
+                              isPolicyAllow
+                                ? 'bg-amber-50 border-amber-600 shadow-xs'
+                                : 'bg-white border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900">
+                                做法 2：嚴格為主 + 開放特例私帳代墊
+                              </span>
+                              {isPolicyAllow && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-600 text-white">
+                                  使用中
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
+                              有發票時預設僅顯示公司帳戶，但額外顯示「特例：由老闆私帳代墊（股東往來）」勾選框，勾選後可選老闆私帳並明確標記代墊註記。
+                            </p>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
 
                 return (
                   <div key={cfg.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4">

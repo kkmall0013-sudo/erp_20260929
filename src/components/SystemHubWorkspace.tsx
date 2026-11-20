@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import {
   SlidersHorizontal,
   Building2,
@@ -13,11 +13,22 @@ import {
 } from 'lucide-react';
 import { Company } from '../types/erp';
 import { useAuth } from '../context/AuthContext';
-import { BasicSettingsHubWorkspace } from './BasicSettingsHubWorkspace';
-import { AccountManagementWorkspace } from './AccountManagementWorkspace';
-import { AppSettingsWorkspace } from './AppSettingsWorkspace';
-import { MiniAppsWorkspace } from './MiniAppsWorkspace';
-import { DiscussionRoadmapView } from './DiscussionRoadmapView';
+
+const BasicSettingsHubWorkspace = lazy(() =>
+  import('./BasicSettingsHubWorkspace').then(m => ({ default: m.BasicSettingsHubWorkspace }))
+);
+const AccountManagementWorkspace = lazy(() =>
+  import('./AccountManagementWorkspace').then(m => ({ default: m.AccountManagementWorkspace }))
+);
+const AppSettingsWorkspace = lazy(() =>
+  import('./AppSettingsWorkspace').then(m => ({ default: m.AppSettingsWorkspace }))
+);
+const MiniAppsWorkspace = lazy(() =>
+  import('./MiniAppsWorkspace').then(m => ({ default: m.MiniAppsWorkspace }))
+);
+const DiscussionRoadmapView = lazy(() =>
+  import('./DiscussionRoadmapView').then(m => ({ default: m.DiscussionRoadmapView }))
+);
 
 export type SystemHubTab = 'BASIC' | 'USERS' | 'APP_SETTINGS' | 'MINI_APPS' | 'ROADMAP';
 
@@ -191,6 +202,14 @@ export const SystemHubWorkspace: React.FC<SystemHubWorkspaceProps> = ({
 
       {/* 分頁工作區本體內容 */}
       <div>
+        <Suspense
+          fallback={
+            <div className="bg-white rounded-xl border border-slate-200 p-8 flex items-center justify-center gap-2 text-xs font-bold text-slate-500">
+              <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              <span>載入系統管理子模組中...</span>
+            </div>
+          }
+        >
         {/* 1. 營運基本資料 */}
         {activeTab === 'BASIC' && (
           <BasicSettingsHubWorkspace
@@ -232,6 +251,7 @@ export const SystemHubWorkspace: React.FC<SystemHubWorkspaceProps> = ({
             onSwitchToWorkspaceTest={onSwitchToWorkspaceTest || (() => {})}
           />
         )}
+        </Suspense>
       </div>
     </div>
   );

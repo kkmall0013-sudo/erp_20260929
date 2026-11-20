@@ -50,6 +50,11 @@ import {
   getBuildingCategoryTree,
   getProjectBudgetPartners,
   getProjectPartnerBillingSummary,
+  getAppConfigMap,
+  getAllAccountsReceivable,
+  getAllArCollections,
+  getAllProjectAdvances,
+  getAllSystemConfigs,
   subscribeToDatabase
 } from '../../db/sqlite';
 import { PartnerSearchSelect } from '../widgets/PartnerSearchSelect';
@@ -59,6 +64,10 @@ import { validateTaiwanTaxId, validateTaiwanNationalId } from '../../utils/taiwa
 import { BuildingCategoryManagerModal } from './BuildingCategoryManagerModal';
 import { ProjectVendorInboundModal } from './ProjectVendorInboundModal';
 import { ProjectEditorModal } from './ProjectEditorModal';
+import {
+  CustomerBillingWorkflowMode,
+  CustomerStatementMiniApp
+} from '../finance/CustomerStatementMiniApp';
 
 // 🏛️ 建造建物類型標準分類
 export const BUILDING_TYPES = [
@@ -129,6 +138,16 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
   const [categoryTree, setCategoryTree] = useState<BuildingCategoryGroup[]>(() => getBuildingCategoryTree());
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
 
+  // 對外客戶請款表小程式狀態 (依系統中樞 APP_CUSTOMER_BILLING_MODE 動態開啟)
+  const [customerBillingMode, setCustomerBillingMode] = useState<CustomerBillingWorkflowMode>('FINANCE_ONLY');
+  const [statementProject, setStatementProject] = useState<Project | null>(null);
+  const [sanitizedBillingData, setSanitizedBillingData] = useState<{
+    arList: ReturnType<typeof getAllAccountsReceivable>;
+    arCollections: ReturnType<typeof getAllArCollections>;
+    projectAdvances: ReturnType<typeof getAllProjectAdvances>;
+    taxRate: number;
+  }>({ arList: [], arCollections: [], projectAdvances: [], taxRate: 0.05 });
+
   // 廠商進料穿透檢視狀態
   const [drillingVendor, setDrillingVendor] = useState<{
     project: Project;
@@ -142,12 +161,29 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
     setCategoryTree(getBuildingCategoryTree());
   };
 
-  // 載入現地資料與商業夥伴
+  // 載入現地資料、商業夥伴與流程權限設定
   useEffect(() => {
     const refreshData = () => {
       try {
         setSites(getAllProjectSites());
         setPartners(getAllBusinessPartners());
+        const cfgMap = getAppConfigMap();
+        const modeRaw = cfgMap.APP_CUSTOMER_BILLING_MODE;
+        if (modeRaw === 'PROJECT_AND_FINANCE' || modeRaw === 'PROJECT_FIRST_HANDOFF') {
+          setCustomerBillingMode(modeRaw);
+        } else {
+          setCustomerBillingMode('FINANCE_ONLY');
+        }
+        const sysCfgs = getAllSystemConfigs();
+        const taxCfg = sysCfgs.find(c => c.configKey === 'TAX_RATE');
+        const rawRate = taxCfg ? Number(String(taxCfg.configValue).replace('%', '').trim()) : 0.05;
+        const taxRate = Number.isFinite(rawRate) && rawRate >= 0 ? (rawRate > 1 ? rawRate / 100 : rawRate) : 0.05;
+        setSanitizedBillingData({
+          arList: getAllAccountsReceivable(),
+          arCollections: getAllArCollections(),
+          projectAdvances: getAllProjectAdvances(),
+          taxRate,
+        });
       } catch (err) {
         console.error('Failed to load project sites or partners:', err);
       }
@@ -160,6 +196,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
       unsubscribe();
     };
   }, [projects]);
+
+  const canOpenProjectStatement = customerBillingMode !== 'FINANCE_ONLY' && (can('PROJECTS', 'read') || can('FINANCE_AR', 'read'));
 
   // 現地工區 Mapping (projectId -> ProjectSite)
   const siteMap = useMemo(() => {
@@ -748,6 +786,18 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
                             <Eye className="w-4 h-4" />
                           </button>
 
+                          {canOpenProjectStatement && (
+                            <button
+                              type="button"
+                              onClick={() => setStatementProject(p)}
+                              className="px-2 py-1 rounded-lg text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer inline-flex items-center gap-1"
+                              title="開啟對外客戶請款／對帳明細表小程式（不含私帳與內部401機密）"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>對客表</span>
+                            </button>
+                          )}
+
                           {canWrite && (
                             <button
                               onClick={() => handleOpenEdit(p)}
@@ -819,6 +869,11 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
             handleOpenEdit(p);
           }}
           onClose={() => setViewingProject(null)}
+          onOpenCustomerStatement={canOpenProjectStatement ? () => {
+            const p = viewingProject;
+            setViewingProject(null);
+            setStatementProject(p);
+          } : undefined}
           onDrillVendor={(proj, partnerId, partnerName, workScope, estimatedAmount) => {
             setDrillingVendor({
               project: proj,
@@ -829,6 +884,52 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
             });
           }}
         />
+      )}
+
+      {/* 5-B. 案場調用「對外客戶請款／對帳明細表」獨立小程式 Modal */}
+      {statementProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 print:bg-white print:p-0 print:static">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden print:shadow-none print:border-0 print:max-h-none">
+            <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 print:hidden">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-emerald-100 text-emerald-800">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">
+                    [{statementProject.projectCode}] {statementProject.name} · 對外客戶請款明細表小程式
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    業主：{statementProject.ownerName || '未建檔'} · {customerBillingMode === 'PROJECT_FIRST_HANDOFF' ? '工務送審模式（可送交會計立帳開票）' : '雙軌調用模式（與財務機密完全隔離）'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStatementProject(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 print:overflow-visible print:p-6">
+              <CustomerStatementMiniApp
+                project={statementProject}
+                arList={sanitizedBillingData.arList}
+                arCollections={sanitizedBillingData.arCollections}
+                projectAdvances={sanitizedBillingData.projectAdvances}
+                taxRate={sanitizedBillingData.taxRate}
+                workflowMode={customerBillingMode}
+                canSubmitToAccounting={canWrite && (customerBillingMode === 'PROJECT_FIRST_HANDOFF' || customerBillingMode === 'PROJECT_AND_FINANCE')}
+                operatorName={currentUser?.fullName || '工務承辦'}
+                onNotify={(msg) => triggerToast(msg)}
+                onAfterSubmit={() => {
+                  onDataChanged();
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 6. 刪除確認 Modal */}
@@ -915,6 +1016,7 @@ interface ProjectDetailModalProps {
   companies: Company[];
   onEdit: () => void;
   onClose: () => void;
+  onOpenCustomerStatement?: () => void;
   onDrillVendor: (
     project: Project,
     partnerId: string,
@@ -930,6 +1032,7 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
   companies,
   onEdit,
   onClose,
+  onOpenCustomerStatement,
   onDrillVendor
 }) => {
   // 取得此案場的現場進料單據列表
@@ -1029,6 +1132,16 @@ const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenCustomerStatement && (
+              <button
+                type="button"
+                onClick={onOpenCustomerStatement}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5 text-emerald-700" />
+                <span>對客請款表</span>
+              </button>
+            )}
             <button
               onClick={onEdit}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer"

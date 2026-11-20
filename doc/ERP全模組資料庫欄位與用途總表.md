@@ -66,7 +66,7 @@
 | 欄位 | 用途 |
 |---|---|
 | `id` | 軟體設定識別碼（如 `APP-CFG-01`）。 |
-| `configKey` | 程式設定唯一鍵名：<br>• `APP_BRAND_NAME`：軟體品牌主名稱（如「田頭」，即時同步至頂欄與系統各處）。<br>• `APP_SUB_TITLE`：軟體副標題／產品代號（如「A1 商務應用雲」、「營造工程雲」）。<br>• `APP_VERSION`：系統版本號標記（如「v2.5.0-PRO」）。<br>• `APP_HTML_TITLE`：瀏覽器分頁標題（如「客製化營造工程 ERP 系統」）。<br>• `APP_WELCOME_BANNER`：儀表板首頁歡迎標語與公告文字。<br>• `APP_FOOTER_COPYRIGHT`：系統頁腳版權宣告字串。<br>• `APP_GLOBAL_ANNOUNCEMENT`：頂欄全域緊急公告／維護廣播跑馬燈字串。<br>• `APP_ANNOUNCEMENT_ENABLED`：全域緊急公告啟用開關（`BOOLEAN`）。<br>• `APP_ENABLED_MODULES`：全系統開放業務模組授權清單（`JSON` 陣列，控制哪些模組對全系統開放）。<br>• `APP_MAINTENANCE_MODE`：全系統維護模式／唯讀鎖定開關（`BOOLEAN`）。<br>• `APP_LOGO_MODE`：標誌顯示模式（`TEXT` 純文字 / `DEFAULT` 預設圖標 / `CUSTOM` 自訂圖示）。<br>• `APP_LOGO_URL`：自訂標誌圖片或圖示 URL（選填）。 |
+| `configKey` | 程式設定唯一鍵名：<br>• `APP_BRAND_NAME`：軟體品牌主名稱（如「田頭」，即時同步至頂欄與系統各處）。<br>• `APP_SUB_TITLE`：軟體副標題／產品代號（如「A1 商務應用雲」、「營造工程雲」）。<br>• `APP_VERSION`：系統版本號標記（如「v2.5.0-PRO」）。<br>• `APP_HTML_TITLE`：瀏覽器分頁標題（如「客製化營造工程 ERP 系統」）。<br>• `APP_WELCOME_BANNER`：儀表板首頁歡迎標語與公告文字。<br>• `APP_FOOTER_COPYRIGHT`：系統頁腳版權宣告字串。<br>• `APP_GLOBAL_ANNOUNCEMENT`：頂欄全域緊急公告／維護廣播跑馬燈字串。<br>• `APP_ANNOUNCEMENT_ENABLED`：全域緊急公告啟用開關（`BOOLEAN`）。<br>• `APP_ENABLED_MODULES`：全系統開放業務模組授權清單（`JSON` 陣列，控制哪些模組對全系統開放）。<br>• `APP_MAINTENANCE_MODE`：全系統維護模式／唯讀鎖定開關（`BOOLEAN`）。<br>• `APP_LOGO_MODE`：標誌顯示模式（`TEXT` 純文字 / `DEFAULT` 預設圖標 / `CUSTOM` 自訂圖示）。<br>• `APP_LOGO_URL`：自訂標誌圖片或圖示 URL（選填）。<br>• `APP_CUSTOMER_BILLING_MODE`：對外客戶請款／對帳明細表權限流程模式（`FINANCE_ONLY` 會計統一處理 / `PROJECT_FIRST_HANDOFF` 工務對客明細送審 ➔ 會計立帳決定開票 / `PROJECT_AND_FINANCE` 雙軌各自調用）。 |
 | `configValue` | 設定值，以純文字保存並依 `valueType` 解析。 |
 | `description` | 軟體設定項目中文用途說明。 |
 | `valueType` | 數值型別：`STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
@@ -84,7 +84,7 @@
 | 欄位 | 用途 |
 |---|---|
 | `id` | 參數資料列識別碼（如 `CFG-01`）。 |
-| `configKey` | 參數唯一鍵名，依業務分為四大分類：<br>**【一、法定稅制與健保勞動規章】**：<br>• `TAX_RATE`：法定營業稅率（預設 5%，政府修法時 Admin 直接調整）。<br>• `FIN_TAX_TOLERANCE`：發票稅額尾差容許值（新台幣元，預設 5 元）。<br>• `NHI_RATE`：二代健保補充保費法定扣繳費率（預設 2.11%）。<br>• `MINIMUM_WAGE`：法定最低基本工資（預設 28,590 元 / 時薪 190 元，供人事薪資、勞健保底線與未來法規調整預備）。<br>• `STAMP_DUTY_RATE`：法定印花稅率（預設 0.1% 或 0.4%）。<br>**【二、工程合約與內控營運慣例】**：<br>• `DEFAULT_RETENTION_RATE`：工程估驗預設保留款扣留比例（預設 5% 或 10%）。<br>• `PROJECT_LOCK_MODE`：案場超支預算防呆模式（`STRICT` 嚴格阻擋 / `WARN` 警示放行）。<br>• `DEFAULT_PAYMENT_TERMS_DAYS` / `PAYMENT_TERM_DAYS`：預設付款與請款票期天數（支援輸入天數，或開關切換為 `0` / `DISABLED` 關閉票期，代表「無票期 · 即期付款 / 現金電匯」，合約估驗到期日直接等於核定日）。<br>• `DEFAULT_WARRANTY_MONTHS`：預設工程合約保固期（月數，預設 12 個月）。 |
+| `configKey` | 參數唯一鍵名，依業務分為四大分類：<br>**【一、法定稅制與健保勞動規章】**：<br>• `TAX_RATE`：法定營業稅率（預設 5%，支持小數 `0.05` 或百分比 `5` 動態正規化讀取）。<br>• `FIN_TAX_TOLERANCE`：發票稅額尾差容許值（新台幣元，預設 5 元）。<br>• `NHI_RATE`：二代健保補充保費法定扣繳費率（預設 2.11%）。<br>• `MINIMUM_WAGE`：法定最低基本工資（預設 28,590 元 / 時薪 190 元，供人事薪資、勞健保底線與未來法規調整預備）。<br>• `STAMP_DUTY_RATE`：法定印花稅率（預設 0.1% 或 0.4%）。<br>**【二、工程合約與財務出納內控慣例】**：<br>• `DEFAULT_RETENTION_RATE`：工程估驗預設保留款扣留比例（預設 5% 或 10%）。<br>• `PROJECT_LOCK_MODE`：案場超支預算防呆模式（`STRICT` 嚴格阻擋 / `WARN` 警示放行）。<br>• `DEFAULT_PAYMENT_TERMS_DAYS` / `PAYMENT_TERM_DAYS`：預設付款與請款票期天數（支援輸入天數，或開關切換為 `0` / `DISABLED` 關閉票期，代表「無票期 · 即期付款 / 現金電匯」）。<br>• `PAYMENT_SCHEDULE_DAYS`：預設每月固定開票／付款日規則（多日以逗號分隔，預設 `7,17,27`，作為系統全域預設供法人與銀行專戶繼承覆寫）。<br>• `BOSS_ACCOUNT_INVOICE_POLICY`：有發票單據是否允許老闆私帳代墊政策（`STRICT_INVOICE_MATCH` 嚴格防呆：有發票禁止選老闆私帳 / `ALLOW_BOSS_ADVANCE` 特例代墊：會計或出納可勾選特例以老闆私帳墊付並轉股東往來）。<br>• `DEFAULT_WARRANTY_MONTHS` / `WARRANTY_MONTHS`：預設工程合約保固期（月數，預設 12 個月）。 |
 | `configValue` | 參數值，以字串保存並依 `valueType` 轉換。 |
 | `description` | 參數中文名稱與用途說明（供基本資料控制台與純中文審計日誌直接顯示）。 |
 | `valueType` | 值型別：`STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
@@ -264,6 +264,7 @@
 | `representative` | 負責人／法定代表人（重要人物，如董事長姓名；個人實體免填）。 |
 | `keyPersonnel` | 公司架構重要人物清單 JSON（如 `[{"title":"董事長","name":"林大巨","phone":"0910-123456"},{"title":"總經理","name":"陳建華","phone":"0920-654321"}]`）。 |
 | `documentPrefix` | 表單編號前綴（如 `RT-`、`BOSS-`），供後續採購、估驗、借貸跳號使用。 |
+| `paymentScheduleDays` | 本法人公司預設每月固定開票／付款日規則（如 `7,17,27`；留空則繼承系統中樞 `PAYMENT_SCHEDULE_DAYS`，下層銀行專戶可再個別覆寫）。 |
 | `phones` | 動態電話列表 JSON（支援多筆區別，如 `[{"type":"市話","number":"02-27001234"},{"type":"傳真","number":"02-27005678"},{"type":"工務專線","number":"0910-123456"}]`）。 |
 | `email` | 官方對外電子郵件（具備格式檢核）。個人實體選填。 |
 | `registeredAddress` | 公司工商登記地址。個人實體免填。 |
@@ -345,29 +346,30 @@
 
 ### UserGroup｜業務權限群組主檔 (`user_groups`)
 
-> **審核增補說明**：取代舊版單層 `Role` 表，支援系統預設四大核心業務群組（工務組、財務會計組、採購發包組、專案業務組）與管理員動態新增之自訂職能群組，並內建單筆核准金額上限 (`approvalLimit`)。
+> **審核增補說明**：取代舊版單層 `Role` 表，除原有四大核心群組（工務組 `GRP-ENG`、財務會計兼出納組 `GRP-ACC`、採購發包組 `GRP-PROC`、專案業務組 `GRP-SALES`）外，另內建 **「專職會計組 (`GRP-PURE-ACC`)」** 與 **「專職出納組 (`GRP-CASHIER`)」** 兩大系統受保護分權群組，支援組織從「一人會計兼出納」無縫過渡至「會計只管帳、出納只管錢」之兩人分權架構。
+> **標準財務測試帳號種子 (`users`)**：`USR-ACC-A` (`acc_a` / `A會計` / `GRP-PURE-ACC`)、`USR-CASHIER-B` (`cashier_b` / `B出納` / `GRP-CASHIER`)、`USR-FIN-C` (`fin_c` / `C會計出納` / `GRP-ACC`)，預設密碼皆為 `888888` 並動態授予所有啟用中法人存取權。
 
 | 欄位 | 用途 |
 |---|---|
-| `id` | 權限群組識別碼（如 `GRP-ENG`、`GRP-ACC`）。 |
-| `groupCode` | 群組唯一業務代碼（如 `SITE_ENG`、`FIN_ACC`）。 |
-| `groupName` | 群組中文名稱（如 `工務組`、`財務會計組`）。 |
+| `id` | 權限群組識別碼（如 `GRP-ENG`、`GRP-ACC`、`GRP-PURE-ACC`、`GRP-CASHIER`）。 |
+| `groupCode` | 群組唯一業務代碼（如 `SITE_ENG`、`FIN_ACC`、`FIN_ACC_ONLY`、`FIN_CASHIER`）。 |
+| `groupName` | 群組中文名稱（如 `工務組`、`財務會計組`、`專職會計組（僅管帳：對帳／發票）`、`專職出納組（僅管錢：放款／支票）`）。 |
 | `description` | 群組職責範圍與權限說明。 |
-| `isSystem` | 是否為系統內建四大核心群組標記（`1` 為系統內建，受憲法保護禁止刪除；`0` 為自訂群組）。 |
+| `isSystem` | 是否為系統內建核心群組標記（`1` 為系統內建，受憲法保護禁止刪除；`0` 為自訂群組）。 |
 | `approvalLimit` | 該群組同仁之單筆簽核金額上限（新台幣元；`-1` 或 `>= 999999999` 代表無限額；多群組同仁取最大值）。 |
 | `canExport` | 群組層級預設匯出報表總開關（`0` 或 `1`，作為新模組預設值與群組層級快速識別）。 |
 | `version` | 樂觀鎖版本號（預設 `1`）。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### GroupModulePermission｜群組 12 大模組 PBAC 權限矩陣 (`group_module_permissions`)
+### GroupModulePermission｜群組 13 大模組 PBAC 權限矩陣 (`group_module_permissions`)
 
-> **審核增補說明**：將原本濃縮在 `Role.permissions` JSON 字串中的權限拆解為結構化關聯表，針對全系統 12 大業務模組個別控管「讀 (`canRead`)、寫 (`canWrite`)、審 (`canApprove`)、出 (`canExport`)」四維權限，並內建讀寫連動防呆（開啟寫/審/出自動開啟讀；關閉讀自動關閉寫/審/出）。
+> **審核增補說明**：將原本濃縮在 `Role.permissions` JSON 字串中的權限拆解為結構化關聯表，針對全系統 13 大業務模組（含進貨簽收 `INBOUND_RECEIPTS`）個別控管「讀 (`canRead`)、寫 (`canWrite`)、審 (`canApprove`)、出 (`canExport`)」四維權限，並內建讀寫連動防呆（開啟寫/審/出自動開啟讀；關閉讀自動關閉寫/審/出）。其中專職會計 (`GRP-PURE-ACC`) 僅開 `FINANCE_AP`/`FINANCE_AR`/`INBOUND_RECEIPTS(r,e)` 而關閉 `BANK_CHECKS`；專職出納 (`GRP-CASHIER`) 僅開 `BANK_CHECKS` 而關閉 `FINANCE_AP`/`FINANCE_AR`。
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 權限矩陣項目識別碼（格式：`PERM-{groupId}-{moduleKey}`）。 |
 | `groupId` | 所屬業務權限群組 ID（對應 `user_groups.id`）。 |
-| `moduleKey` | 12 大業務模組鍵名：`COMPANIES`、`PROJECTS`、`PARTNERS`、`QUOTATIONS`、`PURCHASE_ORDERS`、`SUBCONTRACTS`、`VALUATIONS`、`FINANCE_AP`、`FINANCE_AR`、`BANK_CHECKS`、`SYSTEM_CONFIGS`、`AUDIT_LOGS`。 |
+| `moduleKey` | 13 大業務模組鍵名：`COMPANIES`、`PROJECTS`、`PARTNERS`、`QUOTATIONS`、`INBOUND_RECEIPTS`、`PURCHASE_ORDERS`、`SUBCONTRACTS`、`VALUATIONS`、`FINANCE_AP`、`FINANCE_AR`、`BANK_CHECKS`、`SYSTEM_CONFIGS`、`AUDIT_LOGS`。 |
 | `canRead` | 讀取／進入模組權限（`0` 攔截並顯示無權限閘門；`1` 放行檢視）。 |
 | `canWrite` | 新增／編輯／刪除草稿權限（`0` 唯讀鎖定；`1` 允許寫入）。 |
 | `canApprove` | 單據核准／過帳權限（`0` 禁止簽核；`1` 允許於 `approvalLimit` 額度內執行簽核過帳）。 |
@@ -882,29 +884,44 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 
 ### AccountsPayableReconciliation｜會計廠商應付對帳單 (`ap_reconciliations`)
 
-> **架構定位**：**【會計對帳水池核心 · 發票補登 · 折讓扣款 · 欠款水位與付款提醒】**。
-> 每逢月底月初，會計拉出指定廠商大水池中所有 `PENDING_BILLING` 之進貨簽收單勾選核對；當期無發票或有疑義者放著不勾選，保留於水池下期對帳。
+> **架構定位**：**【會計對帳水池核心 · 會計管帳／出納管錢之雙向交接單據 · 防重複鎖定】**。
+> - 每逢月底月初，會計拉出廠商大水池中所有 `PENDING_BILLING` 進貨簽收單勾選核對；無論存為草稿 (`DRAFT`)、退回重算 (`RETURNED`)、核准送出納 (`APPROVED`) 或已放款 (`PAID`)，只要尚未作廢 (`VOIDED`)，所勾選之進貨單一律鎖定為 `BILLED`，徹底杜絕同一進貨單重複建立請款。
+> - **職能分離**：會計僅核對買受/立帳法人 (`companyId`)、折讓 (`discountAmount`)、動態稅率營業稅 (`taxType`/`taxAmount`) 與發票字軌，**不指定付款方式／銀行／支票日期**；核准後抛轉出納挑選專戶、付款方式與票據到期日，出納亦可退回 (`RETURNED`) 交由會計重算。
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 應付對帳單識別碼。 |
-| `reconciliationNumber` | 對帳單號（編碼規範: `REC-YYYYMM-0001`）。 |
-| `companyId` | 本期入帳／稅務申報法人。 |
+| `reconciliationNumber` | 對帳單號（編碼規範: `REC-YYYYMM-0001`，`UNIQUE NOT NULL`）。 |
+| `companyId` | 本期入帳／稅務申報（買受人）法人公司 ID。 |
 | `vendorId` | 廠商商業夥伴 ID。 |
+| `vendorName` | 廠商名稱快照。 |
 | `billingPeriod` | 對帳期別（如 `2026-10`）。 |
 | `inboundTotalAmount` | 本期勾選進貨單之原始金額總和。 |
 | `discountAmount` | **折讓金額（粉紅扣款，以正數儲存）**：如領現金折讓、議價零頭扣減。 |
-| `taxType` | 稅額計算模式（`TAX_EXCLUSIVE` 外加 5% / `TAX_INCLUSIVE` 內含 / `TAX_EXEMPT` 免稅）。 |
-| `taxAmount` | 本期營業稅額。 |
-| `netPayableAmount` | 本期應付淨額（`inboundTotalAmount - discountAmount + taxAmount`）。 |
+| `taxType` | 稅額計算模式（`TAX_EXCLUSIVE` 外加稅率 / `TAX_INCLUSIVE` 內含反推 / `TAX_EXEMPT` 免稅；稅率動態讀取 `TAX_RATE`）。 |
+| `taxAmount` | 本期營業稅額（免稅強制為 0；支援尾差容差微調）。 |
+| `netPayableAmount` | 本期應付淨額（外加：`本金 - 折讓 + 稅額`；內含：`本金 - 折讓`；免稅：`本金 - 折讓`）。 |
 | `invoiceNumber` | 本期發票號碼（多發票以逗號分隔或關聯發票主表；免用發票註記 `NONE`；跨期補票註記 `PENDING_NEXT`）。 |
 | `hasInvoice` | 本期是否具備發票（`BOOLEAN`）。 |
-| `paymentDueDate` | **預計付款日**（依廠商付款條件或協議排定，儀表板到期紅黃燈預警之基準）。 |
-| `status` | 對帳單狀態：`DRAFT`（草稿）、`APPROVED`（主管覆核/鎖定）、`PAID`（已放款沖銷）、`VOIDED`（作廢）。 |
+| `paymentDueDate` | **預計付款日 / 約定到期參考日**（出納開立支票或電匯放款時可動態覆寫實際付款日）。 |
+| `designatedPaymentMethod` | 出納放款方式快照或預填註記（`CHECK` / `TT` / `CASH`）。 |
+| `designatedBankAccountId` | 指定或實際出款銀行帳戶 ID。 |
+| `designatedBankAccountName` | 出款銀行帳戶名稱快照。 |
+| `designatedCheckNumber` | 預定／關聯支票號碼快照。 |
+| `paymentTermNotes` | 會計交付給出納之付款條件或協議提醒備註（供出納審核放款參考）。 |
+| `isBossAdvance` | 特例標記：有發票時允許由老闆私帳代墊（受 `BOSS_ACCOUNT_INVOICE_POLICY` 控制）。 |
+| `bouncedCheckNumber` | 曾發生退票之原支票號碼（退票重付警訊用）。 |
+| `bouncedReason` | 退票／跳票原因說明。 |
+| `bouncedAt` | 退票記錄時間戳記。 |
+| `returnedReason` | **【雙向退回閉環】** 出納退回會計重算之具體原因（例如稅額、發票、折讓或買受法人誤植）。 |
+| `returnedBy` | 執行退回操作之出納人員姓名快照。 |
+| `returnedAt` | 退回會計時間戳記。 |
+| `status` | 對帳單狀態五態機：`DRAFT`（會計草稿）、`RETURNED`（出納退回重算）、`APPROVED`（會計核准立帳／已送出納待放款）、`PAID`（已放款沖銷完工）、`VOIDED`（作廢並釋放進貨單回大水池）。 |
 | `reconciledBy` | 對帳會計人員姓名。 |
-| `approvedBy` | 覆核主管姓名。 |
-| `disbursedAt` | 實際放款時間戳記。 |
+| `approvedBy` | 覆核送單人員姓名。 |
+| `disbursedAt` | 實際出納放款日期／時間戳記。 |
 | `notes` | 對帳備註說明。 |
+| `receiptIds` | 勾稽綁定之進貨簽收單 ID 清冊 JSON 陣列（例如 `["INB-01","INB-02"]`）。 |
 | `isDeleted`、`version`、`createdAt`、`updatedAt` | 憲法標準欄位。 |
 
 供應商預付備料不另建 `PrepaidMaterialLedger`；採購端使用財務模組的共用 `PrepaymentLedger`，以 `partnerId`、`itemId`、`unitPrice`、`remainingQty` 及 `balanceAmount` 查詢對應預付批次。
@@ -1029,118 +1046,191 @@ API 回應封裝（非資料表）：`success`（請求是否成功）、`data`�
 | `currency` | 保留款幣別。 |
 | `createdAt` | 台帳事件建立時間。 |
 
-### Invoice｜共用發票主檔
+### Invoice｜共用發票主檔 (`fin_invoices`)
+
+> **設立緣由（雙向發票集中管理中心）**：解決營造業常發生「一張發票對應多張進貨/對帳單，或一張估驗/對帳單分期補多張發票（多對多）」、以及「進貨現場法人與實際開票/申報稅務法人分離」的痛點。將所有進項 (`INPUT`) 與銷項 (`OUTPUT`) 發票統一收斂於發票主檔，依 `(taxReportingCompanyId, issuerTaxId, invoiceNumber)` 強制去重防呆。
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 發票識別碼。 |
-| `invoiceType` | 進項或銷項方向。 |
-| `invoiceNumber` | 發票字軌號碼。 |
+| `invoiceType` | `INPUT`（進項發票）或 `OUTPUT`（銷項發票）。 |
+| `invoiceNumber` | 發票字軌號碼（與申報法人、開立方統編構成唯一鍵）。 |
 | `invoiceDate` | 發票開立日期。 |
-| `taxReportingCompanyId` | 本系統負責申報／入帳的法人。 |
-| `issuerCompanyId`、`issuerPartnerId` | 本集團公司或外部夥伴作為發票開立方。 |
-| `buyerCompanyId`、`buyerPartnerId` | 本集團公司或外部夥伴作為發票買受方。 |
-| `issuerTaxId`、`buyerTaxId` | 發票開立方及買受方統編快照。 |
-| `netAmount`、`taxAmount`、`totalAmount` | 未稅額、稅額及含稅總額。 |
-| `currency` | 發票幣別。 |
-| `status` | 有效、作廢或折讓等狀態。 |
+| `taxReportingCompanyId` | 本系統負責申報／入帳的法人（進項為買受公司、銷項為開立公司）。 |
+| `issuerTaxId`、`issuerName` | 發票開立方統一編號及名稱快照。 |
+| `buyerTaxId`、`buyerName` | 發票買受方統一編號及名稱快照。 |
+| `netAmount`、`taxAmount`、`totalAmount` | 未稅銷售額、營業稅額及含稅總額。 |
+| `status` | `VALID`（有效）、`VOIDED`（作廢）或 `CREDITED`（折讓）。 |
 | `createdAt`、`updatedAt` | 建立及最近更新時間。 |
 
-### BillingInvoiceMapping｜發票與來源單據勾稽
+### BillingInvoiceMapping｜發票與來源單據勾稽 (`fin_billing_invoice_mappings`)
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 勾稽識別碼。 |
 | `invoiceId` | 共用 Invoice ID。 |
-| `sourceDocumentType`、`sourceDocumentId` | 被勾稽的 AP／AR／估驗等來源單據。 |
+| `sourceDocumentType`、`sourceDocumentId` | 被勾稽的 `AP` / `AR` / `INBOUND` / `PROGRESS_BILLING` 等來源單據。 |
 | `mappedAmount` | 此發票分配到來源單據的金額，支援多對多及跨月勾稽。 |
 | `createdAt` | 勾稽建立時間。 |
 
-### PaymentRecord｜付款／資金收支主檔
+### CompanyBankAccount｜公司銀行帳戶與支票簿主檔 (`company_bank_accounts`)
+
+> **架構定位**：依公司法人嚴格隔離可出款專戶（大巨營造不可誤用宏達機電銀行戶出金），整合支票簿字軌與跳號計數、可用支付方式旗標 (`supportsCheck` / `supportsTransfer`)，以及專戶覆寫級每月開票付款日 (`paymentScheduleDays`)。老闆私人代墊專戶以 `isVirtualAccount = 1` / `companyId = 'BOSS-01'` 隔離識別。
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 銀行帳戶識別碼（如 `BANK-01`、`BANK-BOSS`）。 |
+| `companyId` | 所屬公司法人 ID（或老闆私帳 `BOSS-01`）。 |
+| `bankCode`、`bankName`、`branchName` | 金融機構代碼、銀行名稱與分行名稱。 |
+| `accountNumber`、`accountName` | 銀行帳號與戶名。 |
+| `isVirtualAccount` | 是否為虛擬代墊專戶（`1` 表老闆私帳／虛擬口袋，預設對有發票交易隔離）。 |
+| `initialBalance`、`currentBalance` | 期初餘額與即時帳面餘額（電匯放款/支票綠燈兌現時自動扣減）。 |
+| `currency`、`status` | 幣別（預設 `TWD`）與啟用狀態（`ACTIVE` / `DISABLED`）。 |
+| `checkPrefix` | 支票簿字軌前綴（如 `TW`、`CT`、`ES`、`CQ`）。 |
+| `nextCheckNumber` | 下一張支票連續流水號（開票時自動預填並可人工修改，開票過帳後自動 `+1`）。 |
+| `checkDigits` | 支票流水號碼位數（預設 `6`）。 |
+| `supportsCheck` | 是否支援開立支票（`1` / `0`，作為出納選單支票選項防呆依據）。 |
+| `supportsTransfer` | 是否支援銀行轉帳／電匯（`1` / `0`）。 |
+| `paymentScheduleDays` | 此銀行專戶專屬之每月固定付款日規則（如 `7,17,27`；留空則回退繼承法人與全域設定）。 |
+
+### PaymentRecord｜出納放款／資金收支主檔 (`fin_payment_records`)
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 付款紀錄識別碼。 |
 | `companyId` | 付款所屬法人。 |
-| `currency` | 幣別，預設新台幣。 |
-| `paymentNo` | 付款單號。 |
-| `bankAccountId` | 出款銀行或虛擬銀行帳戶 ID。 |
-| `partnerId` | 收款商業夥伴 ID。 |
-| `customVendorName` | 未建檔零星廠商名稱。 |
+| `currency` | 幣別，預設新台幣（`TWD`）。 |
+| `paymentNo` | 付款單號（`PAY-YYYYMM-0001`，`UNIQUE NOT NULL`）。 |
+| `bankAccountId`、`bankAccountName` | 出款銀行帳戶 ID（現金無帳戶時為 `CASH`）與帳戶名稱快照。 |
+| `targetBankAccountId` | 內部資金調撥時的轉入銀行帳戶。 |
+| `partnerId`、`partnerName`、`customVendorName` | 受款商業夥伴 ID、名稱快照或未建檔零星廠商名稱。 |
+| `paymentMethod` | 實際支付方式：`CHECK`（開立期票支票）、`TT`（銀行電匯轉帳）、`CASH`（零用金現金）。 |
 | `isReversal` | 是否為退匯、退票等迴轉單。 |
-| `isIntercompany` | 集團內部交易快照。 |
 | `documentDate` | 發票或原始憑證實際發生日。 |
 | `postingDate` | 會計入帳日，受期間關帳限制。 |
-| `totalAmount` | 付款單總額。 |
-| `status` | 草稿、待核准、已過帳或作廢狀態。 |
-| `isDeleted` | 軟刪除標記。 |
-| `version` | 樂觀鎖版本。 |
-| `voidReason` | 作廢原因與審計說明。 |
-| `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+| `totalAmount` | 實付付款單總額。 |
+| `status` | `DRAFT`、`PENDING_APPROVAL`、`POSTED`、`VOIDED`、`DISPUTED`。 |
+| `isReconciled`、`reconciledAt` | 是否已完成銀行調節及完成時間。 |
+| `isBossAdvance` | 是否為老闆私帳特例代墊（計入股東往來）。 |
+| `voidReason`、`notes` | 作廢原因（含退票回滾自動寫入說明）與付款備註。 |
+| `isDeleted`、`version`、`createdAt`、`updatedAt` | 憲法標準欄位。 |
 
-### PaymentLineItem｜付款沖銷明細
+### PaymentLineItem｜付款沖銷明細 (`fin_payment_line_items`)
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 付款明細識別碼。 |
 | `paymentId` | 所屬付款單 ID。 |
-| `sourceType` | 來源類型：採購、下包估驗或雜支報銷。 |
-| `sourceId` | 來源應付／費用單據 ID。 |
-| `itemType` | 一般項或代扣減項；減項輸入正數。 |
+| `sourceType`、`sourceId`、`sourceNumber` | 來源單據類型（`AP`/`PO`/`SUB`/`EXP`）、來源單據 ID 及單號快照。 |
+| `itemType` | `STANDARD`（常規加項）或 `DEDUCTION`（粉紅代扣減項；減項以正數保存）。 |
 | `appliedAmount` | 本次實際沖抵應付金額。 |
-| `feeAmount` | 銀行手續費。 |
-| `isFeeAbsorbedByCompany` | 手續費由公司外加吸收或由廠商內扣。 |
+| `feeAmount`、`isFeeAbsorbedByCompany` | 銀行手續費及是否由公司外加吸收（不內扣廠商貨款）。 |
 | `discountAmount` | 廠商尾數折讓／抹零額。 |
-| `offsetExpenseId` | 被沖銷的專案代墊費用 ID，用來還原專案成本。 |
-| `createdAt`、`updatedAt` | 建立及最近更新時間。 |
+| `offsetExpenseId` | 被沖銷的專案代墊費用 ID。 |
+| `withholdingTaxAmt`、`nhiAmt` | 代扣所得稅與二代健保補充保費。 |
+| `projectId`、`notes` | 成本歸屬專案與明細備註。 |
 
-### CheckDetail｜支票明細
+### BankCheck / CheckDetail｜銀行應收付支票台帳 (`bank_checks`)
+
+> **架構定位**：支票三燈號生命週期中心：`ISSUED`（🟡 黃燈已開立未兌現，不扣實體存款但計入資金負債）➔ `CLEARED`（🟢 綠燈存摺兌現扣款） / `BOUNCED`（🔴 紅燈退票跳票，觸發付款單作廢與應付對帳單 `REPAY` 或 `REBILL` 回滾） / `VOIDED`（作廢）。支援依兌現日期搜尋、區間快選與每日現金水位加總。
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 支票明細識別碼。 |
-| `paymentId` | 對應付款單 ID。 |
-| `checkNumber` | 支票號碼。 |
-| `drawerBank` | 付款銀行。 |
+| `checkNumber` | 支票號碼（`UNIQUE NOT NULL`）。 |
+| `type` | 票據方向：`PAYABLE`（應付開出支票）或 `RECEIVABLE`（應收收受支票）。 |
+| `companyId` | 所屬公司法人 ID。 |
+| `counterpartyName` | 受款人／發票人對象名稱快照。 |
+| `amount` | 票面金額。 |
 | `issueDate` | 開票日期。 |
-| `expectedClearanceDate` | 預計兌現日期，供現金流預測。 |
-| `actualClearanceDate` | 實際兌現日期，供存摺對帳。 |
-| `status` | 已開立、已兌現、退票或作廢狀態。 |
+| `dueDate` | 約定票面到期／預計兌現日期（支票雷達主要過濾排序鍵）。 |
+| `bankName`、`drawerBank` | 承辦／開票銀行名稱與付款行名稱。 |
+| `paymentId` | 對應付款單 ID（關聯 `fin_payment_records.id`）。 |
+| `expectedClearanceDate` | 預計兌現日期，供每日資金負載試算與現金流預測。 |
+| `actualClearanceDate` | 實際兌現日期，供存摺調節對帳。 |
+| `status` | 支票狀態：`ISSUED`（黃燈）、`DEPOSITED`（已託收）、`CLEARED`（綠燈）、`BOUNCED`（紅燈退票）、`VOIDED`（作廢）。 |
+| `replacesCheckNumber` | 退票／作廢後補開新票時，記錄所替代之原支票號碼以維繫血緣。 |
+| `reconciledApId` | 關聯之應付對帳單 ID (`ap_reconciliations.id`)，支援出納手動重連對帳單 (`relinkCheckToAp`)。 |
+| `voidReason`、`notes` | 退票／作廢事由與備註（含自動標記換補票提示）。 |
 
-**規格提及、模型待補：**`isVirtualAccount` 用於戰情室隱藏老闆口袋帳戶，但銀行帳戶模型未在此 Prisma 契約定義；匯費對應費用科目／分錄欄位未列；`calculatedTax`、`netPayableAmount` 及扣繳人工覆寫狀態是扣繳服務輸出，未落在 PaymentRecord Schema。
+### SuspenseReceipt｜未知款項暫收池 (`fin_suspense_receipts`)
 
-### 憲法版 PaymentRecord｜財務補充欄位
-
-| 欄位 | 用途 |
-|---|---|
-| `targetBankAccountId` | 內部資金調撥的轉入銀行帳戶。 |
-| `isReconciled` | 是否已完成銀行調節。 |
-| `reconciledAt` | 銀行調節完成時間。 |
-| `reversedByTaskId` | 造成反向／回滾的背景工作 ID。 |
-
-### 憲法版 PaymentLineItem｜付款明細補充欄位
-
-| 欄位 | 用途 |
-|---|---|
-| `projectId` | 成本實際歸屬專案；支援跨法人代付但成本認列於案場。 |
-| `voucherType` | 憑單類型，如常規 AP、貸項通知、代付沖銷、資金調撥或退款。 |
-| `isWithoutReceipt` | 無憑證內部費用標記，避免納入外帳稅務申報。 |
-| `withholdingTaxAmt` | 本次代扣所得稅金額。 |
-| `nhiAmt` | 本次代扣二代健保金額。 |
-| `discountCostId` | 折讓轉列的專案內部成本科目 ID。 |
-| `discountNote` | 折讓轉列成本的說明。 |
-
-### SuspenseReceipt｜未知款項暫收池
+> **設立緣由（先收錢・後歸戶認領與稅務防誤報）**：營造實務常有銀行帳戶突然收到一筆匯款（出納看存摺確定有入帳，但匯款人寫家屬名、簡稱或未註明案場/工期，會計尚未查明是哪個業主或哪期款項）。**先由出納掛入暫收池讓銀行帳實相符，暫不認列營業稅與銷項發票；待向業主/工務查證確認歸屬案場後，再一鍵認領沖銷對應應收帳款 (`accounts_receivable`) 並觸發開立銷項發票**。
 
 | 欄位 | 用途 |
 |---|---|
 | `id` | 暫收款紀錄識別碼。 |
 | `companyId` | 暫收款歸屬法人。 |
-| `bankAccountId` | 實際匯入的銀行帳戶 ID。 |
+| `bankAccountId`、`bankAccountName` | 實際匯入的銀行帳戶 ID 與帳戶名稱快照。 |
 | `amount` | 暫收金額。 |
 | `receivedDate` | 款項入帳日期。 |
-| `isAllocated` | 是否已釐清並認領至應收帳款；認領時才觸發發票認列。 |
-| `createdAt` | 紀錄建立時間。 |
+| `payerInfo` | 銀行存摺顯示之匯入來源戶名／附言摘要（供會計與工務查證比對）。 |
+| `isAllocated` | 是否已釐清並認領至應收帳款（`0` 待認領 / `1` 已認領；認領時才觸發發票與稅務認列）。 |
+| `allocatedAmount`、`remainingAmount` | 支援分批拆沖認領：已認領累積金額及尚餘待認領金額。 |
+| `allocatedToArId` | 認領後對應沖銷之應收帳款 ID（`accounts_receivable.id`）。 |
+| `notes`、`createdAt` | 查證備註說明及建立時間。 |
+
+### AccountReceivable｜業主應收帳款主檔 (`accounts_receivable`)
+
+| 欄位 | 用途 |
+|---|---|
+| `id`、`arNumber` | 應收帳款識別碼及單號（`UNIQUE NOT NULL`）。 |
+| `projectId`、`projectName` | 關聯工程案場 ID 與案場名稱快照。 |
+| `customerId`、`customerName` | 業主夥伴 ID 與名稱快照。 |
+| `companyId` | 應收歸屬／預計開票法人公司 ID（工務送審時可為待會計指定）。 |
+| `title`、`lineItemsJson` | 本期請款摘要標題及多筆請款明細列 JSON（含各行未稅／內含／免稅設定）。 |
+| `netAmount`、`taxType`、`taxAmount` | 未稅金額、計稅方式（`TAX_EXCLUSIVE` / `TAX_INCLUSIVE` / `TAX_EXEMPT`）、營業稅額。 |
+| `amount`、`appliedAmount`、`remainingAmount` | 應收總額、已收沖抵金額、尚未收款餘額。 |
+| `hasInvoice`、`invoiceFormat`、`invoiceIssueMode` | 是否開立發票、發票聯式（`THREE_PART` 三聯式 / `TWO_PART` 二聯式）、開立方式（`DELIVERED` 交付業主 / `SELF_RETAINED` 公司自主開立留存繳稅）。 |
+| `invoiceNumber`、`invoiceDate` | 對應銷項發票字軌號碼與發票日期。 |
+| `dueDate`、`status`、`notes` | 預計收款日、狀態（`OPEN` / `PARTIAL` / `COLLECTED` / `VOIDED`）與備註（工務模式 B 送審帶 `[工務對客明細送審]` 標記）。 |
+| `bouncedCheckNumber`、`bouncedReason`、`bouncedAt` | 業主客票退票追蹤資訊。 |
+| `createdBy`、`createdAt`、`updatedAt` | 建立人員、建立時間與更新時間。 |
+
+### ArCollection｜業主應收收款沖銷紀錄 (`fin_ar_collections`)
+
+| 欄位 | 用途 |
+|---|---|
+| `id`、`arId`、`arNumber` | 收款單識別碼、對應應收帳款 ID 及單號。 |
+| `companyId`、`collectionMethod` | 收款歸屬法人及收款方式（`TT` 電匯、`CHECK` 客票、`CASH` 現金、`ADVANCE_OFFSET` 預收沖抵）。 |
+| `bankAccountId`、`bankAccountName` | 實際入帳之公司銀行專戶或老闆私帳識別碼與名稱快照。 |
+| `amount`、`feeAmount`、`overpaymentAmount`、`netReceivedAmount` | 實收金額、內扣手續費、溢收差額與實際入庫淨額。 |
+| `checkNumber`、`checkDueDate`、`drawerBank` | 收受業主支票之票號、預計兌現日與開票行。 |
+| `receivedDate`、`suspenseId`、`status` | 實際收款日、若來自未知暫收認領則紀錄 `suspenseId`、狀態（`POSTED` / `VOIDED`）。 |
+| `notes`、`createdBy`、`createdAt` | 備註、登錄人及建立時間。 |
+
+### ProjectAdvance｜已知案場預收／貸款直掛帳戶 (`fin_project_advances`)
+
+> **設立緣由（與未知暫收池徹底分流）**：已知案場的業主因銀行貸款先撥款，於尚未正式請款前先匯整筆款項，或實收溢付於該案場時，直接掛入該案場借貸預收帳，不混入未知暫收池，供後續對客對帳總表扣減與應收直接沖抵。
+
+| 欄位 | 用途 |
+|---|---|
+| `id`、`projectId`、`projectName` | 預收紀錄 ID、關聯案場 ID 與名稱快照。 |
+| `customerId`、`customerName`、`companyId` | 業主夥伴 ID/名稱及入帳法人 ID。 |
+| `bankAccountId`、`bankAccountName`、`collectionMethod` | 入帳銀行帳戶／私帳 ID、名稱快照與收款方式。 |
+| `amount`、`receivedDate`、`sourceType` | 預收／溢收金額、實際入帳日及來源類型（`EARLY_LOAN` 貸款先撥、`OVERPAYMENT` 溢收直轉）。 |
+| `sourceArId`、`sourceCheckNumber` | 若來自某筆請款溢收或客票，紀錄來源 ID／票號。 |
+| `notes`、`createdBy`、`createdAt` | 備註、經辦人及建立時間。 |
+
+### PlannedInvoice｜401 預計請款與模擬開票表 (`fin_planned_invoices`)
+
+| 欄位 | 用途 |
+|---|---|
+| `id`、`companyId`、`taxPeriod` | 模擬紀錄 ID、稅務申報法人 ID 與雙月稅期（如 `2026_01-02`）。 |
+| `invoiceType`、`invoiceCategory`、`invoiceFormat`、`invoiceIssueMode` | 進/銷項別、401 類別、二/三聯式、交付或自主留存模式（尚未開立，不押發票號碼）。 |
+| `partnerName`、`partnerTaxId`、`linkedProjectId`、`linkedArId` | 交易對象名稱/統編及關聯案場/AR。 |
+| `netAmount`、`taxAmount`、`totalAmount` | 預計未稅金額、預估營業稅與總額。 |
+| `status`、`convertedInvoiceId` | 狀態（`PLANNED` 試算中 / `CONVERTED` 已正式開票轉入 `fin_invoices` / `DEFERRED` 順延下期）及轉正後發票 ID。 |
+| `notes`、`createdBy`、`createdAt`、`updatedAt` | 備註、建立人與時間戳記。 |
+
+### CompanyTaxSetting｜各公司年度留抵稅額與常用費用預設 (`fin_company_tax_settings`)
+
+| 欄位 | 用途 |
+|---|---|
+| `id`、`companyId`、`taxYear` | 設定 ID、法人 ID 與西元年度（`UNIQUE(companyId, taxYear)`）。 |
+| `priorYearCreditTax` | 去年期初結轉留抵稅額（之後各期依上月應繳負數自動結轉，正數歸零）。 |
+| `phonePresetsJson`、`electricityPresetsJson`、`personalVoucherLabel` | 該公司常用手機電信費與台電電號快捷設定 JSON，以及老闆個人支出標籤設定。 |
+| `updatedAt` | 最後維護時間。 |
 
 ### 憲法版 OverpaymentPool｜溢付款池補充契約
 

@@ -72,7 +72,8 @@ export const AppSettingsWorkspace: React.FC<AppSettingsWorkspaceProps> = ({
     APP_LOGO_IMAGE_URL: '',
     APP_LOGO_TEXT: '田',
     APP_LOGO_BG: '#4f46e5',
-    APP_PRIMARY_COLOR: '#2d3a4b'
+    APP_PRIMARY_COLOR: '#2d3a4b',
+    APP_CUSTOMER_BILLING_MODE: 'FINANCE_ONLY'
   });
 
   const [activeTab, setActiveTab] = useState<'BRANDING' | 'MODULES' | 'ANNOUNCEMENT' | 'SYSTEM'>('BRANDING');
@@ -153,7 +154,8 @@ export const AppSettingsWorkspace: React.FC<AppSettingsWorkspaceProps> = ({
       APP_LOGO_IMAGE_URL: '',
       APP_LOGO_TEXT: '田',
       APP_LOGO_BG: '#4f46e5',
-      APP_PRIMARY_COLOR: '#2d3a4b'
+      APP_PRIMARY_COLOR: '#2d3a4b',
+      APP_CUSTOMER_BILLING_MODE: 'FINANCE_ONLY'
     };
     setFormData(defaults);
     try {
@@ -729,6 +731,69 @@ export const AppSettingsWorkspace: React.FC<AppSettingsWorkspaceProps> = ({
                   </div>
                 );
               })}
+            </div>
+
+            {/* 業務分工與對客請款流程模式切換 (Superadmin / BOSS 專屬動態切換) */}
+            <div className="pt-4 border-t border-slate-200 space-y-3">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-start gap-3">
+                <SlidersHorizontal className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-xs font-bold text-emerald-950">
+                    「對外客戶請款／對帳明細表」權限分工模式 (APP_CUSTOMER_BILLING_MODE)
+                  </h3>
+                  <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
+                    決定「對外給客人看的請款／對帳表」要由誰調用開立。公司成長不同階段可由老闆 (BOSS) 或系統架構師隨時於此切換，無需修改程式碼；內部「401 營業稅活頁簿／銀行私帳／自主留存發票」永遠僅限財務會計模組存取。
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {[
+                  {
+                    id: 'FINANCE_ONLY',
+                    badge: '模式 A · 現況預設',
+                    title: '會計統一管理（財務收支專責）',
+                    desc: '對客請款表僅由「財務收支 ＞ 應收請款」開啟與列印；「案場工程」專注工務進度與廠商進料管理。適合精簡團隊／會計統一對客階段。',
+                  },
+                  {
+                    id: 'PROJECT_FIRST_HANDOFF',
+                    badge: '模式 B · 未來擴編職能隔離',
+                    title: '工務／專案先開對客表 ➔ 送交會計決定開票',
+                    desc: '工務／專案可在「案場工程」開啟乾淨的對客請款表，填寫明細後一鍵「送交會計立帳」，由會計審核開哪間公司發票或免票。工務完全看不到銀行私帳與 401。',
+                  },
+                  {
+                    id: 'PROJECT_AND_FINANCE',
+                    badge: '模式 C · 雙軌彈性授權',
+                    title: '案場工程與財務收支皆可調用',
+                    desc: '兩邊同仁皆可依自身權限調出乾淨的「對客請款表」小程式即時對帳或列印給業主；對內借貸帳、補開發票與 401 活頁簿仍僅限財務部門使用。',
+                  },
+                ].map(opt => {
+                  const selected = (formData.APP_CUSTOMER_BILLING_MODE || 'FINANCE_ONLY') === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => handleInputChange('APP_CUSTOMER_BILLING_MODE', opt.id)}
+                      className={`text-left p-4 rounded-xl border-2 transition-all cursor-pointer space-y-1.5 ${
+                        selected
+                          ? 'bg-emerald-50/70 border-emerald-500 shadow-xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          selected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {opt.badge}
+                        </span>
+                        {selected && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+                      </div>
+                      <div className="text-xs font-bold text-slate-900">{opt.title}</div>
+                      <div className="text-[11px] text-slate-600 leading-relaxed">{opt.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

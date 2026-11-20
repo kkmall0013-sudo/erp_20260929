@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { LeftNavId } from './LeftSubWindow';
 import { Project, Company, ModuleKey, SystemConfig } from '../types/erp';
 import {
@@ -27,22 +27,35 @@ import {
   Ban,
   KeyRound
 } from 'lucide-react';
-import { FlowchartNavigator } from './FlowchartNavigator';
-import { MainCanvasWorkspace } from './MainCanvasWorkspace';
-import { ProjectWorkspace } from './projects/ProjectWorkspace';
-import { DiscussionRoadmapView } from './DiscussionRoadmapView';
-import { CompanySettingsWorkspace } from './CompanySettingsWorkspace';
-import { AccountManagementWorkspace } from './AccountManagementWorkspace';
-import { BusinessPartnerWorkspace } from './BusinessPartnerWorkspace';
-import { MiniAppsWorkspace } from './MiniAppsWorkspace';
-import { UniversalVaultWorkspace } from './attachments/UniversalVaultWorkspace';
-import { QuotationWorkspace } from './quotations/QuotationWorkspace';
-import { InboundWorkspace } from './InboundWorkspace';
-import { FinanceCashierWorkspace } from './finance/FinanceCashierWorkspace';
-import { AppSettingsWorkspace } from './AppSettingsWorkspace';
-import { BasicSettingsHubWorkspace } from './BasicSettingsHubWorkspace';
-import { SystemHubWorkspace, SystemHubTab } from './SystemHubWorkspace';
 import { BusinessLifecycleMapCard } from './dashboard/BusinessLifecycleMapCard';
+
+const FlowchartNavigator = lazy(() =>
+  import('./FlowchartNavigator').then(m => ({ default: m.FlowchartNavigator }))
+);
+const MainCanvasWorkspace = lazy(() =>
+  import('./MainCanvasWorkspace').then(m => ({ default: m.MainCanvasWorkspace }))
+);
+const ProjectWorkspace = lazy(() =>
+  import('./projects/ProjectWorkspace').then(m => ({ default: m.ProjectWorkspace }))
+);
+const BusinessPartnerWorkspace = lazy(() =>
+  import('./BusinessPartnerWorkspace').then(m => ({ default: m.BusinessPartnerWorkspace }))
+);
+const UniversalVaultWorkspace = lazy(() =>
+  import('./attachments/UniversalVaultWorkspace').then(m => ({ default: m.UniversalVaultWorkspace }))
+);
+const QuotationWorkspace = lazy(() =>
+  import('./quotations/QuotationWorkspace').then(m => ({ default: m.QuotationWorkspace }))
+);
+const InboundWorkspace = lazy(() =>
+  import('./InboundWorkspace').then(m => ({ default: m.InboundWorkspace }))
+);
+const FinanceCashierWorkspace = lazy(() =>
+  import('./finance/FinanceCashierWorkspace').then(m => ({ default: m.FinanceCashierWorkspace }))
+);
+const SystemHubWorkspace = lazy(() =>
+  import('./SystemHubWorkspace').then(m => ({ default: m.SystemHubWorkspace }))
+);
 import { useAuth } from '../context/AuthContext';
 import {
   getAllSystemConfigs,
@@ -103,8 +116,8 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   onReloadData,
   onOpenDatabaseCenter,
 }) => {
-  const { currentUser, currentGroup, approvalLimit, isSuperadmin, isAdmin, can, checkApproval } = useAuth();
-  const hasUserManagementAccess = isSuperadmin || Boolean(currentUser?.canManageUsers);
+  const { currentUser, currentGroup, approvalLimit, isSuperadmin, isBoss, isAdmin, can, checkApproval } = useAuth();
+  const hasUserManagementAccess = isSuperadmin || isBoss || Boolean(currentUser?.canManageUsers);
 
   const [showFlowchartInline, setShowFlowchartInline] = useState(false);
   const [moduleToast, setModuleToast] = useState<string | null>(null);
@@ -149,10 +162,12 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   const canReadModule =
     activeNavId === 'USERS'
       ? hasUserManagementAccess
-      : ['APP_SETTINGS', 'MINI_APPS', 'ROADMAP'].includes(activeNavId)
-      ? isSuperadmin
+      : ['APP_SETTINGS', 'ROADMAP'].includes(activeNavId)
+      ? isSuperadmin || isBoss
+      : activeNavId === 'MINI_APPS'
+      ? isSuperadmin || isBoss || isAdmin
       : ['COMPANY', 'SETTINGS'].includes(activeNavId)
-      ? isSuperadmin || isAdmin || Boolean(currentUser?.canManageSystemConfigs) || hasUserManagementAccess
+      ? isSuperadmin || isBoss || isAdmin || Boolean(currentUser?.canManageSystemConfigs) || hasUserManagementAccess
       : ['DASHBOARD', 'VAULT'].includes(activeNavId)
       ? true
       : activeNavId === 'FLOWCHART'
@@ -325,6 +340,14 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
 
       {/* 2. 核心內容工作區 */}
       <div className="flex-1 px-6 pb-8 space-y-5">
+        <Suspense
+          fallback={
+            <div className="bg-white rounded-xl border border-slate-200 p-10 flex flex-col items-center justify-center gap-3 text-slate-500 shadow-xs">
+              <div className="w-7 h-7 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs font-bold">載入功能工作區模組中...</span>
+            </div>
+          }
+        >
         {/* A. 營運儀表板視圖 (整合常用業務生命週期地圖 + KPI 指標與漏斗) */}
         {activeNavId === 'DASHBOARD' && (
           <div className="space-y-5">
@@ -875,6 +898,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
             onNavigateToInbound={() => onNavigateNav('INBOUND')}
           />
         )}
+        </Suspense>
       </div>
 
       {/* 浮動提示 Toast */}
