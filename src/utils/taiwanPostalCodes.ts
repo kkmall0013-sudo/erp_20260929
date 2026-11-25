@@ -1,12 +1,28 @@
 // 中華郵政 3 碼郵遞區號資料庫 (涵蓋全台 22 縣市、368 鄉鎮市區) 與智慧地址解析器
 
 export interface DistrictPostal {
+  id?: string;
+  cityId?: string;
   city: string;
   district: string;
   postalCode: string;
+  isActive?: boolean;
+  aliases?: string[];
+  replacedByCity?: string;
+  replacedByDistrict?: string;
+  note?: string;
+  sortOrder?: number;
 }
 
-export const TAIWAN_POSTAL_CODES: DistrictPostal[] = [
+export interface CityPostalMeta {
+  id?: string;
+  cityName: string;
+  aliases: string[];
+  isActive?: boolean;
+  note?: string;
+}
+
+export const DEFAULT_TAIWAN_POSTAL_CODES: DistrictPostal[] = [
   // 臺北市
   { city: '臺北市', district: '中正區', postalCode: '100' },
   { city: '臺北市', district: '大同區', postalCode: '103' },
@@ -420,18 +436,295 @@ export const TAIWAN_POSTAL_CODES: DistrictPostal[] = [
   { city: '連江縣', district: '東引鄉', postalCode: '212' },
 ];
 
-// 取得台灣所有縣市清單
-export const TAIWAN_CITIES = Array.from(new Set(TAIWAN_POSTAL_CODES.map(p => p.city)));
+export const TAIWAN_POSTAL_CODES: DistrictPostal[] = DEFAULT_TAIWAN_POSTAL_CODES;
 
-// 根據縣市取得該縣市所屬鄉鎮市區列表
-export function getDistrictsByCity(cityName: string): DistrictPostal[] {
-  const normCity = cityName.replace('台', '臺');
-  return TAIWAN_POSTAL_CODES.filter(p => p.city === normCity || p.city === cityName);
+let dynamicCityCatalog: CityPostalMeta[] = Array.from(
+  new Set(DEFAULT_TAIWAN_POSTAL_CODES.map(p => p.city))
+).map((cityName, idx) => ({
+  id: `CITY-${String(idx + 1).padStart(2, '0')}`,
+  cityName,
+  aliases: [],
+  isActive: true
+}));
+
+let dynamicPostalCatalog: DistrictPostal[] = DEFAULT_TAIWAN_POSTAL_CODES.map((p, idx) => ({
+  ...p,
+  id: `POST-${String(idx + 1).padStart(3, '0')}`,
+  isActive: true,
+  aliases: [],
+  sortOrder: idx + 1
+}));
+
+// 建立雙向別名快取（key: 正規化後的地名，value: 所有可互通的正規化地名陣列）
+let aliasGraphCache: Map<string, string[]> | null = null;
+
+function normTaiChar(text?: string): string {
+  return (text || '').trim().replace(/台/g, '臺');
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function invalidateAliasCache() {
+  aliasGraphCache = null;
+}
+
+function parseZipNumeric(zip?: string): number {
+  const digits = (zip || '').replace(/\D/g, '').slice(0, 6);
+  if (!digits) return 999999;
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : 999999;
+}
+
+/**
+ * 同一縣市內嚴格依「郵遞區號由小到大」排序（如 100 ➔ 103 ➔ 104 ... ➔ 116）
+ */
+export function compareDistrictPostal(a: DistrictPostal, b: DistrictPostal): number {
+  const zipDiff = parseZipNumeric(a.postalCode) - parseZipNumeric(b.postalCode);
+  if (zipDiff !== 0) return zipDiff;
+  const codeCmp = (a.postalCode || '').localeCompare(b.postalCode || '', undefined, { numeric: true });
+  if (codeCmp !== 0) return codeCmp;
+  const sortDiff = (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
+  if (sortDiff !== 0) return sortDiff;
+  return (a.district || '').localeCompare(b.district || '', 'zh-Hant');
+}
+
+function sortCatalogByPostalCode(records: DistrictPostal[]): DistrictPostal[] {
+  const cityMinZip = new Map<string, number>();
+  for (const r of records) {
+    const z = parseZipNumeric(r.postalCode);
+    const prev = cityMinZip.get(r.city);
+    if (prev === undefined || z < prev) {
+      cityMinZip.set(r.city, z);
+    }
+  }
+  return [...records].sort((a, b) => {
+    if (a.city !== b.city) {
+      const minA = cityMinZip.get(a.city) ?? 999999;
+      const minB = cityMinZip.get(b.city) ?? 999999;
+      if (minA !== minB) return minA - minB;
+      return a.city.localeCompare(b.city, 'zh-Hant');
+    }
+    return compareDistrictPostal(a, b);
+  });
+}
+
+function isCityActive(cityName: string): boolean {
+  const norm = normTaiChar(cityName);
+  const meta = dynamicCityCatalog.find(c => normTaiChar(c.cityName) === norm || c.cityName === cityName);
+  return meta ? meta.isActive !== false : true;
+}
+
+function getAliasGraph(): Map<string, string[]> {
+  if (aliasGraphCache) return aliasGraphCache;
+
+  const edges = new Map<string, Set<string>>();
+  const addPair = (aRaw?: string, bRaw?: string) => {
+    const a = normTaiChar(aRaw);
+    const b = normTaiChar(bRaw);
+    if (!a || !b || a === b) return;
+    if (!edges.has(a)) edges.set(a, new Set([a]));
+    if (!edges.has(b)) edges.set(b, new Set([b]));
+    edges.get(a)!.add(b);
+    edges.get(b)!.add(a);
+  };
+
+  // 1. 縣市變數層級別名 (例如 臺北市 ↔ 台灣市、新北市 ↔ 臺北縣)
+  for (const cMeta of dynamicCityCatalog) {
+    const cNorm = normTaiChar(cMeta.cityName);
+    const cityDistricts = dynamicPostalCatalog.filter(
+      p => normTaiChar(p.city) === cNorm || (cMeta.id && p.cityId === cMeta.id)
+    );
+    for (const alias of cMeta.aliases || []) {
+      const aNorm = normTaiChar(alias);
+      if (!aNorm) continue;
+      addPair(cNorm, aNorm);
+      for (const distRow of cityDistricts) {
+        const dNorm = normTaiChar(distRow.district);
+        if (dNorm) {
+          addPair(`${cNorm}${dNorm}`, `${aNorm}${dNorm}`);
+        }
+      }
+    }
+  }
+
+  // 2. 行政區個別沿革與別名
+  for (const item of dynamicPostalCatalog) {
+    const c = normTaiChar(item.city);
+    const d = normTaiChar(item.district);
+    const rc = normTaiChar(item.replacedByCity);
+    const rd = normTaiChar(item.replacedByDistrict);
+
+    if (rc) {
+      addPair(c, rc);
+      if (rd) {
+        addPair(`${c}${d}`, `${rc}${rd}`);
+      }
+    }
+    if (rd) {
+      addPair(d, rd);
+    }
+
+    for (const alias of item.aliases || []) {
+      const a = normTaiChar(alias);
+      if (!a) continue;
+      if (a.length <= 4 && /[縣市]$/.test(a) && a !== d) {
+        addPair(c, a);
+        if (rc) addPair(rc, a);
+      } else {
+        addPair(d, a);
+        addPair(`${c}${d}`, a);
+        if (rd) addPair(rd, a);
+        if (rc && rd) addPair(`${rc}${rd}`, a);
+      }
+    }
+  }
+
+  // 連通展開
+  const graph = new Map<string, string[]>();
+  for (const key of edges.keys()) {
+    const visited = new Set<string>([key]);
+    const queue = [key];
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      const neighbors = edges.get(curr);
+      if (!neighbors) continue;
+      for (const n of neighbors) {
+        if (!visited.has(n)) {
+          visited.add(n);
+          queue.push(n);
+        }
+      }
+    }
+    graph.set(key, Array.from(visited));
+  }
+
+  aliasGraphCache = graph;
+  return graph;
+}
+
+/**
+ * 由 SQLite 資料庫層同步縣市層級變數清單 (taiwan_postal_cities)
+ */
+export function setDynamicCityCatalog(cities: CityPostalMeta[]): void {
+  if (!cities || cities.length === 0) {
+    dynamicCityCatalog = Array.from(
+      new Set(DEFAULT_TAIWAN_POSTAL_CODES.map(p => p.city))
+    ).map((cityName, idx) => ({
+      id: `CITY-${String(idx + 1).padStart(2, '0')}`,
+      cityName,
+      aliases: [],
+      isActive: true
+    }));
+  } else {
+    dynamicCityCatalog = [...cities];
+  }
+  invalidateAliasCache();
+}
+
+export function getCityCatalog(options?: { includeInactive?: boolean }): CityPostalMeta[] {
+  const includeInactive = options?.includeInactive ?? false;
+  return includeInactive
+    ? dynamicCityCatalog
+    : dynamicCityCatalog.filter(c => c.isActive !== false);
+}
+
+/**
+ * 由 SQLite 資料庫層同步最新的郵遞區號微型資料庫至記憶體快取（強制依郵遞區號由小到大排序）
+ */
+export function setDynamicPostalCatalog(records: DistrictPostal[]): void {
+  if (!records || records.length === 0) {
+    dynamicPostalCatalog = sortCatalogByPostalCode(
+      DEFAULT_TAIWAN_POSTAL_CODES.map((p, idx) => ({
+        ...p,
+        id: `POST-${String(idx + 1).padStart(3, '0')}`,
+        isActive: true,
+        aliases: [],
+        sortOrder: idx + 1
+      }))
+    );
+  } else {
+    dynamicPostalCatalog = sortCatalogByPostalCode(records);
+  }
+  invalidateAliasCache();
+}
+
+export function getPostalCatalog(options?: { includeInactive?: boolean }): DistrictPostal[] {
+  const includeInactive = options?.includeInactive ?? false;
+  return includeInactive
+    ? dynamicPostalCatalog
+    : dynamicPostalCatalog.filter(p => p.isActive !== false && isCityActive(p.city));
+}
+
+// 取得預設台灣所有縣市清單（保留靜態匯出向下相容）
+export const TAIWAN_CITIES = Array.from(new Set(DEFAULT_TAIWAN_POSTAL_CODES.map(p => p.city)));
+
+// 根據縣市取得該縣市所屬鄉鎮市區列表（固定依郵遞區號由小到大排序）
+export function getDistrictsByCity(
+  cityName: string,
+  options?: { includeInactive?: boolean }
+): DistrictPostal[] {
+  if (!cityName) return [];
+  const normCity = normalizeTaiwanCity(cityName);
+  const pool = getPostalCatalog(options);
+  return pool
+    .filter(p => normTaiChar(p.city) === normCity || normTaiChar(p.city) === normTaiChar(cityName) || p.city === cityName.trim())
+    .sort(compareDistrictPostal);
+}
+
+/**
+ * 檢查輸入的縣市或行政區是否在郵局表已被標記為「歷史停用／改制」或已自現行表更名移轉
+ */
+export function findDeprecatedDistrictInfo(
+  city?: string,
+  district?: string
+): DistrictPostal | undefined {
+  const normC = normTaiChar(city);
+  const normD = normTaiChar(district);
+  if (!normC && !normD) return undefined;
+
+  const inactiveRows = dynamicPostalCatalog.filter(
+    p => p.isActive === false || !isCityActive(p.city)
+  );
+  if (normC && normD) {
+    const exact = inactiveRows.find(
+      p => normTaiChar(p.city) === normC && normTaiChar(p.district) === normD
+    );
+    if (exact) return exact;
+  }
+  if (normC) {
+    const inactiveCityRow = inactiveRows.find(
+      p =>
+        normTaiChar(p.city) === normC ||
+        (p.aliases || []).some(a => normTaiChar(a) === normC)
+    );
+    if (inactiveCityRow) return inactiveCityRow;
+
+    // 若該舊縣市名稱出現在某現行縣市的「舊名別名」中，提醒可對應新縣市
+    const aliasedCity = dynamicCityCatalog.find(
+      c =>
+        normTaiChar(c.cityName) !== normC &&
+        (c.aliases || []).some(a => normTaiChar(a) === normC)
+    );
+    if (aliasedCity) {
+      return {
+        city: city || '',
+        district: district || '',
+        postalCode: '',
+        isActive: false,
+        replacedByCity: aliasedCity.cityName,
+        replacedByDistrict: district || undefined,
+        note: aliasedCity.note || `已更名為 ${aliasedCity.cityName}`
+      };
+    }
+  }
+  return undefined;
 }
 
 /**
  * 智慧地址解析器：給定一段完整地址，自動分析出縣市、鄉鎮市區與 3 碼郵遞區號
- * 例如：輸入「新北市五股區成泰路三段12號」，自動解析出 postalCode: '248', city: '新北市', district: '五股區'
+ * 優先比對現行啟用行政區，再比對歷史停用行政區與別名（同時相容 臺/台）
  */
 export function parseTaiwanAddress(addressText?: string): {
   postalCode?: string;
@@ -441,32 +734,128 @@ export function parseTaiwanAddress(addressText?: string): {
 } {
   if (!addressText || !addressText.trim()) return {};
 
-  const clean = addressText.trim().replace(/^[\[\(（【]\d{3,6}[\]\)）】]\s*/, ''); // 移除原先已帶的郵遞區號前綴
+  // 1. 移除開頭帶括號的郵遞區號前綴 (如 [630]、(630)、（630）、【630】)
+  const clean = addressText.trim().replace(/^[\[\(（【]\d{3,6}(?:-\d{2,3})?[\]\)）】]\s*/, '');
 
-  // 嘗試比對完整縣市與行政區
-  for (const item of TAIWAN_POSTAL_CODES) {
-    const aliasCity = item.city.replace('臺', '台');
-    const pattern = new RegExp(`(${item.city}|${aliasCity})\\s*(${item.district})`);
-    const match = clean.match(pattern);
-    if (match) {
-      const remaining = clean.replace(pattern, '').trim();
+  // 2. 若整串純為 3~6 碼郵遞區號，嘗試反查縣市鄉鎮，剩餘住址維持空字串
+  const pureZipMatch = clean.match(/^(\d{3})(?:-?\d{2,3})?$/);
+  if (pureZipMatch) {
+    const matched = getLocationsByPostalCode(pureZipMatch[1], { includeInactive: true });
+    if (matched.length > 0) {
       return {
-        postalCode: item.postalCode,
-        city: item.city,
-        district: item.district,
-        remaining
+        postalCode: clean,
+        city: matched[0].city,
+        district: matched[0].district,
+        remaining: ''
       };
     }
+    return {
+      postalCode: clean,
+      remaining: ''
+    };
   }
 
-  // 若未包含縣市，僅比對行政區名稱
-  for (const item of TAIWAN_POSTAL_CODES) {
-    if (clean.includes(item.district)) {
-      return {
-        postalCode: item.postalCode,
-        city: item.city,
-        district: item.district
-      };
+  // 3. 若開頭有未帶括號的 3~6 碼數字，先嘗試剝除後比對；唯有剝除後確能匹配縣市或鄉鎮時才視為郵遞區號前綴，避免誤刪 "100巷5號"
+  const unbracketedZipMatch = clean.match(/^(\d{3,6}(?:-\d{2,3})?)\s*(.+)$/);
+  const candidates: Array<{ text: string; leadZip?: string }> = unbracketedZipMatch
+    ? [{ text: unbracketedZipMatch[2].trim(), leadZip: unbracketedZipMatch[1] }, { text: clean }]
+    : [{ text: clean }];
+
+  // 現行啟用優先，再檢索歷史停用
+  const orderedCatalog = [
+    ...dynamicPostalCatalog.filter(p => p.isActive !== false),
+    ...dynamicPostalCatalog.filter(p => p.isActive === false)
+  ];
+  const allCities = getTaiwanCities(true);
+
+  // 3a/3b 共用：建立縣市別名對照表（來自 taiwan_postal_cities 與各行政區別名）
+  const cityMetaByNorm = new Map<string, CityPostalMeta>();
+  for (const cMeta of dynamicCityCatalog) {
+    cityMetaByNorm.set(normTaiChar(cMeta.cityName), cMeta);
+  }
+
+  for (const candidate of candidates) {
+    const target = candidate.text;
+
+    // 3a. 嘗試比對完整「縣市 + 行政區」（同時相容 臺/台 寫法與縣市變數別名）
+    for (const item of orderedCatalog) {
+      const cMeta = cityMetaByNorm.get(normTaiChar(item.city));
+      const cityAliases = cMeta?.aliases || [];
+      const cForms = Array.from(
+        new Set([
+          item.city,
+          normTaiChar(item.city),
+          item.city.replace(/臺/g, '台'),
+          ...cityAliases.flatMap(a => [a, normTaiChar(a), a.replace(/臺/g, '台')]),
+          ...(item.aliases || []).filter(a => a.length <= 4 && /[縣市]$/.test(a)).flatMap(a => [a, normTaiChar(a), a.replace(/臺/g, '台')])
+        ])
+      ).filter(Boolean);
+      const dForms = Array.from(
+        new Set([
+          item.district,
+          normTaiChar(item.district),
+          item.district.replace(/臺/g, '台')
+        ])
+      ).filter(Boolean);
+
+      const cGroup = cForms.map(escapeRegExp).join('|');
+      const dGroup = dForms.map(escapeRegExp).join('|');
+      const pattern = new RegExp(`(${cGroup})\\s*(${dGroup})`);
+      const match = target.match(pattern);
+      if (match) {
+        const remaining = target.replace(pattern, '').trim();
+        const zip =
+          candidate.leadZip && candidate.leadZip.startsWith(item.postalCode)
+            ? candidate.leadZip
+            : item.postalCode;
+        return {
+          postalCode: zip,
+          city: item.city,
+          district: item.district,
+          remaining
+        };
+      }
+    }
+
+    // 3b. 若包含「縣市」但尚未選取或未含「行政區」（如 "台北市" 或 "630 雲林縣" 或舊縣市別名）
+    for (const cityName of allCities) {
+      const cMeta = cityMetaByNorm.get(normTaiChar(cityName));
+      const cityForms = Array.from(
+        new Set([
+          cityName,
+          normTaiChar(cityName),
+          cityName.replace(/臺/g, '台'),
+          ...(cMeta?.aliases || []).flatMap(a => [a, normTaiChar(a), a.replace(/臺/g, '台')])
+        ])
+      ).filter(Boolean);
+      const cityPattern = new RegExp(`^(${cityForms.map(escapeRegExp).join('|')})\\s*(.*)$`);
+      const match = target.match(cityPattern);
+      if (match) {
+        return {
+          postalCode: candidate.leadZip,
+          city: cityName,
+          remaining: (match[2] || '').trim()
+        };
+      }
+    }
+
+    // 3c. 若未包含縣市，僅比對行政區名稱（同時相容 臺/台）
+    for (const item of orderedCatalog) {
+      const aliasDist = item.district.replace(/臺/g, '台');
+      const distPattern = new RegExp(`(${escapeRegExp(item.district)}|${escapeRegExp(aliasDist)})`);
+      if (distPattern.test(target)) {
+        const remaining = target.replace(distPattern, '').trim();
+        const zip =
+          candidate.leadZip && candidate.leadZip.startsWith(item.postalCode)
+            ? candidate.leadZip
+            : item.postalCode;
+        return {
+          postalCode: zip,
+          city: item.city,
+          district: item.district,
+          remaining
+        };
+      }
     }
   }
 
@@ -474,48 +863,116 @@ export function parseTaiwanAddress(addressText?: string): {
 }
 
 /**
- * 取得全台灣所有縣市清單 (不重複)
+ * 取得全台灣所有縣市清單 (動態讀取郵局微型資料庫；預設只列現行啟用)
  */
-export function getTaiwanCities(): string[] {
-  return TAIWAN_CITIES;
+export function getTaiwanCities(includeInactive: boolean = false): string[] {
+  const pool = getPostalCatalog({ includeInactive });
+  const fromDistricts = pool.map(p => p.city);
+  const fromCities = getCityCatalog({ includeInactive }).map(c => c.cityName);
+  return Array.from(new Set([...fromDistricts, ...fromCities]));
 }
 
 /**
- * 正規化台灣縣市名稱（將「台」統一轉為中華郵政標準「臺」以對齊下拉選單）
+ * 正規化台灣縣市名稱（優先精準對齊郵局微型資料庫現行名稱，否則將「台」轉為「臺」）
  */
 export function normalizeTaiwanCity(cityName?: string): string {
   if (!cityName) return '';
-  const norm = cityName.trim().replace(/^台/, '臺');
-  const found = TAIWAN_CITIES.find(c => c === norm || c === cityName.trim());
-  return found || cityName.trim();
+  const trimmed = cityName.trim();
+  const norm = normTaiChar(trimmed);
+  const allCities = getTaiwanCities(true);
+  const exactFound = allCities.find(c => c === trimmed);
+  if (exactFound) return exactFound;
+  const charEquivFound = allCities.find(c => normTaiChar(c) === norm);
+  return charEquivFound || norm;
+}
+
+/**
+ * 正規化台灣鄉鎮市區名稱（相容臺西鄉/台西鄉、霧臺鄉/霧台鄉、臺東市/台東市）
+ */
+export function normalizeTaiwanDistrict(districtName?: string): string {
+  if (!districtName) return '';
+  return normTaiChar(districtName);
+}
+
+/**
+ * 比對地址文字或區域欄位是否符合目標縣市／鄉鎮
+ * 由地址小程式統一處理：
+ * 1. 「台／臺」字體差異
+ * 2. 郵局微型資料庫設定的歷史沿革別名雙向互通（例如 桃園縣 ↔ 桃園市、中壢市 ↔ 中壢區）
+ */
+export function matchesTaiwanRegion(
+  candidateText?: string,
+  targetRegion?: string,
+  exact: boolean = false
+): boolean {
+  if (!candidateText || !targetRegion) return false;
+  const normCandidate = normTaiChar(candidateText);
+  const normTarget = normTaiChar(targetRegion);
+  if (!normCandidate || !normTarget) return false;
+
+  const graph = getAliasGraph();
+  const targetEquivalents = graph.get(normTarget) || [normTarget];
+
+  if (exact) {
+    const candidateEquivalents = graph.get(normCandidate) || [normCandidate];
+    return candidateEquivalents.some(ce => targetEquivalents.includes(ce));
+  }
+
+  if (targetEquivalents.some(t => normCandidate.includes(t))) {
+    return true;
+  }
+
+  // 若候選字串本身包含某舊稱或別名，展開其等價地名再比對一次
+  for (const [aliasKey, equivs] of graph.entries()) {
+    if (normCandidate.includes(aliasKey) && equivs.some(e => e === normTarget || targetEquivalents.includes(e))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
  * 根據縣市與鄉鎮市區取得對應的 3 碼郵遞區號
  */
 export function getPostalCode(city: string, district: string): string | undefined {
-  const districts = getDistrictsByCity(city);
-  const found = districts.find(d => d.district === district);
-  return found?.postalCode;
+  const districts = getDistrictsByCity(city, { includeInactive: true });
+  const normDist = normalizeTaiwanDistrict(district);
+  // 優先回傳現行啟用列
+  const activeFound = districts.find(
+    d => d.isActive !== false && (normTaiChar(d.district) === normDist || d.district === district)
+  );
+  if (activeFound) return activeFound.postalCode;
+  const fallback = districts.find(
+    d => normTaiChar(d.district) === normDist || d.district === district
+  );
+  return fallback?.postalCode;
 }
 
 /**
  * 根據郵遞區號（取前 3 碼）反查對應的所有縣市與鄉鎮市區清單
  */
-export function getLocationsByPostalCode(postalCode?: string): DistrictPostal[] {
+export function getLocationsByPostalCode(
+  postalCode?: string,
+  options?: { includeInactive?: boolean }
+): DistrictPostal[] {
   if (!postalCode) return [];
   const digits = postalCode.trim().replace(/\D/g, '');
   if (digits.length < 3) return [];
   const zip3 = digits.slice(0, 3);
-  return TAIWAN_POSTAL_CODES.filter(p => p.postalCode === zip3);
+  const pool = getPostalCatalog(options);
+  // 現行啟用優先排前
+  return pool
+    .filter(p => p.postalCode === zip3)
+    .sort((a, b) => Number(b.isActive !== false) - Number(a.isActive !== false));
 }
 
 /**
  * 根據郵遞區號（取前 3 碼）反查對應的第一筆縣市與鄉鎮市區
  */
 export function getLocationByPostalCode(postalCode?: string): DistrictPostal | undefined {
-  const list = getLocationsByPostalCode(postalCode);
-  return list[0];
+  const list = getLocationsByPostalCode(postalCode, { includeInactive: false });
+  return list[0] || getLocationsByPostalCode(postalCode, { includeInactive: true })[0];
 }
 
 /**

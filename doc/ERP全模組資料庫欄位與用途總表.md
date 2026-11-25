@@ -66,7 +66,7 @@
 | 欄位 | 用途 |
 |---|---|
 | `id` | 軟體設定識別碼（如 `APP-CFG-01`）。 |
-| `configKey` | 程式設定唯一鍵名：<br>• `APP_BRAND_NAME`：軟體品牌主名稱（如「田頭」，即時同步至頂欄與系統各處）。<br>• `APP_SUB_TITLE`：軟體副標題／產品代號（如「A1 商務應用雲」、「營造工程雲」）。<br>• `APP_VERSION`：系統版本號標記（如「v2.5.0-PRO」）。<br>• `APP_HTML_TITLE`：瀏覽器分頁標題（如「客製化營造工程 ERP 系統」）。<br>• `APP_WELCOME_BANNER`：儀表板首頁歡迎標語與公告文字。<br>• `APP_FOOTER_COPYRIGHT`：系統頁腳版權宣告字串。<br>• `APP_GLOBAL_ANNOUNCEMENT`：頂欄全域緊急公告／維護廣播跑馬燈字串。<br>• `APP_ANNOUNCEMENT_ENABLED`：全域緊急公告啟用開關（`BOOLEAN`）。<br>• `APP_ENABLED_MODULES`：全系統開放業務模組授權清單（`JSON` 陣列，控制哪些模組對全系統開放）。<br>• `APP_MAINTENANCE_MODE`：全系統維護模式／唯讀鎖定開關（`BOOLEAN`）。<br>• `APP_LOGO_MODE`：標誌顯示模式（`TEXT` 純文字 / `DEFAULT` 預設圖標 / `CUSTOM` 自訂圖示）。<br>• `APP_LOGO_URL`：自訂標誌圖片或圖示 URL（選填）。<br>• `APP_CUSTOMER_BILLING_MODE`：對外客戶請款／對帳明細表權限流程模式（`FINANCE_ONLY` 會計統一處理 / `PROJECT_FIRST_HANDOFF` 工務對客明細送審 ➔ 會計立帳決定開票 / `PROJECT_AND_FINANCE` 雙軌各自調用）。 |
+| `configKey` | 程式設定唯一鍵名：<br>• `APP_BRAND_NAME`：軟體品牌主名稱（如「田頭」，即時同步至頂欄與系統各處）。<br>• `APP_SUB_TITLE`：軟體副標題／產品代號（如「A1 商務應用雲」、「營造工程雲」）。<br>• `APP_VERSION`：系統版本號標記（如「v2.5.0-PRO」）。<br>• `APP_HTML_TITLE`：瀏覽器分頁標題（如「客製化營造工程 ERP 系統」）。<br>• `APP_WELCOME_BANNER`：儀表板首頁歡迎標語與公告文字。<br>• `APP_FOOTER_COPYRIGHT`：系統頁腳版權宣告字串。<br>• `APP_GLOBAL_ANNOUNCEMENT`：頂欄全域緊急公告／維護廣播跑馬燈字串。<br>• `APP_ANNOUNCEMENT_ENABLED`：全域緊急公告啟用開關（`BOOLEAN`）。<br>• `APP_ENABLED_MODULES`：全系統開放業務模組授權清單（`JSON` 陣列，控制哪些模組對全系統開放）。<br>• `APP_MAINTENANCE_MODE`：全系統維護模式／唯讀鎖定開關（`BOOLEAN`）。<br>• `APP_LOGO_MODE`：標誌顯示模式（`TEXT` 純文字 / `DEFAULT` 預設圖標 / `CUSTOM` 自訂圖示）。<br>• `APP_LOGO_URL`：自訂標誌圖片或圖示 URL（選填）。<br>• `APP_CUSTOMER_BILLING_MODE`：對外客戶請款／對帳明細表權限流程模式（`FINANCE_ONLY` 會計統一處理 / `PROJECT_FIRST_HANDOFF` 工務對客明細送審 ➔ 會計立帳決定開票 / `PROJECT_AND_FINANCE` 雙軌各自調用）。<br>• `APP_TEST_SANDBOX_PUBLIC`：開發中「測試區 (`TEST_SANDBOX`)」對全體帳號開放開關（`BOOLEAN`，預設 `'false'`；**僅限 `Superadmin` 可切換控制**。關閉時僅 `Superadmin` 本人可見；開啟時全體啟用帳號可進入唯讀測試區進行跨角色權限驗證）。 |
 | `configValue` | 設定值，以純文字保存並依 `valueType` 解析。 |
 | `description` | 軟體設定項目中文用途說明。 |
 | `valueType` | 數值型別：`STRING`、`NUMBER`、`BOOLEAN`、`JSON`。 |
@@ -74,6 +74,41 @@
 | `version` | 樂觀鎖版本號（預設 `1`，更新自動 `+1`）。 |
 | `updatedBy` | 最近修改設定之 Superadmin 姓名（如「黃副總經理」）。 |
 | `createdAt`、`updatedAt` | 建立及最近更新日期時間。 |
+
+---
+
+### TaiwanPostalCity｜臺灣縣市主表 (`taiwan_postal_cities`)
+
+> **架構定位**：臺灣行政區郵遞區號母子關聯主表（縣市層級 SSoT）。將「縣市」抽離為獨立母表後，若未來行政區升格或更名（例如「臺北縣 ➔ 新北市」），僅需修改母表 `cityName` 並保留歷史別名於 `aliases`，所有子表鄉鎮與跨模組檢索即自動連動，不需逐筆人工更正；歷史已過帳單據文字快照則維持原樣不被竄改。
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 縣市主鍵識別碼（如 `CITY-01`）。 |
+| `cityName` | 現行標準縣市名稱（`UNIQUE NOT NULL`，如 `臺北市`、`新北市`）。 |
+| `aliases` | 歷史舊稱／異體字別名 JSON 陣列（如 `["臺北縣","台北縣","台北市"]`）。 |
+| `isActive` | 啟用狀態（`1` 啟用 / `0` 停用，預設 `1`）。 |
+| `note` | 縣市升格或更名備註。 |
+| `sortOrder` | 縣市排序權重（預設依臺灣郵遞區號北至南區段排列）。 |
+| `updatedAt` | 最近更新日期時間。 |
+
+### TaiwanPostalCode｜臺灣鄉鎮市區郵遞區號表 (`taiwan_postal_codes`)
+
+> **架構定位**：全國 368 鄉鎮市區郵遞區號子表（郵局牆上分區表）。透過 `cityId` 外鍵關聯 `taiwan_postal_cities.id`，前端選單與目錄一律依 **`postalCode` 數值由小到大升冪排列**（即使刪除行政區後重新新增，仍自動回歸正確郵遞區號順序）。
+
+| 欄位 | 用途 |
+|---|---|
+| `id` | 郵遞區號項目主鍵（如 `POST-001`）。 |
+| `cityId` | 外鍵關聯 `taiwan_postal_cities.id`，隨母表縣市更名自動連動更新 `city`。 |
+| `city` | 縣市名稱快照／同步欄位（供單表快速查詢與向下相容）。 |
+| `district` | 鄉鎮市區名稱（如 `中正區`）。 |
+| `postalCode` | 中華郵政 3 碼標準郵遞區號（如 `100`、`220`）。 |
+| `isActive` | 啟用狀態（`1` 現行有效 / `0` 停用或已裁撤，預設 `1`）。 |
+| `aliases` | 行政區舊稱或別名 JSON 陣列。 |
+| `replacedByCity` | 若改制整併，對應之新縣市名稱。 |
+| `replacedByDistrict` | 若改制整併，對應之新鄉鎮市區名稱。 |
+| `note` | 備註說明。 |
+| `sortOrder` | 補助排序權重。 |
+| `updatedAt` | 最近更新日期時間。 |
 
 ---
 

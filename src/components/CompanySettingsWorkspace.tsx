@@ -1,45 +1,24 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { Company, PhoneItem, KeyPerson, CompanyBankAccount } from '../types/erp';
-import {
-  Building2,
-  Users2,
-  UserCheck,
-  Plus,
-  Trash2,
-  Save,
-  CheckCircle2,
-  AlertCircle,
-  Phone,
-  Printer,
-  Mail,
-  MapPin,
-  DollarSign,
-  FileText,
-  ShieldCheck,
-  Layers,
-  Sparkles,
-  Info,
-  Clock,
-  ArrowRight,
-  User,
-  Crown,
-  Search,
-  Filter,
-  AlertTriangle,
-  X,
-  ExternalLink,
-  ChevronRight,
-  GitBranch,
-  CreditCard
-} from 'lucide-react';
 import {
   saveCompany,
   deleteCompany,
   getAllCompanyBankAccounts,
-  saveCompanyBankAccount,
   deleteCompanyBankAccount
 } from '../db/sqlite';
 import { useAuth } from '../context/AuthContext';
+import {
+  validateTaiwanTaxId,
+  validateTaiwanNationalId,
+  validateEmail,
+  ValidationResult
+} from '../utils/taiwanValidation';
+import { parseTaiwanAddress, normalizeTaiwanCity } from '../utils/taiwanPostalCodes';
+import { CompanyHierarchyGrid, CompanyEntityFilter } from './settings/CompanyHierarchyGrid';
+import { CompanyEntityFormPanel } from './settings/CompanyEntityFormPanel';
+import { CompanyBankAccountModal } from './settings/CompanyBankAccountModal';
+import { ConfirmDialogModal } from './widgets/ConfirmDialogModal';
 
 interface CompanySettingsWorkspaceProps {
   companies: Company[];
@@ -48,121 +27,40 @@ interface CompanySettingsWorkspaceProps {
   onDataChanged: () => void;
 }
 
-// =========================================================================
-// 1. 內控檢核防呆演算法 (台灣統編 8 碼 & 台灣身分證 10 碼)
-// =========================================================================
-
-// 台灣財政部 8 碼統一編號加權檢核邏輯
-function validateTaiwanTaxId(taxId: string): { valid: boolean; reason?: string } {
-  if (!taxId) return { valid: false, reason: '請輸入 8 碼統一編號' };
-  if (!/^\d{8}$/.test(taxId)) return { valid: false, reason: '統一編號必須為 8 位純數字' };
-
-  const weights = [1, 2, 1, 2, 1, 2, 4, 1];
-  let sum = 0;
-
-  for (let i = 0; i < 8; i++) {
-    const digit = parseInt(taxId[i], 10);
-    const prod = digit * weights[i];
-    sum += Math.floor(prod / 10) + (prod % 10);
-  }
-
-  if (sum % 10 === 0) return { valid: true, reason: '統編加權檢核通過' };
-
-  // 若第 7 位是 7，可有兩種可能（加 1 是否能整除 10）
-  if (taxId[6] === '7') {
-    if ((sum + 1) % 10 === 0) return { valid: true, reason: '統編加權檢核通過 (第7碼為7特許)' };
-  }
-
-  return { valid: false, reason: '統一編號檢查碼不符（請確認輸入）' };
-}
-
-// 台灣身分證字號加權模數 10 防呆檢核演算法 (首字大寫英文字母 + 9 碼數字)
-function validateTaiwanNationalId(nationalId: string): { valid: boolean; reason?: string; gender?: string } {
-  if (!nationalId) return { valid: false, reason: '請輸入身分證字號' };
-  const cleanId = nationalId.trim().toUpperCase();
-
-  if (!/^[A-Z][1289]\d{8}$/.test(cleanId)) {
-    if (!/^[A-Z]/.test(cleanId)) return { valid: false, reason: '首字必須為大寫英文字母' };
-    if (cleanId.length > 1 && !/^[A-Z][1289]/.test(cleanId)) {
-      return { valid: false, reason: '第 2 碼須為性別碼 (1 男性 / 2 女性)' };
-    }
-    return { valid: false, reason: `格式須為首字英文字母+9碼數字 (${cleanId.length}/10 碼)` };
-  }
-
-  // 字母對應縣市數值表
-  const letterMap: Record<string, number> = {
-    A: 10, B: 11, C: 12, D: 13, E: 14, F: 15, G: 16, H: 17, J: 18, K: 19,
-    L: 20, M: 21, N: 22, P: 23, Q: 24, R: 25, S: 26, T: 27, U: 28, V: 29,
-    X: 30, Y: 31, W: 32, Z: 33, I: 34, O: 35
-  };
-
-  const letterVal = letterMap[cleanId[0]];
-  if (!letterVal) return { valid: false, reason: '無效的英文字母代碼' };
-
-  const n1 = Math.floor(letterVal / 10);
-  const n2 = letterVal % 10;
-
-  const weights = [8, 7, 6, 5, 4, 3, 2, 1];
-  let sum = n1 * 1 + n2 * 9;
-
-  for (let i = 0; i < 8; i++) {
-    sum += parseInt(cleanId[i + 1], 10) * weights[i];
-  }
-  sum += parseInt(cleanId[9], 10);
-
-  if (sum % 10 === 0) {
-    const gender = cleanId[1] === '1' ? '男性' : cleanId[1] === '2' ? '女性' : '居留證/外籍';
-    return { valid: true, reason: `身分證檢核正確 (${gender})`, gender };
-  }
-
-  return { valid: false, reason: '身分證檢查碼計算不符 (請核對號碼)' };
-}
-
-// Email 格式防呆
-function validateEmail(email: string): boolean {
-  if (!email) return true; // 選填允許留空
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-// =========================================================================
-// 2. 主組件：公司設定 (企業 ERP 旗艦工作台實作)
-// =========================================================================
 export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> = ({
   companies,
   selectedCompanyId,
   onSelectCompany,
-  onDataChanged,
+  onDataChanged
 }) => {
   const { currentUser, isSuperadmin, isBoss, can, reloadAuth } = useAuth();
   const canWriteCompany = can('COMPANIES', 'write');
+
   const isCompanyAllowed = (compId: string) => {
     if (isSuperadmin || isBoss) return true;
     if (currentUser?.canManageAllCompanies) return true;
-    const allowed = currentUser?.allowedCompanies && currentUser.allowedCompanies.length > 0
-      ? currentUser.allowedCompanies
-      : ['COMP-01'];
+    const allowed =
+      currentUser?.allowedCompanies && currentUser.allowedCompanies.length > 0
+        ? currentUser.allowedCompanies
+        : ['COMP-01'];
     return allowed.includes(compId);
   };
-  const [activeCompanyId, setActiveCompanyId] = useState<string>(selectedCompanyId || companies[0]?.id || 'COMP-01');
 
-  // 篩選與搜尋狀態
+  const [activeCompanyId, setActiveCompanyId] = useState<string>(
+    selectedCompanyId || companies[0]?.id || 'COMP-01'
+  );
   const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'ALL' | 'GROUP' | 'CORPORATION' | 'PERSONAL'>('ALL');
+  const [typeFilter, setTypeFilter] = useState<CompanyEntityFilter>('ALL');
 
-  // 當前編輯表單狀態
   const [formData, setFormData] = useState<Partial<Company>>({});
   const [phones, setPhones] = useState<PhoneItem[]>([]);
   const [keyPersonnel, setKeyPersonnel] = useState<KeyPerson[]>([]);
 
-  // 即時防呆檢核反饋
-  const [taxIdFeedback, setTaxIdFeedback] = useState<{ valid: boolean; reason?: string }>({ valid: true });
-  const [nationalIdFeedback, setNationalIdFeedback] = useState<{ valid: boolean; reason?: string; gender?: string }>({ valid: true });
+  const [taxIdFeedback, setTaxIdFeedback] = useState<ValidationResult>({ isValid: true, message: '' });
+  const [nationalIdFeedback, setNationalIdFeedback] = useState<ValidationResult>({ isValid: true, message: '' });
 
-  // 內控防呆刪除確認 Modal 狀態
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteErrorNote, setDeleteErrorNote] = useState<string | null>(null);
-
-  // 浮動提示 Toast
   const [toastNote, setToastNote] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -170,28 +68,15 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     setTimeout(() => setToastNote(null), 3200);
   };
 
-  // 本公司所屬出款銀行專戶與支票簿管理狀態
+  // 本公司出款銀行專戶狀態
   const [companyBankAccounts, setCompanyBankAccounts] = useState<CompanyBankAccount[]>([]);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
-  const [bankFormData, setBankFormData] = useState<Partial<CompanyBankAccount>>({
-    companyId: activeCompanyId,
-    bankCode: '004',
-    bankName: '臺灣銀行',
-    branchName: '營業部',
-    accountNumber: '',
-    accountName: '',
-    isVirtualAccount: false,
-    status: 'ACTIVE',
-    checkPrefix: 'CQ',
-    nextCheckNumber: 1001,
-    checkDigits: 6,
-    currency: 'TWD',
-    supportsCheck: true,
-    supportsTransfer: true,
-    paymentScheduleDays: '',
+  const [bankInitialData, setBankInitialData] = useState<Partial<CompanyBankAccount>>({
+    companyId: activeCompanyId
   });
-  const [isDeleteBankModalOpen, setIsDeleteBankModalOpen] = useState(false);
   const [bankToDelete, setBankToDelete] = useState<CompanyBankAccount | null>(null);
+
+  const targetCompany = companies.find(c => c.id === activeCompanyId) || companies[0];
 
   const loadCompanyBankAccounts = () => {
     try {
@@ -204,92 +89,30 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     loadCompanyBankAccounts();
   }, [activeCompanyId]);
 
-  const handleOpenAddBank = () => {
-    setBankFormData({
-      companyId: activeCompanyId,
-      bankCode: '004',
-      bankName: '臺灣銀行',
-      branchName: '營業部',
-      accountNumber: '',
-      accountName: targetCompany?.name || '',
-      isVirtualAccount: targetCompany?.entityType === 'PERSONAL',
-      status: 'ACTIVE',
-      checkPrefix: 'CQ',
-      nextCheckNumber: 1001,
-      checkDigits: 6,
-      currency: 'TWD',
-      supportsCheck: true,
-      supportsTransfer: true,
-      paymentScheduleDays: '',
-    });
-    setIsBankModalOpen(true);
-  };
-
-  const handleOpenEditBank = (b: CompanyBankAccount) => {
-    setBankFormData({
-      ...b,
-      supportsCheck: b.supportsCheck !== false,
-      supportsTransfer: b.supportsTransfer !== false,
-      paymentScheduleDays: b.paymentScheduleDays || '',
-    });
-    setIsBankModalOpen(true);
-  };
-
-  const handleSaveBank = () => {
-    if (!bankFormData.bankName?.trim() || !bankFormData.accountNumber?.trim()) {
-      showToast('請完整填寫銀行機構名稱與帳號');
-      return;
-    }
-    try {
-      saveCompanyBankAccount(
-        {
-          id: bankFormData.id,
-          companyId: activeCompanyId,
-          bankCode: bankFormData.bankCode || '004',
-          bankName: bankFormData.bankName.trim(),
-          branchName: bankFormData.branchName?.trim() || '',
-          accountNumber: bankFormData.accountNumber.trim(),
-          accountName: bankFormData.accountName?.trim() || targetCompany?.name || bankFormData.bankName.trim(),
-          isVirtualAccount: Boolean(bankFormData.isVirtualAccount),
-          status: bankFormData.status || 'ACTIVE',
-          checkPrefix: (bankFormData.checkPrefix || 'CQ').trim().toUpperCase(),
-          nextCheckNumber: Math.max(1, Number(bankFormData.nextCheckNumber) || 1001),
-          checkDigits: Number(bankFormData.checkDigits) || 6,
-          currency: bankFormData.currency || 'TWD',
-          supportsCheck: bankFormData.supportsCheck !== false,
-          supportsTransfer: bankFormData.supportsTransfer !== false,
-          paymentScheduleDays: bankFormData.paymentScheduleDays?.trim() || undefined,
-        },
-        currentUser?.fullName || '系統管理員'
-      );
-      showToast(bankFormData.id ? '✅ 銀行帳戶與支票簿已成功更新！' : '✅ 已成功為本公司新增出款銀行專戶！');
-      setIsBankModalOpen(false);
-      loadCompanyBankAccounts();
-      onDataChanged();
-    } catch (e: any) {
-      showToast(`❌ 儲存失敗: ${e.message}`);
-    }
-  };
-
-  const handleDeleteBank = () => {
-    if (!bankToDelete) return;
-    try {
-      deleteCompanyBankAccount(bankToDelete.id, currentUser?.fullName || '系統管理員');
-      showToast(`✅ 銀行帳戶【${bankToDelete.bankName} ${bankToDelete.accountNumber}】已成功刪除！`);
-      setIsDeleteBankModalOpen(false);
-      setBankToDelete(null);
-      loadCompanyBankAccounts();
-      onDataChanged();
-    } catch (e: any) {
-      showToast(`❌ 刪除攔截: ${e.message}`);
-    }
-  };
-
-  // 當前選取的實體
-  const targetCompany = companies.find(c => c.id === activeCompanyId) || companies[0];
-
   useEffect(() => {
     if (targetCompany) {
+      const hasRegStruct = Boolean(
+        targetCompany.registeredPostalCode ||
+          targetCompany.registeredCity ||
+          targetCompany.registeredDistrict ||
+          targetCompany.registeredStreetAddress !== undefined
+      );
+      const parsedReg =
+        !hasRegStruct && targetCompany.registeredAddress
+          ? parseTaiwanAddress(targetCompany.registeredAddress)
+          : {};
+
+      const hasContactStruct = Boolean(
+        targetCompany.contactPostalCode ||
+          targetCompany.contactCity ||
+          targetCompany.contactDistrict ||
+          targetCompany.contactStreetAddress !== undefined
+      );
+      const parsedContact =
+        !hasContactStruct && targetCompany.contactAddress
+          ? parseTaiwanAddress(targetCompany.contactAddress)
+          : {};
+
       setFormData({
         id: targetCompany.id,
         companyCode: targetCompany.companyCode,
@@ -303,12 +126,50 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
         documentPrefix: targetCompany.documentPrefix || '',
         email: targetCompany.email || '',
         registeredAddress: targetCompany.registeredAddress || '',
+        registeredPostalCode: hasRegStruct
+          ? targetCompany.registeredPostalCode || ''
+          : parsedReg.postalCode || '',
+        registeredCity: hasRegStruct
+          ? normalizeTaiwanCity(targetCompany.registeredCity || '')
+          : parsedReg.city
+          ? normalizeTaiwanCity(parsedReg.city)
+          : '',
+        registeredDistrict: hasRegStruct
+          ? targetCompany.registeredDistrict || ''
+          : parsedReg.district || '',
+        registeredStreetAddress: hasRegStruct
+          ? targetCompany.registeredStreetAddress || ''
+          : parsedReg.remaining !== undefined
+          ? parsedReg.remaining
+          : parsedReg.city
+          ? ''
+          : targetCompany.registeredAddress || '',
+        registeredAddressHistory: targetCompany.registeredAddressHistory || [],
         contactAddress: targetCompany.contactAddress || '',
+        contactPostalCode: hasContactStruct
+          ? targetCompany.contactPostalCode || ''
+          : parsedContact.postalCode || '',
+        contactCity: hasContactStruct
+          ? normalizeTaiwanCity(targetCompany.contactCity || '')
+          : parsedContact.city
+          ? normalizeTaiwanCity(parsedContact.city)
+          : '',
+        contactDistrict: hasContactStruct
+          ? targetCompany.contactDistrict || ''
+          : parsedContact.district || '',
+        contactStreetAddress: hasContactStruct
+          ? targetCompany.contactStreetAddress || ''
+          : parsedContact.remaining !== undefined
+          ? parsedContact.remaining
+          : parsedContact.city
+          ? ''
+          : targetCompany.contactAddress || '',
+        contactAddressHistory: targetCompany.contactAddressHistory || [],
         capitalAmount: targetCompany.capitalAmount || 0,
         baseCurrency: targetCompany.baseCurrency || 'TWD',
         paymentScheduleDays: targetCompany.paymentScheduleDays || '',
         version: targetCompany.version,
-        updatedAt: targetCompany.updatedAt,
+        updatedAt: targetCompany.updatedAt
       });
       setPhones(targetCompany.phones || []);
       setKeyPersonnel(targetCompany.keyPersonnel || []);
@@ -316,34 +177,43 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
       if (targetCompany.entityType === 'CORPORATION' && targetCompany.taxId) {
         setTaxIdFeedback(validateTaiwanTaxId(targetCompany.taxId));
       } else {
-        setTaxIdFeedback({ valid: true });
+        setTaxIdFeedback({ isValid: true, message: '' });
       }
 
       if (targetCompany.entityType === 'PERSONAL' && targetCompany.nationalId) {
         setNationalIdFeedback(validateTaiwanNationalId(targetCompany.nationalId));
       } else {
-        setNationalIdFeedback({ valid: true });
+        setNationalIdFeedback({ isValid: true, message: '' });
       }
     }
   }, [targetCompany, activeCompanyId]);
 
-  // 處理統編變更與即時驗證
+  const handleSelectEntity = (c: Company) => {
+    if (!isCompanyAllowed(c.id)) {
+      showToast(
+        `⛔ 【法人權限攔截】您的帳號（${currentUser?.fullName}）未獲授權存取「${c.shortName || c.name}」！`
+      );
+      return;
+    }
+    setActiveCompanyId(c.id);
+    onSelectCompany(c.id);
+  };
+
   const handleTaxIdChange = (val: string) => {
     setFormData(prev => ({ ...prev, taxId: val }));
     if (formData.entityType === 'CORPORATION') {
       if (val.length === 8) {
         setTaxIdFeedback(validateTaiwanTaxId(val));
       } else if (val.length > 0) {
-        setTaxIdFeedback({ valid: false, reason: `已輸入 ${val.length}/8 碼` });
+        setTaxIdFeedback({ isValid: false, message: `已輸入 ${val.length}/8 碼` });
       } else {
-        setTaxIdFeedback({ valid: false, reason: '公司法人必須填寫統一編號' });
+        setTaxIdFeedback({ isValid: false, message: '公司法人必須填寫統一編號' });
       }
     } else {
-      setTaxIdFeedback({ valid: true });
+      setTaxIdFeedback({ isValid: true, message: '' });
     }
   };
 
-  // 處理個人身分證變更與即時驗證
   const handleNationalIdChange = (val: string) => {
     const upperVal = val.toUpperCase();
     setFormData(prev => ({ ...prev, nationalId: upperVal }));
@@ -351,30 +221,25 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
       if (upperVal.length === 10) {
         setNationalIdFeedback(validateTaiwanNationalId(upperVal));
       } else if (upperVal.length > 0) {
-        setNationalIdFeedback({ valid: false, reason: `已輸入 ${upperVal.length}/10 碼` });
+        setNationalIdFeedback({ isValid: false, message: `已輸入 ${upperVal.length}/10 碼` });
       } else {
-        setNationalIdFeedback({ valid: true });
+        setNationalIdFeedback({ isValid: true, message: '' });
       }
     }
   };
 
-  // 新增電話項目
   const handleAddPhone = (type: PhoneItem['type'] = '市話') => {
-    setPhones(prev => [
-      ...prev,
-      { id: `P-${Date.now()}`, type, number: '' }
-    ]);
+    setPhones(prev => [...prev, { id: `P-${Date.now()}`, type, number: '' }]);
   };
 
   const handleUpdatePhone = (id: string, field: 'type' | 'number', value: string) => {
-    setPhones(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+    setPhones(prev => prev.map(p => (p.id === id ? { ...p, [field]: value } : p)));
   };
 
   const handleRemovePhone = (id: string) => {
     setPhones(prev => prev.filter(p => p.id !== id));
   };
 
-  // 新增重要人物 (重要決策層名單)
   const handleAddKeyPerson = () => {
     setKeyPersonnel(prev => [
       ...prev,
@@ -383,17 +248,18 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
   };
 
   const handleUpdateKeyPerson = (id: string, field: keyof KeyPerson, value: string) => {
-    setKeyPersonnel(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+    setKeyPersonnel(prev => prev.map(p => (p.id === id ? { ...p, [field]: value } : p)));
   };
 
   const handleRemoveKeyPerson = (id: string) => {
     setKeyPersonnel(prev => prev.filter(p => p.id !== id));
   };
 
-  // 建立新公司、新個人實體或新集團
   const handleCreateNew = (type: 'GROUP' | 'CORPORATION' | 'PERSONAL') => {
     if (!canWriteCompany) {
-      showToast('⛔ 【權限攔截】您目前的身分或業務群組僅具備「公司法人組織」之唯讀權限，無法新增實體！（可於權限矩陣開啟「寫」權限後再試）');
+      showToast(
+        '⛔ 【權限攔截】您目前的身分或業務群組僅具備「公司法人組織」之唯讀權限，無法新增實體！（可於權限矩陣開啟「寫」權限後再試）'
+      );
       return;
     }
     const isCorp = type === 'CORPORATION';
@@ -408,30 +274,40 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     const newEntity: Partial<Company> = {
       id: newId,
       companyCode: newCode,
-      name: isGroup 
-        ? '新創立營造控股事業集團' 
-        : isCorp 
-        ? '新立案營造工程股份有限公司' 
+      name: isGroup
+        ? '新創立營造控股事業集團'
+        : isCorp
+        ? '新立案營造工程股份有限公司'
         : '負責人私人調度資金戶',
       shortName: isGroup ? '新建集團' : isCorp ? '新營造' : '老闆私帳',
       entityType: type,
-      parentId: isGroup ? undefined : (groupEntity ? groupEntity.id : 'GRP-01'),
+      parentId: isGroup ? undefined : groupEntity ? groupEntity.id : 'GRP-01',
       taxId: isCorp ? '88991234' : undefined,
       nationalId: isPersonal ? 'A123456789' : undefined,
       representative: isCorp ? '負責人姓名' : isGroup ? '創辦人兼董事長' : '老闆本人',
-      keyPersonnel: isCorp 
-        ? [{ id: `kp-${Date.now()}`, title: '董事長', name: '林負責人', phone: '0910-123456' }] 
-        : isGroup 
-        ? [{ id: `kp-${Date.now()}`, title: '集團總裁', name: '創辦人', phone: '0910-123456' }] 
+      keyPersonnel: isCorp
+        ? [{ id: `kp-${Date.now()}`, title: '董事長', name: '林負責人', phone: '0910-123456' }]
+        : isGroup
+        ? [{ id: `kp-${Date.now()}`, title: '集團總裁', name: '創辦人', phone: '0910-123456' }]
         : [],
       documentPrefix: isGroup ? 'GRP' : isCorp ? 'NEW' : 'PS',
       phones: isCorp ? [{ id: 'p1', type: '市話', number: '02-' }] : [],
       email: isCorp ? 'service@company.com.tw' : '',
-      registeredAddress: isCorp ? '台北市' : '',
-      contactAddress: isCorp ? '台北市' : '',
+      registeredAddress: '',
+      registeredPostalCode: '',
+      registeredCity: '',
+      registeredDistrict: '',
+      registeredStreetAddress: '',
+      registeredAddressHistory: [],
+      contactAddress: '',
+      contactPostalCode: '',
+      contactCity: '',
+      contactDistrict: '',
+      contactStreetAddress: '',
+      contactAddressHistory: [],
       capitalAmount: isCorp ? 30000000 : isGroup ? 100000000 : 0,
       baseCurrency: 'TWD',
-      paymentScheduleDays: isCorp ? '7,17,27' : undefined,
+      paymentScheduleDays: isCorp ? '7,17,27' : undefined
     };
 
     try {
@@ -440,13 +316,14 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
       onDataChanged();
       setActiveCompanyId(newId);
       onSelectCompany(newId);
-      showToast(`✅ 已建立全新【${isGroup ? '集團母體' : isCorp ? '公司法人' : '個人實體 (老闆私帳)'}】！您已自動獲賦予該實體之管理維護權限。`);
+      showToast(
+        `✅ 已建立全新【${isGroup ? '集團母體' : isCorp ? '公司法人' : '個人實體 (老闆私帳)'}】！您已自動獲賦予該實體之管理維護權限。`
+      );
     } catch (e) {
       showToast(`❌ 建立失敗: ${(e as Error).message}`);
     }
   };
 
-  // 儲存表單
   const handleSave = () => {
     if (!canWriteCompany) {
       showToast('⛔ 【權限攔截】您目前的業務群組未開啟「公司法人組織」之【寫入編輯 (Write)】權限，無法儲存變更！');
@@ -465,25 +342,22 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
       return;
     }
 
-    // 公司法人必須驗證統編
     if (formData.entityType === 'CORPORATION') {
       const v = validateTaiwanTaxId(formData.taxId || '');
-      if (!v.valid) {
-        showToast(`❌ 統編檢核未通過: ${v.reason}`);
+      if (!v.isValid) {
+        showToast(`❌ 統編檢核未通過: ${v.message}`);
         return;
       }
     }
 
-    // 個人實體若有輸入身分證則必須驗證防呆
     if (formData.entityType === 'PERSONAL' && formData.nationalId) {
       const nv = validateTaiwanNationalId(formData.nationalId);
-      if (!nv.valid) {
-        showToast(`❌ 身分證檢核未通過: ${nv.reason}`);
+      if (!nv.isValid) {
+        showToast(`❌ 身分證檢核未通過: ${nv.message}`);
         return;
       }
     }
 
-    // Email 格式防呆
     if (formData.email && !validateEmail(formData.email)) {
       showToast('❌ 電子信箱格式不正確，請確認');
       return;
@@ -496,19 +370,50 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
         name: formData.name.trim(),
         shortName: formData.shortName?.trim(),
         entityType: formData.entityType || 'CORPORATION',
-        parentId: formData.entityType === 'GROUP' ? undefined : (formData.parentId || undefined),
+        parentId: formData.entityType === 'GROUP' ? undefined : formData.parentId || undefined,
         taxId: formData.entityType === 'CORPORATION' ? formData.taxId?.trim() : undefined,
-        nationalId: formData.entityType === 'PERSONAL' ? formData.nationalId?.trim().toUpperCase() : undefined,
+        nationalId:
+          formData.entityType === 'PERSONAL' ? formData.nationalId?.trim().toUpperCase() : undefined,
         representative: formData.entityType !== 'PERSONAL' ? formData.representative?.trim() : undefined,
         keyPersonnel: formData.entityType !== 'PERSONAL' ? keyPersonnel : [],
-        documentPrefix: formData.documentPrefix ? formData.documentPrefix.trim().toUpperCase() : undefined,
+        documentPrefix: formData.documentPrefix
+          ? formData.documentPrefix.trim().toUpperCase()
+          : undefined,
         phones,
         email: formData.email?.trim(),
-        registeredAddress: formData.entityType === 'CORPORATION' ? formData.registeredAddress?.trim() : undefined,
-        contactAddress: formData.entityType === 'CORPORATION' ? formData.contactAddress?.trim() : undefined,
-        capitalAmount: formData.entityType !== 'PERSONAL' ? (Number(formData.capitalAmount) || 0) : 0,
+        registeredAddress:
+          formData.entityType === 'CORPORATION' ? formData.registeredAddress?.trim() : undefined,
+        registeredPostalCode:
+          formData.entityType === 'CORPORATION' ? formData.registeredPostalCode?.trim() : undefined,
+        registeredCity:
+          formData.entityType === 'CORPORATION' ? formData.registeredCity?.trim() : undefined,
+        registeredDistrict:
+          formData.entityType === 'CORPORATION' ? formData.registeredDistrict?.trim() : undefined,
+        registeredStreetAddress:
+          formData.entityType === 'CORPORATION'
+            ? formData.registeredStreetAddress?.trim()
+            : undefined,
+        registeredAddressHistory:
+          formData.entityType === 'CORPORATION'
+            ? formData.registeredAddressHistory || []
+            : undefined,
+        contactAddress:
+          formData.entityType === 'CORPORATION' ? formData.contactAddress?.trim() : undefined,
+        contactPostalCode:
+          formData.entityType === 'CORPORATION' ? formData.contactPostalCode?.trim() : undefined,
+        contactCity:
+          formData.entityType === 'CORPORATION' ? formData.contactCity?.trim() : undefined,
+        contactDistrict:
+          formData.entityType === 'CORPORATION' ? formData.contactDistrict?.trim() : undefined,
+        contactStreetAddress:
+          formData.entityType === 'CORPORATION' ? formData.contactStreetAddress?.trim() : undefined,
+        contactAddressHistory:
+          formData.entityType === 'CORPORATION'
+            ? formData.contactAddressHistory || []
+            : undefined,
+        capitalAmount: formData.entityType !== 'PERSONAL' ? Number(formData.capitalAmount) || 0 : 0,
         baseCurrency: formData.baseCurrency || 'TWD',
-        paymentScheduleDays: formData.paymentScheduleDays?.trim() || undefined,
+        paymentScheduleDays: formData.paymentScheduleDays?.trim() || undefined
       };
 
       saveCompany(payload, currentUser?.fullName || '系統管理員', currentUser?.id);
@@ -520,7 +425,6 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     }
   };
 
-  // 開啟安全刪除確認 Modal
   const handleOpenDeleteModal = () => {
     if (!canWriteCompany) {
       showToast('⛔ 【權限攔截】您目前的業務群組未開啟「公司法人組織」之【寫入編輯 (Write)】權限，無法刪除實體！');
@@ -534,7 +438,6 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
     setIsDeleteModalOpen(true);
   };
 
-  // 確定執行刪除
   const handleConfirmDelete = () => {
     if (!formData.id) return;
     try {
@@ -545,1213 +448,181 @@ export const CompanySettingsWorkspace: React.FC<CompanySettingsWorkspaceProps> =
       const remaining = companies.filter(c => c.id !== formData.id);
       setActiveCompanyId(remaining[0]?.id || 'COMP-01');
       onSelectCompany(remaining[0]?.id || 'COMP-01');
-      showToast('🗑️ 已安全移除該實體');
+      showToast('🗑️ 已安全移除該實體（已轉入軟刪除救援中心，可隨時還原）');
     } catch (e) {
       setDeleteErrorNote((e as Error).message);
     }
   };
 
-  // 篩選實體清單
-  const filteredCompanies = useMemo(() => {
-    return companies.filter(c => {
-      if (typeFilter !== 'ALL' && c.entityType !== typeFilter) return false;
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        const matchName = c.name.toLowerCase().includes(term);
-        const matchCode = c.companyCode.toLowerCase().includes(term);
-        const matchTax = c.taxId?.toLowerCase().includes(term);
-        const matchNat = c.nationalId?.toLowerCase().includes(term);
-        if (!matchName && !matchCode && !matchTax && !matchNat) return false;
-      }
-      return true;
+  const handleOpenAddBank = () => {
+    setBankInitialData({
+      companyId: activeCompanyId,
+      bankCode: '004',
+      bankName: '臺灣銀行',
+      branchName: '營業部',
+      accountNumber: '',
+      accountName: targetCompany?.name || '',
+      isVirtualAccount: targetCompany?.entityType === 'PERSONAL',
+      status: 'ACTIVE',
+      checkPrefix: 'CQ',
+      nextCheckNumber: 1001,
+      checkDigits: 6,
+      currency: 'TWD',
+      supportsCheck: true,
+      supportsTransfer: true,
+      paymentScheduleDays: ''
     });
-  }, [companies, typeFilter, searchTerm]);
+    setIsBankModalOpen(true);
+  };
 
-  // 取得當前實體之上層母體
-  const parentGroup = companies.find(c => c.id === formData.parentId);
+  const handleOpenEditBank = (b: CompanyBankAccount) => {
+    setBankInitialData({
+      ...b,
+      supportsCheck: b.supportsCheck !== false,
+      supportsTransfer: b.supportsTransfer !== false,
+      paymentScheduleDays: b.paymentScheduleDays || ''
+    });
+    setIsBankModalOpen(true);
+  };
+
+  const handleConfirmDeleteBank = () => {
+    if (!bankToDelete) return;
+    try {
+      deleteCompanyBankAccount(bankToDelete.id, currentUser?.fullName || '系統管理員');
+      showToast(`✅ 銀行帳戶【${bankToDelete.bankName} ${bankToDelete.accountNumber}】已成功刪除！`);
+      setBankToDelete(null);
+      loadCompanyBankAccounts();
+      onDataChanged();
+    } catch (e: any) {
+      showToast(`❌ 刪除攔截: ${e.message}`);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      {/* ======================================================== */}
-      {/* 1. 集團維度導航列 (Group & Entities Master Navigator)      */}
-      {/* ======================================================== */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3.5">
-        {/* 頂部標題與快速操作按鈕 */}
-        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center font-bold shadow-2xs">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                <span>集團多法人實體管理架構</span>
-                <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200">
-                  全集團共 {companies.length} 個實體
+      <CompanyHierarchyGrid
+        companies={companies}
+        activeCompanyId={activeCompanyId}
+        typeFilter={typeFilter}
+        searchTerm={searchTerm}
+        onTypeFilterChange={setTypeFilter}
+        onSearchTermChange={setSearchTerm}
+        onSelectCompany={handleSelectEntity}
+        onCreateNew={handleCreateNew}
+        isCompanyAllowed={isCompanyAllowed}
+      />
+
+      <CompanyEntityFormPanel
+        companies={companies}
+        formData={formData}
+        setFormData={setFormData}
+        phones={phones}
+        keyPersonnel={keyPersonnel}
+        taxIdFeedback={taxIdFeedback}
+        nationalIdFeedback={nationalIdFeedback}
+        companyBankAccounts={companyBankAccounts}
+        canWriteCompany={canWriteCompany}
+        onTaxIdChange={handleTaxIdChange}
+        onNationalIdChange={handleNationalIdChange}
+        onAddPhone={handleAddPhone}
+        onUpdatePhone={handleUpdatePhone}
+        onRemovePhone={handleRemovePhone}
+        onAddKeyPerson={handleAddKeyPerson}
+        onUpdateKeyPerson={handleUpdateKeyPerson}
+        onRemoveKeyPerson={handleRemoveKeyPerson}
+        onSave={handleSave}
+        onOpenDeleteModal={handleOpenDeleteModal}
+        onOpenAddBank={handleOpenAddBank}
+        onOpenEditBank={handleOpenEditBank}
+        onRequestDeleteBank={(b) => setBankToDelete(b)}
+      />
+
+      {/* 共用出款銀行專戶編輯視窗 */}
+      <CompanyBankAccountModal
+        isOpen={isBankModalOpen}
+        onClose={() => setIsBankModalOpen(false)}
+        companies={companies}
+        initialAccount={bankInitialData}
+        lockCompanySelect
+        operatorName={currentUser?.fullName || '系統管理員'}
+        onSaved={(msg) => {
+          showToast(msg);
+          loadCompanyBankAccounts();
+          onDataChanged();
+        }}
+        onError={(msg) => showToast(msg)}
+      />
+
+      {/* 確認刪除出款銀行專戶 */}
+      <ConfirmDialogModal
+        isOpen={Boolean(bankToDelete)}
+        title="確認刪除出款銀行專戶？"
+        variant="danger"
+        confirmText="確認刪除"
+        cancelText="取消"
+        message={
+          bankToDelete && (
+            <>
+              您即將刪除銀行專戶【
+              <b className="text-slate-900">
+                {bankToDelete.bankName} {bankToDelete.branchName || ''}
+              </b>{' '}
+              帳號：<span className="font-mono font-bold text-indigo-700">{bankToDelete.accountNumber}</span>
+              】。
+            </>
+          )
+        }
+        extraNotice="⚠️ 安全檢核：若該帳戶已存在任何開立之付款單據，系統將自動攔截禁止物理刪除，以維護歷史紀錄。"
+        onConfirm={handleConfirmDeleteBank}
+        onCancel={() => setBankToDelete(null)}
+      />
+
+      {/* 確認安全軟刪除實體 */}
+      <ConfirmDialogModal
+        isOpen={isDeleteModalOpen}
+        title="確認安全移除實體？"
+        variant="danger"
+        confirmText="確認安全刪除"
+        cancelText="取消返回"
+        message={
+          <div className="space-y-2 mt-1">
+            <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-1 text-[11px]">
+              <div className="flex justify-between">
+                <span className="text-slate-500">主體代碼:</span>
+                <span className="font-mono font-bold text-slate-800">{formData.companyCode}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">主體名稱:</span>
+                <span className="font-bold text-slate-900">{formData.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">實體屬性:</span>
+                <span className="font-semibold text-slate-800">
+                  {formData.entityType === 'GROUP'
+                    ? '集團母體'
+                    : formData.entityType === 'PERSONAL'
+                    ? '老闆私帳'
+                    : '公司法人'}
                 </span>
               </div>
-              <div className="text-[11px] text-slate-400 mt-0.5">
-                拉取集團報表時自動合併下屬各公司與個人帳戶損益；亦可獨立拉取單一公司分析
-              </div>
             </div>
-          </div>
-
-          {/* 快捷新增按鈕組 */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => handleCreateNew('CORPORATION')}
-              className="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 transition-colors shadow-2xs"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>新增公司法人</span>
-            </button>
-            <button
-              onClick={() => handleCreateNew('PERSONAL')}
-              title="新增以老闆個人為名的內部調度帳戶 (驗證身分證，免填公司工商登記)"
-              className="px-3 py-1.5 rounded-md text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-1.5 transition-colors shadow-2xs"
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>新增個人帳戶 (老闆私帳)</span>
-            </button>
-            <button
-              onClick={() => handleCreateNew('GROUP')}
-              title="新增事業集團母體 (控股與合併報表維度)"
-              className="px-2.5 py-1.5 rounded-md text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1.5 transition-colors border border-slate-300"
-            >
-              <Layers className="w-3.5 h-3.5 text-purple-600" />
-              <span>新增集團母體</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 搜尋過濾工具列 */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
-          {/* 分類標籤切換 */}
-          <div className="flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-lg border border-slate-200 text-xs w-full sm:w-auto">
-            <button
-              onClick={() => setTypeFilter('ALL')}
-              className={`px-2.5 py-1 rounded font-semibold transition-all ${
-                typeFilter === 'ALL'
-                  ? 'bg-white text-indigo-700 shadow-2xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              全部實體 ({companies.length})
-            </button>
-            <button
-              onClick={() => setTypeFilter('GROUP')}
-              className={`px-2.5 py-1 rounded font-semibold transition-all ${
-                typeFilter === 'GROUP'
-                  ? 'bg-white text-purple-700 shadow-2xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              集團母體 ({companies.filter(c => c.entityType === 'GROUP').length})
-            </button>
-            <button
-              onClick={() => setTypeFilter('CORPORATION')}
-              className={`px-2.5 py-1 rounded font-semibold transition-all ${
-                typeFilter === 'CORPORATION'
-                  ? 'bg-white text-emerald-700 shadow-2xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              公司法人 ({companies.filter(c => c.entityType === 'CORPORATION').length})
-            </button>
-            <button
-              onClick={() => setTypeFilter('PERSONAL')}
-              className={`px-2.5 py-1 rounded font-semibold transition-all ${
-                typeFilter === 'PERSONAL'
-                  ? 'bg-white text-amber-700 shadow-2xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              老闆私帳 ({companies.filter(c => c.entityType === 'PERSONAL').length})
-            </button>
-          </div>
-
-          {/* 搜尋框 */}
-          <div className="relative w-full sm:w-64">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="搜尋代碼、名稱、統編、身分證..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-md pl-8 pr-3 py-1 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          </div>
-        </div>
-
-        {/* 實體切換卡片清單 (母子樹狀架構) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-          {filteredCompanies.map((c) => {
-            const isSelected = c.id === activeCompanyId;
-            const isGroup = c.entityType === 'GROUP';
-            const isPersonal = c.entityType === 'PERSONAL';
-            const cParent = companies.find(p => p.id === c.parentId);
-            const allowedForUser = isCompanyAllowed(c.id);
-
-            return (
-              <button
-                key={c.id}
-                onClick={() => {
-                  if (!allowedForUser) {
-                    showToast(`⛔ 【法人權限攔截】您的帳號（${currentUser?.fullName}）未獲授權存取「${c.shortName || c.name}」！`);
-                    return;
-                  }
-                  setActiveCompanyId(c.id);
-                  onSelectCompany(c.id);
-                }}
-                className={`p-3.5 rounded-lg border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
-                  !allowedForUser
-                    ? 'bg-slate-100/70 border-slate-200 opacity-65 hover:border-rose-300'
-                    : isSelected
-                    ? isPersonal
-                      ? 'bg-amber-50/80 border-amber-400 shadow-xs ring-2 ring-amber-400/40'
-                      : isGroup
-                      ? 'bg-purple-50/80 border-purple-400 shadow-xs ring-2 ring-purple-400/40'
-                      : 'bg-indigo-50/80 border-indigo-400 shadow-xs ring-2 ring-indigo-400/40'
-                    : 'bg-slate-50/70 border-slate-200 hover:bg-white hover:border-slate-300'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-1.5 py-0.5 rounded border border-slate-200">
-                      {c.companyCode}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      {!allowedForUser && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">
-                          🔒 未授權
-                        </span>
-                      )}
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          isGroup
-                            ? 'bg-purple-100 text-purple-800 border border-purple-200'
-                            : isPersonal
-                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                        }`}
-                      >
-                        {isGroup ? '集團母體' : isPersonal ? '老闆私帳' : '公司法人'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="font-bold text-xs text-slate-900 truncate mt-2">
-                    {c.name}
-                  </div>
-
-                  {cParent && (
-                    <div className="text-[10px] text-slate-500 mt-1 flex items-center gap-1 font-mono">
-                      <GitBranch className="w-3 h-3 text-indigo-500 shrink-0" />
-                      <span className="truncate">隸屬: {cParent.shortName || cParent.name}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-[11px] text-slate-500 mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between">
-                  <span className="truncate">
-                    {isPersonal
-                      ? c.nationalId ? `身分證: ${c.nationalId.slice(0, 4)}***` : '身分證: 未填'
-                      : c.taxId ? `統編: ${c.taxId}` : '集團控股'}
-                  </span>
-                  {c.documentPrefix && (
-                    <span className="font-mono text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 shrink-0">
-                      {c.documentPrefix}-
-                    </span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ======================================================== */}
-      {/* 2. 當前選定實體編輯表單 (Master Entity Detail Editor)     */}
-      {/* ======================================================== */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        {/* 表單頂部工具列 */}
-        <div className="p-4 bg-slate-50/90 border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-100/70 px-2.5 py-1 rounded border border-indigo-200">
-              {formData.companyCode || 'COMP'}
-            </span>
-            <div>
-              <h2 className="text-sm font-bold text-slate-900 flex flex-wrap items-center gap-2">
-                <span>{formData.name || '未命名實體'}</span>
-                <span className="text-[11px] font-normal text-slate-400 font-mono">
-                  [版本: v{formData.version || 1}]
-                </span>
-                {formData.shortName && (
-                  <span className="text-xs font-semibold text-slate-600 bg-slate-200/60 px-2 py-0.5 rounded">
-                    簡稱: {formData.shortName}
-                  </span>
-                )}
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                    canWriteCompany
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                      : 'bg-amber-50 text-amber-800 border-amber-300'
-                  }`}
-                >
-                  {canWriteCompany ? '✅ 目前身分具備編輯權限 (Write)' : '🔒 唯讀檢視模式 (無寫入權限)'}
-                </span>
-              </h2>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                {formData.entityType === 'PERSONAL'
-                  ? '個人實體調度帳戶，已自動收折免填公司工商登記等欄位，並驗證台灣身分證'
-                  : formData.entityType === 'GROUP'
-                  ? '集團最高控股彙總層，支援跨子公司合併報表與資金調撥'
-                  : '正式對外營業公司法人，具備 8 碼統編防呆、重要人物組織與單據前綴'}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleOpenDeleteModal}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors flex items-center gap-1 cursor-pointer ${
-                canWriteCompany
-                  ? 'text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-slate-200'
-                  : 'text-slate-400 bg-slate-100 border-slate-200'
-              }`}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>刪除實體</span>
-            </button>
-            <button
-              onClick={handleSave}
-              className={`px-4 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer ${
-                canWriteCompany
-                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                  : 'bg-slate-300 text-slate-600 hover:bg-slate-400'
-              }`}
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{canWriteCompany ? '儲存基本資料' : '🔒 儲存基本資料 (唯讀攔截)'}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-6 text-xs">
-          {/* 區塊 A：主體屬性與母子集團階層 */}
-          <div className="space-y-3">
-            <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5 pb-2 border-b border-slate-100">
-              <Layers className="w-4 h-4 text-indigo-600" />
-              <span>主體屬性與母子集團階層架構</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  主體類型 (entityType) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={formData.entityType}
-                  onChange={(e) => setFormData(prev => ({ ...prev, entityType: e.target.value as any }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 font-bold text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
-                >
-                  <option value="CORPORATION">公司法人 (需驗證 8 碼統編、重要人物架構、登記地址)</option>
-                  <option value="PERSONAL">個人實體 / 老闆私帳 (驗證身分證，內部資金調度專用)</option>
-                  <option value="GROUP">集團母體 (Conglomerate Group 控股與彙總層)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  所屬集團母體 (parentId)
-                </label>
-                <select
-                  disabled={formData.entityType === 'GROUP'}
-                  value={formData.parentId || ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, parentId: e.target.value }))}
-                  className={`w-full border rounded-md px-2.5 py-1.5 text-slate-800 outline-none ${
-                    formData.entityType === 'GROUP'
-                      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                      : 'bg-slate-50 border-slate-300'
-                  }`}
-                >
-                  <option value="">-- 無 (此實體為頂層集團本體) --</option>
-                  {companies.filter(c => c.entityType === 'GROUP' && c.id !== formData.id).map(g => (
-                    <option key={g.id} value={g.id}>
-                      [{g.companyCode}] {g.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-slate-400 mt-0.5">
-                  掛在集團下方後，未來拉取集團報表會自動合併本實體數據。
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  主體識別代碼 (companyCode) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.companyCode || ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, companyCode: e.target.value.toUpperCase() }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 font-mono text-slate-800 outline-none uppercase font-bold"
-                  placeholder="如: CMP-TW01, BOSS-01"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 區塊 B：名稱、表單前綴與幣別 */}
-          <div className="space-y-3">
-            <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5 pb-2 border-b border-slate-100">
-              <FileText className="w-4 h-4 text-indigo-600" />
-              <span>名稱與 ERP 單據印製前綴</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-slate-600 font-semibold mb-1">
-                  主體完整名稱 (name) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.name || ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 font-bold text-slate-800 outline-none"
-                  placeholder="如: 台灣大巨營造工程股份有限公司 或 林董私人調度資金戶"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  顯示簡稱 (shortName)
-                </label>
-                <input
-                  type="text"
-                  value={formData.shortName || ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, shortName: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 outline-none"
-                  placeholder="如: 大巨營造、林董"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  單據前綴編號 (documentPrefix)
-                </label>
-                <input
-                  type="text"
-                  value={formData.documentPrefix || ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, documentPrefix: e.target.value.toUpperCase() }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 font-mono font-bold text-indigo-700 outline-none uppercase"
-                  placeholder="如: DJ, HD, BOSS"
-                />
-                <p className="text-[10px] text-slate-400 mt-0.5">
-                  該公司後續開立採購單 ({formData.documentPrefix || 'PO'}-PO-...)、估驗單跳號之開頭
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  本位幣別 (baseCurrency)
-                </label>
-                <select
-                  value={formData.baseCurrency || 'TWD'}
-                  onChange={(e) => setFormData(prev => ({ ...prev, baseCurrency: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 outline-none"
-                >
-                  <option value="TWD">TWD 新台幣</option>
-                  <option value="USD">USD 美元</option>
-                  <option value="EUR">EUR 歐元</option>
-                  <option value="JPY">JPY 日圓</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  電子信箱 (email)
-                </label>
-                <input
-                  type="email"
-                  value={formData.email || ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 outline-none"
-                  placeholder="service@company.com.tw"
-                />
-              </div>
-
-              <div className="md:col-span-3 bg-indigo-50/50 border border-indigo-200/80 rounded-lg p-3 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="block text-indigo-950 font-bold text-xs">
-                    本公司每月固定開票／付款排程日 (paymentScheduleDays)
-                  </label>
-                  <div className="flex flex-wrap items-center gap-1">
-                    {['7,17,27', '5,15,25', '10,20,30', '10,25', ''].map(preset => (
-                      <button
-                        key={preset || 'GLOBAL'}
-                        type="button"
-                        onClick={() => setFormData(prev => ({ ...prev, paymentScheduleDays: preset }))}
-                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
-                          (formData.paymentScheduleDays || '') === preset
-                            ? 'bg-indigo-600 text-white border-indigo-600'
-                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        {preset || '跟隨系統全域'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <input
-                    type="text"
-                    value={formData.paymentScheduleDays || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, paymentScheduleDays: e.target.value }))}
-                    className="w-full sm:w-56 bg-white border border-indigo-300 rounded-md px-2.5 py-1.5 font-mono font-bold text-indigo-900 outline-none focus:ring-1 focus:ring-indigo-500"
-                    placeholder="留空則跟隨系統全域（如 7,17,27）"
-                  />
-                  <span className="text-[11px] text-slate-600">
-                    請以半形逗號分隔每月開票或匯款日 (1~31)。套用優先序：<strong>銀行專戶專屬設定</strong> &gt; <strong>本公司設定</strong> &gt; <strong>系統全域預設</strong>。
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 區塊 C：若為個人實體，顯示身分證驗證，其餘法定欄位自動收折 */}
-          {formData.entityType === 'PERSONAL' ? (
-            <div className="space-y-4 pt-2 border-t border-slate-100">
-              <div className="font-bold text-amber-900 text-xs flex items-center justify-between pb-2 border-b border-amber-200">
-                <div className="flex items-center gap-1.5">
-                  <UserCheck className="w-4 h-4 text-amber-600" />
-                  <span>個人實體身分驗證 (台灣身分證加權防呆)</span>
-                </div>
-                {formData.nationalId && (
-                  <span
-                    className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                      nationalIdFeedback.valid
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
-                        : 'bg-rose-50 text-rose-700 border border-rose-300'
-                    }`}
-                  >
-                    {nationalIdFeedback.valid ? (
-                      <>
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                        <span>{nationalIdFeedback.reason}</span>
-                      </>
-                    ) : (
-                      <>
-                        <AlertCircle className="w-3 h-3 text-rose-600" />
-                        <span>{nationalIdFeedback.reason}</span>
-                      </>
-                    )}
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-slate-600 font-semibold mb-1">
-                    台灣身分證字號 (首字英文字母 + 9 碼數字) <span className="text-amber-600 font-normal">(選填/防呆)</span>
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={10}
-                    value={formData.nationalId || ''}
-                    onChange={(e) => handleNationalIdChange(e.target.value)}
-                    className={`w-full bg-slate-50 border rounded-md px-2.5 py-1.5 font-mono font-bold text-slate-800 outline-none uppercase ${
-                      formData.nationalId && !nationalIdFeedback.valid
-                        ? 'border-rose-400 focus:ring-1 focus:ring-rose-500'
-                        : 'border-slate-300 focus:ring-1 focus:ring-amber-500'
-                    }`}
-                    placeholder="如: A123456789"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    系統自動以縣市代碼加權模數 10 進行即時驗證與性別檢查。
-                  </p>
-                </div>
-              </div>
-
-              {/* 智慧收折提示區 */}
-              <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-lg flex items-start gap-2.5 text-amber-800">
-                <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div className="text-[11px] leading-relaxed">
-                  <span className="font-bold">公司法定欄位已自動收折免填</span>：
-                  統一編號、工商登記地址、工務總部地址、登記資本額及組織代表人物已隱藏。本實體僅作為內部股東借貸、墊款調度及專案損益分流核算。
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* 區塊 D：公司法人 / 集團 法定資質與重要人物組織架構 */
-            <div className="space-y-6 pt-2 border-t border-slate-100">
-              <div className="space-y-3">
-                <div className="font-bold text-slate-800 text-xs flex items-center justify-between pb-2 border-b border-slate-100">
-                  <div className="flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                    <span>公司法定資質 (具備台灣 8 碼統編加權防呆)</span>
-                  </div>
-                  {formData.taxId && formData.entityType === 'CORPORATION' && (
-                    <span
-                      className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                        taxIdFeedback.valid
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
-                          : 'bg-rose-50 text-rose-700 border border-rose-300'
-                      }`}
-                    >
-                      {taxIdFeedback.valid ? (
-                        <>
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          <span>{taxIdFeedback.reason}</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertCircle className="w-3 h-3 text-rose-600" />
-                          <span>{taxIdFeedback.reason}</span>
-                        </>
-                      )}
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {formData.entityType === 'CORPORATION' && (
-                    <div>
-                      <label className="block text-slate-600 font-semibold mb-1">
-                        法人統一編號 (8 碼) <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={8}
-                        value={formData.taxId || ''}
-                        onChange={(e) => handleTaxIdChange(e.target.value)}
-                        className={`w-full bg-slate-50 border rounded-md px-2.5 py-1.5 font-mono font-bold text-slate-800 outline-none ${
-                          formData.taxId && !taxIdFeedback.valid
-                            ? 'border-rose-400 focus:ring-1 focus:ring-rose-500'
-                            : 'border-slate-300 focus:ring-1 focus:ring-indigo-500'
-                        }`}
-                        placeholder="如: 88991234"
-                      />
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-slate-600 font-semibold mb-1">
-                      公司負責人 / 法定代表 (representative)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.representative || ''}
-                      onChange={(e) => setFormData(prev => ({ ...prev, representative: e.target.value }))}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 outline-none"
-                      placeholder="如: 林大巨 董事長"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-600 font-semibold mb-1">
-                      登記資本額 (NTD)
-                    </label>
-                    <input
-                      type="number"
-                      value={formData.capitalAmount || 0}
-                      onChange={(e) => setFormData(prev => ({ ...prev, capitalAmount: Number(e.target.value) }))}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 font-mono text-slate-800 outline-none"
-                      placeholder="150000000"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block text-slate-600 font-semibold mb-1">
-                      官方登記地址 (registeredAddress)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.registeredAddress || ''}
-                      onChange={(e) => setFormData(prev => ({ ...prev, registeredAddress: e.target.value }))}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 outline-none"
-                      placeholder="工商登記地址，如: 台北市信義區經貿二路100號"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-600 font-semibold mb-1">
-                      通訊 / 工務聯絡地址 (contactAddress)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.contactAddress || ''}
-                      onChange={(e) => setFormData(prev => ({ ...prev, contactAddress: e.target.value }))}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5 text-slate-800 outline-none"
-                      placeholder="實際營運工務辦公室地址"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* 區塊 E：公司組織架構重要人物清單 (keyPersonnel) */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                    <Crown className="w-3.5 h-3.5 text-amber-600" />
-                    <span>組織架構與重要人物清單 (keyPersonnel)</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAddKeyPerson}
-                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>新增重要人物</span>
-                  </button>
-                </div>
-
-                {keyPersonnel.length === 0 ? (
-                  <div className="p-3 bg-slate-50 rounded-lg text-center text-slate-400 text-xs">
-                    尚未維護重要決策人物，點選上方「新增重要人物」加入（例如：董事長、總經理、財務長、工務特助）
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-                    {keyPersonnel.map((person) => (
-                      <div
-                        key={person.id}
-                        className="p-2.5 bg-slate-50 rounded-md border border-slate-200 flex flex-col gap-2"
-                      >
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={person.title}
-                            onChange={(e) => handleUpdateKeyPerson(person.id, 'title', e.target.value)}
-                            placeholder="職稱 (如: 總經理)"
-                            className="w-24 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-800 outline-none"
-                          />
-                          <input
-                            type="text"
-                            value={person.name}
-                            onChange={(e) => handleUpdateKeyPerson(person.id, 'name', e.target.value)}
-                            placeholder="姓名"
-                            className="flex-1 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-900 outline-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveKeyPerson(person.id)}
-                            className="text-slate-400 hover:text-rose-600 p-1"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <input
-                          type="text"
-                          value={person.phone || ''}
-                          onChange={(e) => handleUpdateKeyPerson(person.id, 'phone', e.target.value)}
-                          placeholder="聯絡電話 / 行動"
-                          className="w-full bg-white border border-slate-300 rounded px-2 py-1 font-mono text-xs text-slate-700 outline-none"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 區塊 F：動態電話與傳真列表 (phones) */}
-          <div className="space-y-3 pt-2 border-t border-slate-100">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                <Phone className="w-3.5 h-3.5 text-indigo-600" />
-                <span>聯絡電話與傳真列表 (可新增多組區別)</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleAddPhone('市話')}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-              >
-                <Plus className="w-3 h-3" />
-                <span>新增電話項目</span>
-              </button>
-            </div>
-
-            {phones.length === 0 ? (
-              <div className="p-3 bg-slate-50 rounded-lg text-center text-slate-400 text-xs">
-                尚未設定電話，點選上方「新增電話項目」開始維護
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-                {phones.map((phone) => (
-                  <div
-                    key={phone.id}
-                    className="p-2 bg-slate-50 rounded-md border border-slate-200 flex items-center gap-2"
-                  >
-                    <select
-                      value={phone.type}
-                      onChange={(e) => handleUpdatePhone(phone.id, 'type', e.target.value as any)}
-                      className="bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px] font-bold text-slate-700 outline-none shrink-0"
-                    >
-                      <option value="市話">市話總機</option>
-                      <option value="傳真">傳真專線</option>
-                      <option value="工務專線">工務專線</option>
-                      <option value="行動電話">主管行動</option>
-                      <option value="緊急聯絡">緊急值勤</option>
-                    </select>
-
-                    <input
-                      type="text"
-                      value={phone.number}
-                      onChange={(e) => handleUpdatePhone(phone.id, 'number', e.target.value)}
-                      placeholder="號碼 (含區碼)"
-                      className="flex-1 bg-white border border-slate-300 rounded px-2 py-1 font-mono text-xs text-slate-800 outline-none"
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => handleRemovePhone(phone.id)}
-                      className="text-slate-400 hover:text-rose-600 p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* 區塊 G：本公司出款銀行專戶與支票簿 (Bank Accounts & Continuous Checkbook) */}
-          <div className="space-y-3 pt-3 border-t border-slate-100">
-            <div className="flex items-center justify-between">
-              <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-emerald-600" />
-                <span>出款銀行專戶與支票簿設定 (Bank Accounts & Checkbooks)</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-bold border border-emerald-200">
-                  {companyBankAccounts.length} 個帳戶
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={handleOpenAddBank}
-                disabled={!canWriteCompany}
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>＋ 為本公司新增出款銀行專戶</span>
-              </button>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              維護本公司專屬之出款帳戶（如台銀、富邦、中信或私帳）。開立對帳單時將直接關聯此處設定之銀行帳戶與連貫支票簿。
+            <p>
+              若該實體名下尚有「進行中的專案工程」或「所屬子公司」，系統防弊內控將主動阻擋刪除；移除後將轉入「軟刪除救援中心」安全暫存。
             </p>
-
-            {companyBankAccounts.length === 0 ? (
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-slate-400 text-xs">
-                尚未建立本公司出款專戶，點選右上角「＋ 為本公司新增出款銀行專戶」開始建立
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {companyBankAccounts.map((b) => {
-                  const prefix = b.checkPrefix || 'CQ';
-                  const nextNo = b.nextCheckNumber || 1001;
-                  const digits = b.checkDigits || 6;
-                  const previewCheck = `${prefix}-${String(nextNo).padStart(digits, '0')}`;
-
-                  return (
-                    <div
-                      key={b.id}
-                      className="p-3.5 bg-slate-50/70 border border-slate-200 rounded-xl flex flex-col justify-between hover:bg-white transition-all shadow-2xs"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                            <span>{b.bankName}</span>
-                            {b.branchName && <span className="text-slate-500 font-normal">({b.branchName})</span>}
-                          </span>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                            b.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-                          }`}>
-                            {b.status === 'ACTIVE' ? '正常啟用' : '暫停使用'}
-                          </span>
-                        </div>
-                        <div className="font-mono text-slate-700 font-bold text-xs mt-1">
-                          帳號: {b.accountNumber}
-                        </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          戶名: {b.accountName}
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
-                          <span className="text-slate-500">支票下張票號:</span>
-                          <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                            {previewCheck}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                          {b.supportsCheck !== false && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              支票
-                            </span>
-                          )}
-                          {b.supportsTransfer !== false && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-sky-50 text-sky-700 border border-sky-200">
-                              電匯
-                            </span>
-                          )}
-                          {b.paymentScheduleDays && (
-                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              排程 {b.paymentScheduleDays} 日
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-end gap-2 mt-3 pt-2 border-t border-slate-200/60">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditBank(b)}
-                          disabled={!canWriteCompany}
-                          className="px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors cursor-pointer"
-                        >
-                          修改設定
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBankToDelete(b);
-                            setIsDeleteBankModalOpen(true);
-                          }}
-                          disabled={!canWriteCompany}
-                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
-                          title="刪除帳戶"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
-        </div>
-      </div>
-
-      {/* 🏦 新增/修改公司銀行帳戶 Modal */}
-      {isBankModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-emerald-100 rounded-xl text-emerald-800">
-                  <CreditCard className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">
-                    {bankFormData.id ? '編輯出款銀行專戶' : '新增本公司出款銀行專戶'}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    所屬公司: {targetCompany?.name} ({targetCompany?.companyCode})
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsBankModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+        }
+        extraNotice={
+          deleteErrorNote ? (
+            <div className="flex items-start gap-2 text-rose-800 font-semibold">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+              <span>{deleteErrorNote}</span>
             </div>
+          ) : undefined
+        }
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setIsDeleteModalOpen(false)}
+      />
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    銀行代碼 (3碼)
-                  </label>
-                  <input
-                    type="text"
-                    value={bankFormData.bankCode || ''}
-                    onChange={(e) => setBankFormData(prev => ({ ...prev, bankCode: e.target.value }))}
-                    placeholder="例: 004, 012"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    銀行機構名稱 <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={bankFormData.bankName || ''}
-                    onChange={(e) => setBankFormData(prev => ({ ...prev, bankName: e.target.value }))}
-                    placeholder="例: 臺灣銀行 / 台北富邦銀行"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    分行名稱 (Branch)
-                  </label>
-                  <input
-                    type="text"
-                    value={bankFormData.branchName || ''}
-                    onChange={(e) => setBankFormData(prev => ({ ...prev, branchName: e.target.value }))}
-                    placeholder="例: 營業部 / 敦南分行"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    銀行帳號 <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={bankFormData.accountNumber || ''}
-                    onChange={(e) => setBankFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
-                    placeholder="例: 004-001-12345678"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  帳戶開戶名稱 / 戶名
-                </label>
-                <input
-                  type="text"
-                  value={bankFormData.accountName || ''}
-                  onChange={(e) => setBankFormData(prev => ({ ...prev, accountName: e.target.value }))}
-                  placeholder="例: 寶佳營造股份有限公司"
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-800 outline-none"
-                />
-              </div>
-
-              {/* 支票簿設定 */}
-              <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-200 space-y-3">
-                <div className="font-bold text-emerald-950 text-xs flex items-center gap-1.5 border-b border-emerald-200/60 pb-2">
-                  <CreditCard className="w-4 h-4 text-emerald-600" />
-                  <span>支票簿起始設定 (連續號碼)</span>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">字軌前綴</label>
-                    <input
-                      type="text"
-                      value={bankFormData.checkPrefix || ''}
-                      onChange={(e) => setBankFormData(prev => ({ ...prev, checkPrefix: e.target.value.toUpperCase() }))}
-                      placeholder="CQ"
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">碼長</label>
-                    <select
-                      value={bankFormData.checkDigits || 6}
-                      onChange={(e) => setBankFormData(prev => ({ ...prev, checkDigits: Number(e.target.value) }))}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
-                    >
-                      <option value={4}>4 位</option>
-                      <option value={5}>5 位</option>
-                      <option value={6}>6 位</option>
-                      <option value={7}>7 位</option>
-                      <option value={8}>8 位</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">起始號</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={bankFormData.nextCheckNumber || 1001}
-                      onChange={(e) => setBankFormData(prev => ({ ...prev, nextCheckNumber: Math.max(1, Number(e.target.value) || 1) }))}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-900 outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* 開放付款方式與專屬排程日 */}
-              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
-                <div className="font-bold text-slate-800 text-[11px]">
-                  開放出款付款方式與帳戶專屬每月付款日
-                </div>
-                <div className="flex flex-wrap gap-4">
-                  <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={bankFormData.supportsCheck !== false}
-                      onChange={(e) => setBankFormData(prev => ({ ...prev, supportsCheck: e.target.checked }))}
-                      className="rounded border-slate-300 text-indigo-600"
-                    />
-                    <span>支援開立支票 (CHECK)</span>
-                  </label>
-                  <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={bankFormData.supportsTransfer !== false}
-                      onChange={(e) => setBankFormData(prev => ({ ...prev, supportsTransfer: e.target.checked }))}
-                      className="rounded border-slate-300 text-indigo-600"
-                    />
-                    <span>支援電匯轉帳 (TT)</span>
-                  </label>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    本帳戶專屬每月固定出款日 (選填，留空依全域預設)
-                  </label>
-                  <input
-                    type="text"
-                    value={bankFormData.paymentScheduleDays || ''}
-                    onChange={(e) => setBankFormData(prev => ({ ...prev, paymentScheduleDays: e.target.value }))}
-                    placeholder="例: 7,17,27 或 10,25"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-slate-800 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">狀態</label>
-                <select
-                  value={bankFormData.status || 'ACTIVE'}
-                  onChange={(e: any) => setBankFormData(prev => ({ ...prev, status: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 font-bold text-slate-800 outline-none"
-                >
-                  <option value="ACTIVE">正常啟用 (Active)</option>
-                  <option value="DISABLED">停用列管 (Disabled)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setIsBankModalOpen(false)}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 font-bold hover:bg-slate-100 transition-colors cursor-pointer text-xs"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveBank}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition-colors cursor-pointer text-xs shadow-2xs inline-flex items-center gap-1.5"
-              >
-                <Save className="w-4 h-4" />
-                <span>{bankFormData.id ? '儲存帳戶修改' : '確認新增專戶'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 刪除銀行帳戶確認 Modal */}
-      {isDeleteBankModalOpen && bankToDelete && (
-        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-5 space-y-4">
-            <div className="flex items-center gap-3 text-rose-600">
-              <AlertTriangle className="w-6 h-6" />
-              <h3 className="text-sm font-bold text-slate-900">確認刪除出款銀行專戶？</h3>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              您即將刪除銀行專戶【<b className="text-slate-900">{bankToDelete.bankName} {bankToDelete.branchName || ''}</b> 帳號：<span className="font-mono font-bold text-indigo-700">{bankToDelete.accountNumber}</span>】。
-              <br /><br />
-              <span className="text-rose-600 font-bold">⚠️ 安全檢核：</span>若該帳戶已存在任何開立之付款單據，系統將自動攔截禁止物理刪除，以維護歷史紀錄。
-            </p>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsDeleteBankModalOpen(false);
-                  setBankToDelete(null);
-                }}
-                className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 text-xs font-bold hover:bg-slate-50"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteBank}
-                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-2xs"
-              >
-                確認刪除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================== */}
-      {/* 3. 內控防呆確認 Modal (嚴格禁止原生 window.confirm)         */}
-      {/* ======================================================== */}
-      {isDeleteModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-2xs z-50 flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden">
-            {/* Modal 頂部警告外觀 */}
-            <div className="p-4 bg-rose-50 border-b border-rose-100 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-rose-900">
-                  確認安全移除實體？
-                </h3>
-                <p className="text-xs text-rose-700">
-                  營造內控防呆程序檢核
-                </p>
-              </div>
-            </div>
-
-            <div className="p-5 space-y-4 text-xs">
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">主體代碼:</span>
-                  <span className="font-mono font-bold text-slate-800">{formData.companyCode}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">主體名稱:</span>
-                  <span className="font-bold text-slate-900">{formData.name}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">實體屬性:</span>
-                  <span className="font-semibold text-slate-800">
-                    {formData.entityType === 'GROUP' ? '集團母體' : formData.entityType === 'PERSONAL' ? '老闆私帳' : '公司法人'}
-                  </span>
-                </div>
-              </div>
-
-              {deleteErrorNote && (
-                <div className="p-3 bg-rose-100/80 border border-rose-300 rounded-lg text-rose-800 font-semibold text-xs leading-relaxed flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
-                  <span>{deleteErrorNote}</span>
-                </div>
-              )}
-
-              <p className="text-slate-600 leading-relaxed">
-                若該實體名下尚有「進行中的專案工程」或「所屬子公司」，系統防弊內控將主動阻擋刪除，以防資料孤島。
-              </p>
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={() => setIsDeleteModalOpen(false)}
-                className="px-4 py-1.5 rounded-md text-xs font-semibold text-slate-700 hover:bg-slate-200/70 border border-slate-300 transition-colors"
-              >
-                取消返回
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                className="px-4 py-1.5 rounded-md text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white transition-colors shadow-2xs"
-              >
-                確認安全刪除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 浮動提示 Toast */}
       {toastNote && (
         <div className="fixed bottom-6 right-6 bg-slate-900 text-white px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl z-50 animate-in fade-in flex items-center gap-2">
           <span>{toastNote}</span>

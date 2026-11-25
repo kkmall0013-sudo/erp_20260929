@@ -56,6 +56,9 @@ const FinanceCashierWorkspace = lazy(() =>
 const SystemHubWorkspace = lazy(() =>
   import('./SystemHubWorkspace').then(m => ({ default: m.SystemHubWorkspace }))
 );
+const UniversalSearchSandbox = lazy(() =>
+  import('./widgets/UniversalSearchSandbox').then(m => ({ default: m.UniversalSearchSandbox }))
+);
 import { useAuth } from '../context/AuthContext';
 import {
   getAllSystemConfigs,
@@ -100,6 +103,7 @@ const NAV_TO_MODULE_KEY: Record<LeftNavId, ModuleKey> = {
   VALUATIONS: 'VALUATIONS',
   FINANCE: 'BANK_CHECKS',
   COMMAND_CENTER: 'FINANCE_AP',
+  TEST_SANDBOX: 'PARTNERS',
   ROADMAP: 'PROJECTS',
   SETTINGS: 'SYSTEM_CONFIGS',
 };
@@ -139,6 +143,7 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
   }, []);
 
   const brandName = appConfigMap.APP_BRAND_NAME || '田頭';
+  const isSandboxPublic = appConfigMap.APP_TEST_SANDBOX_PUBLIC === 'true';
 
   const triggerModuleToast = (msg: string) => {
     setModuleToast(msg);
@@ -168,6 +173,8 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
       ? isSuperadmin || isBoss || isAdmin
       : ['COMPANY', 'SETTINGS'].includes(activeNavId)
       ? isSuperadmin || isBoss || isAdmin || Boolean(currentUser?.canManageSystemConfigs) || hasUserManagementAccess
+      : activeNavId === 'TEST_SANDBOX'
+      ? isSuperadmin || isSandboxPublic
       : ['DASHBOARD', 'VAULT'].includes(activeNavId)
       ? true
       : activeNavId === 'FLOWCHART'
@@ -228,6 +235,8 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
         return '通用無紙化附件金庫與圖說工作桌 (Universal Vault & Workspace)';
       case 'MINI_APPS':
         return '通用小程式專區 (Mini-Apps Hub)';
+      case 'TEST_SANDBOX':
+        return '通用搜尋與權限隔離測試區（受中樞開關控制 · 唯讀不寫入資料庫）';
       default:
         return '營造工程工作台';
     }
@@ -897,6 +906,11 @@ export const RightSubWindow: React.FC<RightSubWindowProps> = ({
             onNotify={triggerModuleToast}
             onNavigateToInbound={() => onNavigateNav('INBOUND')}
           />
+        )}
+
+        {/* M. 通用搜尋與權限隔離測試區（受系統中樞 APP_TEST_SANDBOX_PUBLIC 開關管控，唯讀不寫入 SQLite） */}
+        {activeNavId === 'TEST_SANDBOX' && (
+          <UniversalSearchSandbox onNotify={triggerModuleToast} />
         )}
         </Suspense>
       </div>

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { BusinessPartner } from '../../types/erp';
 import { batchImportBusinessPartners } from '../../db/sqlite';
+import { exportCsvFile } from '../../utils/csvExport';
 
 interface PartnerImportModalProps {
   isOpen: boolean;
@@ -173,20 +174,11 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
       ]
     ];
 
-    const csvContent = '\uFEFF' + [
-      headers.map(h => `"${h}"`).join(','),
-      ...sampleRows.map(row => row.map(col => `"${col.replace(/"/g, '""')}"`).join(','))
-    ].join('\r\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `商業夥伴與通訊錄匯入標準範本_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    exportCsvFile({
+      filename: `商業夥伴與通訊錄匯入標準範本_${new Date().toISOString().slice(0, 10)}.csv`,
+      headers,
+      rows: sampleRows
+    });
   };
 
   // 處理上傳檔案

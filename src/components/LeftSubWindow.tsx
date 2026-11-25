@@ -15,9 +15,11 @@ import {
   UserCog,
   Sparkles,
   ClipboardList,
-  Sliders
+  Sliders,
+  FlaskConical
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { getAppConfigMap, subscribeToDatabase } from '../db/sqlite';
 
 export type LeftNavId =
   | 'DASHBOARD'
@@ -29,6 +31,7 @@ export type LeftNavId =
   | 'FINANCE'
   | 'VAULT'
   | 'COMMAND_CENTER'
+  | 'TEST_SANDBOX'
   | 'SETTINGS'
   // 向後相容或深層次子項目 ID
   | 'FLOWCHART'
@@ -51,6 +54,25 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
   isOpen = true,
 }) => {
   const { currentUser, isSuperadmin, isBoss, isAdmin, can } = useAuth();
+  const [isSandboxPublic, setIsSandboxPublic] = React.useState<boolean>(() => {
+    try {
+      return getAppConfigMap().APP_TEST_SANDBOX_PUBLIC === 'true';
+    } catch (_) {
+      return false;
+    }
+  });
+
+  React.useEffect(() => {
+    const syncSandboxConfig = () => {
+      try {
+        setIsSandboxPublic(getAppConfigMap().APP_TEST_SANDBOX_PUBLIC === 'true');
+      } catch (_) {}
+    };
+    syncSandboxConfig();
+    const unsubscribe = subscribeToDatabase(syncSandboxConfig);
+    return () => unsubscribe();
+  }, []);
+
   const hasUserManagementAccess = (isSuperadmin || isBoss || Boolean(currentUser?.canManageUsers)) && currentUser?.status === 'ACTIVE';
   const hasSystemSettingsAccess = isSuperadmin || isBoss || isAdmin || Boolean(currentUser?.canManageSystemConfigs) || hasUserManagementAccess;
 
@@ -70,6 +92,7 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
     { id: 'FINANCE', label: '財務收支', icon: Receipt },
     { id: 'VAULT', label: '保險箱', icon: FolderLock },
     { id: 'COMMAND_CENTER', label: '戰情指揮', icon: LineChart },
+    { id: 'TEST_SANDBOX', label: '測試區', icon: FlaskConical },
   ];
 
   // 2. 下半部：底層系統管理中樞 (整併基本資料、帳號管理、程式設定、小程式庫、藍圖總綱)
@@ -105,6 +128,8 @@ export const LeftSubWindow: React.FC<LeftSubWindowProps> = ({
         return isSuperadmin || isBoss || isAdmin || can('PROJECTS', 'read') || can('QUOTATIONS', 'read') || can('VALUATIONS', 'read') || can('PARTNERS', 'read');
       case 'COMMAND_CENTER':
         return isSuperadmin || isBoss || isAdmin || (can('FINANCE_AP', 'read') && can('PROJECTS', 'read'));
+      case 'TEST_SANDBOX':
+        return isSuperadmin || isSandboxPublic; // 僅 Superadmin 可見；唯有 Superadmin 開啟測試開關後，其他啟用帳號始可進入測試區實測
       case 'SETTINGS':
         return hasSystemSettingsAccess;
       default:

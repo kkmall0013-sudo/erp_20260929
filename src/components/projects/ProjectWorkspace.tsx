@@ -61,6 +61,7 @@ import { PartnerSearchSelect } from '../widgets/PartnerSearchSelect';
 import { FloatingSubcontractorSelect } from '../widgets/FloatingSubcontractorSelect';
 import { TaiwanIdTaxValidatorWidget } from '../widgets/TaiwanIdTaxValidatorWidget';
 import { validateTaiwanTaxId, validateTaiwanNationalId } from '../../utils/taiwanValidation';
+import { matchesTaiwanRegion } from '../../utils/taiwanPostalCodes';
 import { BuildingCategoryManagerModal } from './BuildingCategoryManagerModal';
 import { ProjectVendorInboundModal } from './ProjectVendorInboundModal';
 import { ProjectEditorModal } from './ProjectEditorModal';
@@ -231,7 +232,16 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
         const matchArchitect = site?.architect?.toLowerCase().includes(term);
         const matchConstructor = site?.constructor?.toLowerCase().includes(term);
         const matchShopDrawing = site?.shopDrawingVendorName?.toLowerCase().includes(term);
-        const matchAddress = site?.address?.toLowerCase().includes(term);
+        const matchAddress =
+          site?.address?.toLowerCase().includes(term) ||
+          matchesTaiwanRegion(site?.address, searchTerm) ||
+          (site?.addressHistory || []).some(
+            h =>
+              (h.fullAddress || '').toLowerCase().includes(term) ||
+              matchesTaiwanRegion(h.fullAddress, searchTerm) ||
+              matchesTaiwanRegion(h.city, searchTerm) ||
+              matchesTaiwanRegion(h.district, searchTerm)
+          );
         const matchPerson = site?.contactPerson?.toLowerCase().includes(term);
         const matchPermit = site?.permitNumber?.toLowerCase().includes(term);
         return (

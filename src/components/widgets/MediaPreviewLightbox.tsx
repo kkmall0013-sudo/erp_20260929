@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Download,
@@ -119,9 +120,9 @@ export const MediaPreviewLightbox: React.FC<MediaPreviewLightboxProps> = ({
     document.body.removeChild(a);
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in"
+      className="fixed inset-0 z-[1000020] flex items-center justify-center bg-slate-950/85 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in"
       onClick={e => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -328,6 +329,7 @@ export const MediaPreviewLightbox: React.FC<MediaPreviewLightboxProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

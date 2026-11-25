@@ -20,6 +20,7 @@ import {
 import {
   Project,
   ProjectSite,
+  AddressHistoryEntry,
   Company,
   BusinessPartner,
   BuildingCategoryGroup,
@@ -33,6 +34,12 @@ import {
   getProjectBudgetPartners
 } from '../../db/sqlite';
 import { validateTaiwanTaxId, validateTaiwanNationalId } from '../../utils/taiwanValidation';
+import {
+  parseTaiwanAddress,
+  normalizeTaiwanCity,
+  normalizeTaiwanDistrict
+} from '../../utils/taiwanPostalCodes';
+import { TaiwanAddressPicker, TaiwanAddressValue } from '../widgets/TaiwanAddressPicker';
 import { TaiwanIdTaxValidatorWidget } from '../widgets/TaiwanIdTaxValidatorWidget';
 import { PartnerSearchSelect } from '../widgets/PartnerSearchSelect';
 import { FloatingSubcontractorSelect } from '../widgets/FloatingSubcontractorSelect';
@@ -59,6 +66,44 @@ export interface ProjectEditorModalProps {
   onOpenCategoryManager?: () => void;
   onClose: () => void;
   onSave: (projectData: Partial<Project>, siteData: Partial<ProjectSite>) => void;
+}
+
+const EMPTY_SITE_ADDRESS: TaiwanAddressValue = {
+  postalCode: '',
+  city: '',
+  district: '',
+  streetAddress: '',
+  fullAddress: ''
+};
+
+function buildInitialSiteAddress(site?: ProjectSite | null): TaiwanAddressValue {
+  if (!site) return { ...EMPTY_SITE_ADDRESS };
+  const hasStruct = Boolean(
+    site.postalCode ||
+      site.city ||
+      site.district ||
+      site.streetAddress !== undefined
+  );
+  if (hasStruct) {
+    return {
+      postalCode: site.postalCode || '',
+      city: normalizeTaiwanCity(site.city || ''),
+      district: normalizeTaiwanDistrict(site.district || ''),
+      streetAddress: site.streetAddress ?? '',
+      fullAddress: site.address || ''
+    };
+  }
+  const raw = (site.address || '').trim();
+  if (!raw) return { ...EMPTY_SITE_ADDRESS };
+  const parsed = parseTaiwanAddress(raw);
+  const city = parsed.city ? normalizeTaiwanCity(parsed.city) : '';
+  return {
+    postalCode: parsed.postalCode || '',
+    city,
+    district: parsed.district ? normalizeTaiwanDistrict(parsed.district) : '',
+    streetAddress: parsed.remaining !== undefined ? parsed.remaining : (city ? '' : raw),
+    fullAddress: raw
+  };
 }
 
 export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
@@ -105,7 +150,10 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
   // 工區現地與法定主體資料
   const [siteName, setSiteName] = useState(initialSite?.siteName || '');
-  const [address, setAddress] = useState(initialSite?.address || '');
+  const [siteAddress, setSiteAddress] = useState<TaiwanAddressValue>(() => buildInitialSiteAddress(initialSite));
+  const [siteAddressHistory, setSiteAddressHistory] = useState<AddressHistoryEntry[]>(
+    initialSite?.addressHistory || []
+  );
   const [contactPerson, setContactPerson] = useState(initialSite?.contactPerson || '');
   const [contactPhone, setContactPhone] = useState(initialSite?.contactPhone || '');
   const [permitNumber, setPermitNumber] = useState(initialSite?.permitNumber || '');
@@ -130,12 +178,35 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
   // 錯誤提示
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // 初始化專案代碼與屬性：從 document_sequence_rules 讀取既定格式動態預覽
+  // 每次開啟或切換編輯對象時同步完整欄位與專案代碼預覽
   useEffect(() => {
+    if (!isOpen) return;
+    setErrorMessage(null);
     if (isEditing && initialProject) {
       setProjectCode(initialProject.projectCode);
+      setName(initialProject.name || '');
+      setCompanyId(initialProject.companyId || '');
+      setOwnerName(initialProject.ownerName || '');
+      setOwnerTaxId(initialProject.ownerTaxId || '');
+      setStatus(initialProject.status || 'ACTIVE');
       setBuildingType(initialProject.buildingType || '鐵皮倉庫');
       setWorkScope(initialProject.workScope || '統包新建工程');
+      setContractAmount(initialProject.contractAmount || 0);
+      setBudgetAmount(initialProject.budgetAmount || 0);
+      setStartDate(initialProject.startDate || new Date().toISOString().slice(0, 10));
+      setEndDate(initialProject.endDate || '');
+      setSiteName(initialSite?.siteName || '');
+      setSiteAddress(buildInitialSiteAddress(initialSite));
+      setSiteAddressHistory(initialSite?.addressHistory || []);
+      setContactPerson(initialSite?.contactPerson || '');
+      setContactPhone(initialSite?.contactPhone || '');
+      setPermitNumber(initialSite?.permitNumber || '');
+      setDeveloperName(initialSite?.developerName || initialProject.ownerName || '');
+      setArchitect(initialSite?.architect || '');
+      setConstructorName(initialSite?.constructor || '');
+      setShopDrawingVendorId(initialSite?.shopDrawingVendorId || '');
+      setShopDrawingVendorName(initialSite?.shopDrawingVendorName || '');
+      setLandNumber(initialSite?.landNumber || '');
       const loaded = initialProject.budgetPartners && initialProject.budgetPartners.length > 0
         ? initialProject.budgetPartners
         : getProjectBudgetPartners(initialProject.id);
@@ -147,9 +218,32 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       } catch (err) {
         setProjectCode('PRJ-2026-自動配發');
       }
+      setName('');
+      setCompanyId('');
+      setOwnerName('');
+      setOwnerTaxId('');
+      setStatus('ACTIVE');
+      setBuildingType('鐵皮倉庫');
+      setWorkScope('統包新建工程');
+      setContractAmount(0);
+      setBudgetAmount(0);
+      setStartDate(new Date().toISOString().slice(0, 10));
+      setEndDate('');
+      setSiteName('');
+      setSiteAddress({ ...EMPTY_SITE_ADDRESS });
+      setSiteAddressHistory([]);
+      setContactPerson('');
+      setContactPhone('');
+      setPermitNumber('');
+      setDeveloperName('');
+      setArchitect('');
+      setConstructorName('');
+      setShopDrawingVendorId('');
+      setShopDrawingVendorName('');
+      setLandNumber('');
       setBudgetPartners([]);
     }
-  }, [isEditing, initialProject]);
+  }, [isOpen, isEditing, initialProject, initialSite]);
 
   // 同步工區名稱與起造人
   const handleNameChange = (val: string) => {
@@ -237,7 +331,12 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       },
       {
         siteName: (siteName.trim() || name.trim()),
-        address: address.trim(),
+        address: (siteAddress.fullAddress || '').trim(),
+        postalCode: (siteAddress.postalCode || '').trim(),
+        city: (siteAddress.city || '').trim(),
+        district: (siteAddress.district || '').trim(),
+        streetAddress: (siteAddress.streetAddress || '').trim(),
+        addressHistory: siteAddressHistory,
         contactPerson: contactPerson.trim(),
         contactPhone: contactPhone.trim(),
         permitNumber: permitNumber.trim(),
@@ -706,20 +805,21 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  施工現址 (工區工地地址)
-                </label>
-                <input
-                  type="text"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="例如：台北市南港區經貿二路 188 號"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
+            <div className="p-3 bg-slate-50/80 border border-slate-200 rounded-xl">
+              <TaiwanAddressPicker
+                compact
+                label="施工現址 (工區工地地址)"
+                value={siteAddress}
+                addressHistory={siteAddressHistory}
+                onArchiveAndUpdate={(archived, newVal) => {
+                  setSiteAddressHistory(prev => [archived, ...prev]);
+                  setSiteAddress(newVal);
+                }}
+                onChange={setSiteAddress}
+              />
+            </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
                   工地主任姓名
@@ -732,19 +832,19 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
-            </div>
 
-            <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                工地現場聯絡電話
-              </label>
-              <input
-                type="text"
-                value={contactPhone}
-                onChange={(e) => setContactPhone(e.target.value)}
-                placeholder="例如：0912-345-678 或 02-2788-9900"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none max-w-sm"
-              />
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  工地現場聯絡電話
+                </label>
+                <input
+                  type="text"
+                  value={contactPhone}
+                  onChange={(e) => setContactPhone(e.target.value)}
+                  placeholder="例如：0912-345-678 或 02-2788-9900"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
             </div>
           </div>
 

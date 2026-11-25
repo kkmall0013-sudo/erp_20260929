@@ -3,6 +3,7 @@
 export interface ValidationResult {
   isValid: boolean;
   message: string;
+  gender?: string;
 }
 
 /**
@@ -55,7 +56,13 @@ export function validateTaiwanNationalId(nationalId?: string): ValidationResult 
   const clean = nationalId.trim().toUpperCase();
 
   if (!/^[A-Z][1289]\d{8}$/.test(clean)) {
-    return { isValid: false, message: '身分證字號格式需為 1 碼英文字母 + 9 碼數字' };
+    if (!/^[A-Z]/.test(clean)) {
+      return { isValid: false, message: '首字必須為大寫英文字母' };
+    }
+    if (clean.length > 1 && !/^[A-Z][1289]/.test(clean)) {
+      return { isValid: false, message: '第 2 碼須為性別碼 (1 男性 / 2 女性 / 8·9 外籍)' };
+    }
+    return { isValid: false, message: `身分證字號格式需為 1 碼英文字母 + 9 碼數字 (${clean.length}/10 碼)` };
   }
 
   const letterMap: Record<string, number> = {
@@ -83,8 +90,17 @@ export function validateTaiwanNationalId(nationalId?: string): ValidationResult 
   const checkDigit = (10 - (sum % 10)) % 10;
 
   if (checkDigit === digits[10]) {
-    return { isValid: true, message: '國民身分證字號檢核正確' };
+    const gender = clean[1] === '1' ? '男性' : clean[1] === '2' ? '女性' : '居留證/外籍';
+    return { isValid: true, message: `國民身分證字號檢核正確 (${gender})`, gender };
   }
 
   return { isValid: false, message: '身分證字號檢核碼不符 (請確認是否鍵錯)' };
+}
+
+/**
+ * Email 基本格式檢核 (選填時允許空值)
+ */
+export function validateEmail(email?: string): boolean {
+  if (!email || !email.trim()) return true;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }

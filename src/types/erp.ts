@@ -15,6 +15,41 @@ export interface KeyPerson {
   phone?: string;
 }
 
+export interface AddressHistoryEntry {
+  id: string;
+  postalCode?: string;
+  city?: string;
+  district?: string;
+  streetAddress?: string;
+  fullAddress: string;
+  archivedAt: string;
+  note?: string;
+}
+
+export interface TaiwanPostalCityRecord {
+  id: string;
+  cityName: string;
+  aliases: string[];
+  isActive: boolean;
+  note?: string;
+  updatedAt?: string;
+}
+
+export interface TaiwanPostalCodeRecord {
+  id: string;
+  cityId?: string;
+  city: string;
+  district: string;
+  postalCode: string;
+  isActive: boolean;
+  aliases: string[];
+  replacedByCity?: string;
+  replacedByDistrict?: string;
+  note?: string;
+  sortOrder: number;
+  updatedAt?: string;
+}
+
 export interface Company {
   id: string;
   companyCode: string;
@@ -31,7 +66,17 @@ export interface Company {
   phones?: PhoneItem[];
   email?: string;
   registeredAddress?: string;
+  registeredPostalCode?: string;
+  registeredCity?: string;
+  registeredDistrict?: string;
+  registeredStreetAddress?: string;
+  registeredAddressHistory?: AddressHistoryEntry[];
   contactAddress?: string;
+  contactPostalCode?: string;
+  contactCity?: string;
+  contactDistrict?: string;
+  contactStreetAddress?: string;
+  contactAddressHistory?: AddressHistoryEntry[];
   capitalAmount?: number;
   baseCurrency: string;
   isDeleted: boolean;
@@ -239,6 +284,11 @@ export interface ProjectSite {
   projectId: string;
   siteName: string;
   address: string;
+  postalCode?: string;
+  city?: string;
+  district?: string;
+  streetAddress?: string;
+  addressHistory?: AddressHistoryEntry[];
   contactPerson: string;
   contactPhone: string;
   permitNumber?: string; // 建造執照字號
@@ -316,6 +366,9 @@ export interface PartnerAddress {
   district?: string; // 鄉鎮市區 (如 中正區, 五股區)
   streetAddress?: string; // 街道巷弄號樓等詳細路段 (拆分輸入)
   fullAddress: string;
+  isHistorical?: boolean; // 是否封存為歷史靜態參考地址
+  archivedAt?: string; // 封存日期時間
+  archiveNote?: string; // 封存備註
   isDeleted: boolean;
 }
 

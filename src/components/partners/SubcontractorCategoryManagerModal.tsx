@@ -8,7 +8,6 @@ import {
   Check,
   RotateCcw,
   AlertCircle,
-  AlertTriangle,
   FolderPlus,
   Save,
   CheckCircle2,
@@ -31,6 +30,7 @@ import {
   renameSubcontractorCategory,
   getAllBusinessPartners
 } from '../../db/sqlite';
+import { ConfirmDialogModal } from '../widgets/ConfirmDialogModal';
 
 interface SubcontractorCategoryManagerModalProps {
   isOpen: boolean;
@@ -784,57 +784,23 @@ export const SubcontractorCategoryManagerModal: React.FC<SubcontractorCategoryMa
         </div>
       </div>
 
-      {/* 🛡️ 內嵌式確認對話框 (100% 杜絕 iframe 攔截 window.confirm，強制阻斷未經確認之刪除) */}
-      {confirmTarget && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl p-5 max-w-md w-full shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 space-y-4">
-            <div className="flex items-start gap-3.5">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs ${
-                confirmTarget.isDanger
-                  ? 'bg-rose-100 text-rose-700'
-                  : 'bg-amber-100 text-amber-700'
-              }`}>
-                {confirmTarget.isDanger ? (
-                  <AlertTriangle className="w-5 h-5 text-rose-600" />
-                ) : (
-                  <AlertCircle className="w-5 h-5 text-amber-600" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <h4 className={`text-sm font-bold ${
-                  confirmTarget.isDanger ? 'text-rose-950' : 'text-slate-900'
-                }`}>
-                  {confirmTarget.title}
-                </h4>
-                <p className="text-xs text-slate-600 mt-1 leading-relaxed whitespace-pre-line">
-                  {confirmTarget.message}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                autoFocus
-                onClick={() => setConfirmTarget(null)}
-                className="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 border border-slate-200 cursor-pointer transition-colors"
-              >
-                取消（保留）
-              </button>
-              <button
-                type="button"
-                onClick={confirmTarget.onConfirm}
-                className={`px-4 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer transition-colors ${
-                  confirmTarget.isDanger
-                    ? 'bg-rose-600 hover:bg-rose-700'
-                    : 'bg-amber-600 hover:bg-amber-700'
-                }`}
-              >
-                {confirmTarget.confirmText || '確定執行'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 🛡️ 調用跨模組共用之安全確認對話框 */}
+      <ConfirmDialogModal
+        isOpen={Boolean(confirmTarget)}
+        title={confirmTarget?.title || ''}
+        message={
+          confirmTarget ? (
+            <span className="whitespace-pre-line">{confirmTarget.message}</span>
+          ) : (
+            ''
+          )
+        }
+        variant={confirmTarget?.isDanger ? 'danger' : 'warning'}
+        confirmText={confirmTarget?.confirmText || '確定執行'}
+        cancelText="取消（保留）"
+        onConfirm={() => confirmTarget?.onConfirm()}
+        onCancel={() => setConfirmTarget(null)}
+      />
     </div>
   );
 };
