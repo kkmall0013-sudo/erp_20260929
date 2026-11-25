@@ -41,7 +41,8 @@ export const SuperadminRecoveryCenterModal: React.FC<SuperadminRecoveryCenterMod
     RECEIPTS: [],
     PROJECTS: [],
     PARTNERS: [],
-    COMPANIES: []
+    COMPANIES: [],
+    SYSTEM_FILES: []
   });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
@@ -58,7 +59,8 @@ export const SuperadminRecoveryCenterModal: React.FC<SuperadminRecoveryCenterMod
         RECEIPTS: [],
         PROJECTS: [],
         PARTNERS: [],
-        COMPANIES: []
+        COMPANIES: [],
+        SYSTEM_FILES: []
       };
       for (const cfg of SOFT_DELETE_REGISTRY) {
         next[cfg.key] = cfg.getDeletedList();

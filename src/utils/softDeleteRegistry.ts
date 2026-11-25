@@ -4,13 +4,15 @@ import {
   Package,
   Building2,
   Users,
-  Landmark
+  Landmark,
+  FileText
 } from 'lucide-react';
 import {
   InboundReceipt,
   Project,
   BusinessPartner,
-  Company
+  Company,
+  SystemFile
 } from '../types/erp';
 import {
   getDeletedInboundReceipts,
@@ -24,7 +26,10 @@ import {
   purgeBusinessPartner,
   getDeletedCompanies,
   restoreCompanyRecord,
-  purgeCompanyRecord
+  purgeCompanyRecord,
+  getDeletedSystemFiles,
+  restoreSystemFile,
+  purgeSystemFile
 } from '../db/sqlite';
 import {
   InternalAsset,
@@ -35,7 +40,7 @@ import {
   getAssetCategory
 } from './internalAssetStore';
 
-export type RecoveryEntityKey = 'ASSETS' | 'RECEIPTS' | 'PROJECTS' | 'PARTNERS' | 'COMPANIES';
+export type RecoveryEntityKey = 'ASSETS' | 'RECEIPTS' | 'PROJECTS' | 'PARTNERS' | 'COMPANIES' | 'SYSTEM_FILES';
 
 export interface RecoveryColumnDef<T> {
   header: string;
@@ -317,6 +322,51 @@ export const SOFT_DELETE_REGISTRY: SoftDeleteEntityConfig<any>[] = [
       {
         header: '最後更新日',
         render: (c: Company) => React.createElement('span', { className: 'font-mono text-[11px] text-slate-500' }, c.updatedAt || '—')
+      }
+    ]
+  },
+  {
+    key: 'SYSTEM_FILES',
+    label: '金庫憑證附件',
+    icon: FileText,
+    sectionTitle: '被軟刪除之無紙化金庫附件清單',
+    sectionHint: 'Admin 與一般同仁已完全不可見，僅 Superadmin 可救回或永久清除',
+    emptyTitle: '無任何被軟刪除的金庫憑證檔案',
+    emptySubtitle: '所有合約、發票與工程圖說附件皆安全保存於金庫中',
+    restoreTooltip: '救回附件並還原至無紙化金庫與關聯單據',
+    getPurgeTitle: (f: SystemFile) => `金庫附件 ${f.fileName}`,
+    getRestoreToast: (f: SystemFile) => `✅ 已成功救援還原附件【${f.fileName}】！`,
+    getDeletedList: () => getDeletedSystemFiles(),
+    restore: (id, op) => restoreSystemFile(id, op),
+    purge: (id, op) => purgeSystemFile(id, op),
+    getSearchFields: (f: SystemFile) => [f.fileName, f.fileCategory, f.targetTable, f.targetId],
+    columns: [
+      {
+        header: '檔案名稱',
+        render: (f: SystemFile) => React.createElement('span', { className: 'font-bold text-slate-900' }, f.fileName)
+      },
+      {
+        header: '憑證分類',
+        render: (f: SystemFile) =>
+          React.createElement(
+            'span',
+            { className: 'px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200' },
+            f.fileCategory
+          )
+      },
+      {
+        header: '關聯單據',
+        render: (f: SystemFile) =>
+          React.createElement('span', { className: 'font-mono text-slate-700' }, `${f.targetTable} (${f.targetId})`)
+      },
+      {
+        header: '檔案大小',
+        alignRight: true,
+        render: (f: SystemFile) => React.createElement('span', { className: 'font-mono text-slate-600' }, `${(f.fileSizeBytes / 1024).toFixed(1)} KB`)
+      },
+      {
+        header: '最後異動日',
+        render: (f: SystemFile) => React.createElement('span', { className: 'font-mono text-[11px] text-slate-500' }, f.updatedAt?.slice(0, 16).replace('T', ' ') || '—')
       }
     ]
   }

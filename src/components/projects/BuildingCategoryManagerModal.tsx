@@ -19,6 +19,7 @@ import {
   saveBuildingCategoryTree,
   DEFAULT_BUILDING_CATEGORY_TREE
 } from '../../db/sqlite';
+import { ConfirmDialogModal } from '../widgets/ConfirmDialogModal';
 
 interface BuildingCategoryManagerModalProps {
   isOpen: boolean;
@@ -53,6 +54,13 @@ export const BuildingCategoryManagerModal: React.FC<BuildingCategoryManagerModal
 
   // 提示訊息
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmText: string;
+    variant: 'danger' | 'warning';
+    onConfirm: () => void;
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -100,6 +108,15 @@ export const BuildingCategoryManagerModal: React.FC<BuildingCategoryManagerModal
   };
 
   // 3. 刪除大項
+  const executeDeleteGroup = (groupId: string, groupName: string) => {
+    const updated = tree.filter(g => g.id !== groupId);
+    setTree(updated);
+    if (selectedGroupId === groupId && updated.length > 0) {
+      setSelectedGroupId(updated[0].id);
+    }
+    triggerMessage(`已刪除大項【${groupName}】`);
+  };
+
   const handleDeleteGroup = (groupId: string) => {
     const target = tree.find(g => g.id === groupId);
     if (!target) return;
@@ -108,16 +125,19 @@ export const BuildingCategoryManagerModal: React.FC<BuildingCategoryManagerModal
       return;
     }
     if (target.items.length > 0) {
-      if (!window.confirm(`大項【${target.name}】底下尚有 ${target.items.length} 個小項，確定要連同小項一併刪除嗎？`)) {
-        return;
-      }
+      setConfirmState({
+        title: `刪除大項分類「${target.name}」`,
+        message: `大項【${target.name}】底下尚有 ${target.items.length} 個小項，確定要連同小項一併移除嗎？`,
+        confirmText: '確認一併刪除',
+        variant: 'danger',
+        onConfirm: () => {
+          executeDeleteGroup(groupId, target.name);
+          setConfirmState(null);
+        }
+      });
+      return;
     }
-    const updated = tree.filter(g => g.id !== groupId);
-    setTree(updated);
-    if (selectedGroupId === groupId) {
-      setSelectedGroupId(updated[0].id);
-    }
-    triggerMessage(`已刪除大項【${target.name}】`);
+    executeDeleteGroup(groupId, target.name);
   };
 
   // 4. 新增小項
@@ -189,27 +209,40 @@ export const BuildingCategoryManagerModal: React.FC<BuildingCategoryManagerModal
     if (!selectedGroup) return;
     const item = selectedGroup.items.find(i => i.id === itemId);
     if (!item) return;
-    if (!window.confirm(`確定要刪除小項【${item.name}】嗎？若已有案場引用，建議設為「停用」而非刪除。`)) {
-      return;
-    }
-    const updated = tree.map(g => {
-      if (g.id === selectedGroup.id) {
-        return { ...g, items: g.items.filter(i => i.id !== itemId) };
+    const targetGroupId = selectedGroup.id;
+    setConfirmState({
+      title: `刪除業務小項「${item.name}」`,
+      message: `確定要刪除小項【${item.name}】嗎？若已有案場引用，建議設為「停用」而非刪除。`,
+      confirmText: '確認刪除',
+      variant: 'danger',
+      onConfirm: () => {
+        setTree(prev =>
+          prev.map(g =>
+            g.id === targetGroupId
+              ? { ...g, items: g.items.filter(i => i.id !== itemId) }
+              : g
+          )
+        );
+        triggerMessage(`已刪除小項【${item.name}】`);
+        setConfirmState(null);
       }
-      return g;
     });
-    setTree(updated);
-    triggerMessage(`已刪除小項【${item.name}】`);
   };
 
   // 8. 恢復預設項目
   const handleResetDefault = () => {
-    if (!window.confirm('確定要將建物業務類型重設為標準預設範本嗎？（建物類: 鐵皮倉庫、鋼構建築、農業設施、風雨球場 / 其他: 鋼梯、屋頂浪板）')) {
-      return;
-    }
-    setTree(DEFAULT_BUILDING_CATEGORY_TREE);
-    setSelectedGroupId(DEFAULT_BUILDING_CATEGORY_TREE[0].id);
-    triggerMessage('已重設為標準預設分類');
+    setConfirmState({
+      title: '重設建物業務類型範本',
+      message: '確定要將建物業務類型重設為標準預設範本嗎？（建物類: 鐵皮倉庫、鋼構建築、農業設施、風雨球場 / 其他: 鋼梯、屋頂浪板）',
+      confirmText: '確認重設',
+      variant: 'warning',
+      onConfirm: () => {
+        setTree(DEFAULT_BUILDING_CATEGORY_TREE);
+        setSelectedGroupId(DEFAULT_BUILDING_CATEGORY_TREE[0].id);
+        triggerMessage('已重設為標準預設分類');
+        setConfirmState(null);
+      }
+    });
   };
 
   // 9. 儲存所有變更
@@ -607,6 +640,17 @@ export const BuildingCategoryManagerModal: React.FC<BuildingCategoryManagerModal
           </div>
         </div>
       </div>
+
+      <ConfirmDialogModal
+        isOpen={Boolean(confirmState)}
+        title={confirmState?.title || ''}
+        message={confirmState?.message || ''}
+        variant={confirmState?.variant || 'danger'}
+        confirmText={confirmState?.confirmText || '確認'}
+        cancelText="取消"
+        onConfirm={() => confirmState?.onConfirm()}
+        onCancel={() => setConfirmState(null)}
+      />
     </div>
   );
 };

@@ -80,6 +80,7 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
   const [fileName, setFileName] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [importSummary, setImportSummary] = useState<{ imported: number; updated: number; errors: string[] } | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -188,6 +189,7 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
 
     setFileName(file.name);
     setImportSummary(null);
+    setErrorMessage(null);
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -195,7 +197,7 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
         const text = event.target?.result as string;
         const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
         if (lines.length <= 1) {
-          alert('CSV 檔案內無有效資料行');
+          setErrorMessage('CSV 檔案內無有效資料行');
           return;
         }
 
@@ -264,7 +266,7 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
 
         setParsedRows(rows);
       } catch (err: any) {
-        alert('解析 CSV 失敗：' + (err.message || '請確認檔案格式是否正確'));
+        setErrorMessage('解析 CSV 失敗：' + (err.message || '請確認檔案格式是否正確'));
       }
     };
     reader.readAsText(file, 'utf-8');
@@ -311,11 +313,12 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
 
       const result = batchImportBusinessPartners(partnersToImport, operator);
       setImportSummary(result);
+      setErrorMessage(null);
       setIsProcessing(false);
       onSuccess();
     } catch (err: any) {
       setIsProcessing(false);
-      alert('批次匯入失敗：' + (err.message || '未知錯誤'));
+      setErrorMessage('批次匯入失敗：' + (err.message || '未知錯誤'));
     }
   };
 
@@ -405,6 +408,23 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
               </button>
             </div>
           </div>
+
+          {/* 錯誤提醒 Banner (取代原生 alert) */}
+          {errorMessage && (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 flex items-center justify-between gap-2">
+              <div className="font-bold flex items-center gap-1.5 text-xs">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setErrorMessage(null)}
+                className="text-rose-500 hover:text-rose-700 p-1 rounded cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* 匯入完成成功通知 Banner */}
           {importSummary && (

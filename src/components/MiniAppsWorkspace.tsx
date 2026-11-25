@@ -938,7 +938,7 @@ import { validateTaiwanTaxId } from '../utils/taiwanValidation';
 
 const res = validateTaiwanTaxId(taxId);
 if (!res.isValid) {
-  alert('統編錯誤：' + res.message);
+  setErrorMsg('統編錯誤：' + res.message);
   return;
 }
 
