@@ -7,6 +7,8 @@ import { AlertCircle } from 'lucide-react';
 import { ExcelInboundGridModal } from './inbound/ExcelInboundGridModal';
 import { InternalAssetManagerModal } from './widgets/InternalAssetManagerModal';
 import { ConfirmDialogModal } from './widgets/ConfirmDialogModal';
+import { UniversalSearchBar } from './widgets/UniversalSearchBar';
+import { createSearchDatasetLookup } from '../utils/universalSearchEngine';
 import { ProjectEditorModal } from './projects/ProjectEditorModal';
 import { PartnerEditorModal } from './partners/PartnerEditorModal';
 import { InboundFilterToolbar } from './inbound/InboundFilterToolbar';
@@ -43,6 +45,8 @@ import {
   voidInboundReceipt,
   deleteInboundReceipt,
   getAllProjects,
+  getAllProjectSites,
+  getAllCompanies,
   getAllBusinessPartners,
   createProjectRecord,
   subscribeToDatabase,
@@ -94,11 +98,11 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
 
-  // 案場與廠商篩選
+  // 案場與廠商篩選 + UniversalSearchBar 多欄位權限過濾結果
   const [selectedProjectId, setSelectedProjectId] = useState<string>('ALL');
   const [selectedVendorId, setSelectedVendorId] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [searchKeyword, setSearchKeyword] = useState<string>('');
+  const [searchFilteredReceipts, setSearchFilteredReceipts] = useState<InboundReceipt[] | null>(null);
 
   // 展開檢視特定清單列明細之 ID
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
@@ -251,7 +255,15 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
     }
   }, [activeProjectsInDateRange, selectedProjectId]);
 
-  const filteredReceipts = useMemo(
+  const searchLookup = useMemo(() => {
+    return createSearchDatasetLookup({
+      companies: getAllCompanies(),
+      sites: getAllProjectSites(),
+      partners: vendors
+    });
+  }, [vendors, projects]);
+
+  const baseScopedReceipts = useMemo(
     () =>
       filterInboundReceipts({
         receipts,
@@ -259,10 +271,15 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
         selectedProjectId,
         selectedVendorId,
         statusFilter,
-        searchKeyword,
+        searchKeyword: '',
         getProjectInfo: getReceiptProjectInfo,
       }),
-    [receipts, activeDateRange, selectedProjectId, selectedVendorId, statusFilter, searchKeyword, getReceiptProjectInfo]
+    [receipts, activeDateRange, selectedProjectId, selectedVendorId, statusFilter, getReceiptProjectInfo]
+  );
+
+  const filteredReceipts = useMemo(
+    () => searchFilteredReceipts ?? baseScopedReceipts,
+    [searchFilteredReceipts, baseScopedReceipts]
   );
 
   const vendorHierarchyGroups = useMemo(
@@ -596,6 +613,18 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
     setIsDetailModalOpen(true);
   };
 
+  const selectedDetailIndex = useMemo(() => {
+    if (!selectedReceipt) return -1;
+    return filteredReceipts.findIndex(r => r.id === selectedReceipt.id);
+  }, [filteredReceipts, selectedReceipt]);
+
+  const handleNavigateDetail = (offset: -1 | 1) => {
+    if (selectedDetailIndex < 0) return;
+    const target = filteredReceipts[selectedDetailIndex + offset];
+    if (!target) return;
+    setSelectedReceipt(getInboundReceiptById(target.id) || target);
+  };
+
   const handlePrint = (receipt: InboundReceipt) => {
     setSelectedReceipt(getInboundReceiptById(receipt.id) || receipt);
     setIsPrintViewOpen(true);
@@ -635,8 +664,17 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
         onSelectedProjectIdChange={setSelectedProjectId}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
-        searchKeyword={searchKeyword}
-        onSearchKeywordChange={setSearchKeyword}
+        searchSlot={
+          <UniversalSearchBar<InboundReceipt>
+            datasetKey="INBOUND_RECEIPTS"
+            records={baseScopedReceipts}
+            lookup={searchLookup}
+            placeholder="輸入關鍵字快速搜尋進貨單號、送貨單號、品名規格、廠商、工地地區（支援台／臺別名）..."
+            onResultsChange={(results) => {
+              setSearchFilteredReceipts(results.map(r => r.record));
+            }}
+          />
+        }
         viewMode={viewMode}
         onSwitchViewMode={handleSwitchViewMode}
         onOpenExcelGrid={() => {
@@ -708,6 +746,15 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
         isDetailOpen={isDetailModalOpen}
         isPrintOpen={isPrintViewOpen}
         canWrite={canWrite}
+        hasPrev={selectedDetailIndex > 0}
+        hasNext={selectedDetailIndex >= 0 && selectedDetailIndex < filteredReceipts.length - 1}
+        positionLabel={
+          selectedDetailIndex >= 0 && filteredReceipts.length > 0
+            ? `${selectedDetailIndex + 1} / ${filteredReceipts.length}`
+            : undefined
+        }
+        onPrev={() => handleNavigateDetail(-1)}
+        onNext={() => handleNavigateDetail(1)}
         onCloseDetail={() => setIsDetailModalOpen(false)}
         onClosePrint={() => setIsPrintViewOpen(false)}
         onEditFromDetail={receipt => {

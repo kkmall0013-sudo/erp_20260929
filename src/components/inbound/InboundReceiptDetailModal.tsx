@@ -8,6 +8,8 @@ import {
   X,
   Printer,
   Paperclip,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { InboundReceipt } from '../../types/erp';
 
@@ -16,6 +18,11 @@ export interface InboundReceiptDetailModalProps {
   isDetailOpen: boolean;
   isPrintOpen: boolean;
   canWrite: boolean;
+  hasPrev?: boolean;
+  hasNext?: boolean;
+  positionLabel?: string;
+  onPrev?: () => void;
+  onNext?: () => void;
   onCloseDetail: () => void;
   onClosePrint: () => void;
   onEditFromDetail: (receipt: InboundReceipt) => void;
@@ -27,6 +34,11 @@ export const InboundReceiptDetailModal: React.FC<InboundReceiptDetailModalProps>
   isDetailOpen,
   isPrintOpen,
   canWrite,
+  hasPrev = false,
+  hasNext = false,
+  positionLabel,
+  onPrev,
+  onNext,
   onCloseDetail,
   onClosePrint,
   onEditFromDetail,
@@ -177,10 +189,39 @@ export const InboundReceiptDetailModal: React.FC<InboundReceiptDetailModalProps>
               )}
             </div>
 
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-              <span className="text-xs text-slate-400 font-mono">
-                建立時間: {selectedReceipt.createdAt}
-              </span>
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {(onPrev || onNext) && (
+                  <div className="inline-flex items-center gap-1 mr-2">
+                    <button
+                      type="button"
+                      disabled={!hasPrev}
+                      onClick={onPrev}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-semibold text-slate-700 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>上一筆</span>
+                    </button>
+                    {positionLabel && (
+                      <span className="text-[11px] font-mono tabular-nums text-slate-500 px-1.5">
+                        {positionLabel}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      disabled={!hasNext}
+                      onClick={onNext}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-semibold text-slate-700 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>下一筆</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                <span className="text-xs text-slate-400 font-mono">
+                  建立時間: {selectedReceipt.createdAt}
+                </span>
+              </div>
 
               <div className="flex items-center gap-2">
                 {/* 詳情內直接修改按鈕 */}

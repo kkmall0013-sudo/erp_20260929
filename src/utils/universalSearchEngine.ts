@@ -91,6 +91,20 @@ export interface SearchDatasetLookup {
   bankAccountsById: Map<string, CompanyBankAccount>;
 }
 
+export function createSearchDatasetLookup(params: {
+  companies?: Company[];
+  sites?: ProjectSite[];
+  partners?: BusinessPartner[];
+  bankAccounts?: CompanyBankAccount[];
+}): SearchDatasetLookup {
+  return {
+    companiesById: new Map((params.companies || []).map(c => [c.id, c])),
+    sitesByProjectId: new Map((params.sites || []).map(s => [s.projectId, s])),
+    partnersById: new Map((params.partners || []).map(p => [p.id, p])),
+    bankAccountsById: new Map((params.bankAccounts || []).map(b => [b.id, b]))
+  };
+}
+
 export interface SearchDatasetSchema<T = any> {
   key: SearchDatasetKey;
   label: string;
@@ -439,14 +453,16 @@ export const UNIVERSAL_SEARCH_SCHEMAS: Record<SearchDatasetKey, SearchDatasetSch
       },
       {
         key: 'contactInfo',
-        label: '聯絡窗口 / 電話',
+        label: '聯絡窗口 / 電話 / 名片',
         dataType: 'TEXT',
         sensitivity: 'PUBLIC',
-        placeholder: '姓名或電話號碼',
+        placeholder: '姓名、職稱、電話或名片備註',
         extract: (r: BusinessPartner) => [
           r.contactPerson || '',
           r.phone || '',
-          ...(r.contacts || []).map(c => `${c.name} ${c.title || ''} ${c.phone || ''} ${c.mobile || ''}`)
+          r.email || '',
+          ...(r.contacts || []).map(c => `${c.name} ${c.title || ''} ${c.phone || ''} ${c.mobile || ''} ${c.email || ''}`),
+          ...(r.businessCards || []).map(bc => `${bc.name} ${bc.title || ''} ${bc.phone || ''} ${bc.mobile || ''} ${bc.notes || ''}`)
         ]
       },
       {
@@ -461,6 +477,15 @@ export const UNIVERSAL_SEARCH_SCHEMAS: Record<SearchDatasetKey, SearchDatasetSch
           { value: 'SUSPENDED', label: '停權停用' }
         ],
         extract: (r: BusinessPartner) => r.status || 'ACTIVE'
+      },
+      {
+        key: 'hasCheque',
+        label: '是否有登記支票記錄',
+        dataType: 'BOOLEAN',
+        sensitivity: 'PUBLIC',
+        extract: (r: BusinessPartner) => Boolean(r.chequeRecords && r.chequeRecords.length > 0),
+        formatDisplay: (r: BusinessPartner) =>
+          r.chequeRecords && r.chequeRecords.length > 0 ? `有 (${r.chequeRecords.length} 筆)` : '無登記支票'
       },
       {
         key: 'paymentTermsDays',

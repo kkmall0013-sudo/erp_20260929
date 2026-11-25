@@ -5,7 +5,6 @@ import React from 'react';
 import {
   Truck,
   Plus,
-  Search,
   Calendar,
   Edit,
   Download,
@@ -41,8 +40,7 @@ export interface InboundFilterToolbarProps {
   onSelectedProjectIdChange: (id: string) => void;
   statusFilter: string;
   onStatusFilterChange: (status: string) => void;
-  searchKeyword: string;
-  onSearchKeywordChange: (kw: string) => void;
+  searchSlot?: React.ReactNode;
   viewMode: 'LIST' | 'HIERARCHY';
   onSwitchViewMode: (mode: 'LIST' | 'HIERARCHY') => void;
   onOpenExcelGrid: () => void;
@@ -69,8 +67,7 @@ export const InboundFilterToolbar: React.FC<InboundFilterToolbarProps> = ({
   onSelectedProjectIdChange,
   statusFilter,
   onStatusFilterChange,
-  searchKeyword,
-  onSearchKeywordChange,
+  searchSlot,
   viewMode,
   onSwitchViewMode,
   onOpenExcelGrid,
@@ -233,73 +230,64 @@ export const InboundFilterToolbar: React.FC<InboundFilterToolbarProps> = ({
         </div>
       </div>
 
-      {/* 🔍 智慧篩選工具列：日期區間、動態廠商關聯、案場與狀態 */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-center">
-          {/* 關鍵字搜尋 */}
-          <div className="relative lg:col-span-3">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              placeholder="搜尋單號 / 送貨單 / 材料品名..."
-              value={searchKeyword}
-              onChange={e => onSearchKeywordChange(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
-            />
-          </div>
+      {/* 🔍 智慧篩選與通用搜尋：通用多欄位搜尋條（預設單行收合） + 日期／動態廠商／案場關聯控制 */}
+      <div className="space-y-3">
+        {searchSlot}
 
-          {/* 日期區間模式 */}
-          <div className="lg:col-span-3 flex items-center gap-1.5">
-            <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
-            <select
-              value={dateFilterMode}
-              onChange={e => onDateFilterModeChange(e.target.value as DateFilterMode)}
-              className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-800 font-medium"
-            >
-              <option value="THIS_MONTH">📅 本月進貨單</option>
-              <option value="LAST_MONTH">📅 上月進貨單</option>
-              <option value="LAST_30_DAYS">📅 近 30 天進貨</option>
-              <option value="ALL">📅 全部歷史日期</option>
-              <option value="CUSTOM">⚙️ 自訂起訖日期區間...</option>
-            </select>
-          </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+            {/* 日期區間模式 */}
+            <div className="flex items-center gap-1.5">
+              <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+              <select
+                value={dateFilterMode}
+                onChange={e => onDateFilterModeChange(e.target.value as DateFilterMode)}
+                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-800 font-medium"
+              >
+                <option value="THIS_MONTH">📅 本月進貨單</option>
+                <option value="LAST_MONTH">📅 上月進貨單</option>
+                <option value="LAST_30_DAYS">📅 近 30 天進貨</option>
+                <option value="ALL">📅 全部歷史日期</option>
+                <option value="CUSTOM">⚙️ 自訂起訖日期區間...</option>
+              </select>
+            </div>
 
-          {/* ⚡ 動態廠商篩選 (只列出該日期區間內真正有進貨單的廠商，徹底避免點選後是空白) */}
-          <div className="lg:col-span-3">
-            <select
-              value={selectedVendorId}
-              onChange={e => onSelectedVendorIdChange(e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-800 font-medium"
-            >
-              <option value="ALL">
-                🏢 全部供貨廠商 (本期共 {activeVendorsInDateRange.length} 家有進貨)
-              </option>
-              {activeVendorsInDateRange.map(v => (
-                <option key={v.id} value={v.id}>
-                  {v.name} ({v.count} 筆進貨)
+            {/* ⚡ 動態廠商篩選 (只列出該日期區間內真正有進貨單的廠商，徹底避免點選後是空白) */}
+            <div>
+              <select
+                value={selectedVendorId}
+                onChange={e => onSelectedVendorIdChange(e.target.value)}
+                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-800 font-medium"
+              >
+                <option value="ALL">
+                  🏢 全部供貨廠商 (本期共 {activeVendorsInDateRange.length} 家有進貨)
                 </option>
-              ))}
-            </select>
-          </div>
+                {activeVendorsInDateRange.map(v => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({v.count} 筆進貨)
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          {/* ⚡ 動態案場篩選 (與廠商選單一致：只列出該日期區間內真正有進貨單的案場，避免點選後空白) */}
-          <div className="lg:col-span-3">
-            <select
-              value={selectedProjectId}
-              onChange={e => onSelectedProjectIdChange(e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-800 font-medium"
-            >
-              <option value="ALL">
-                🏗️ 全部工區案場 (本期共 {activeProjectsInDateRange.length} 個案場有進貨)
-              </option>
-              {activeProjectsInDateRange.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name} {p.code ? `(${p.code})` : ''} ({p.count} 筆進貨)
+            {/* ⚡ 動態案場篩選 (與廠商選單一致：只列出該日期區間內真正有進貨單的案場，避免點選後空白) */}
+            <div>
+              <select
+                value={selectedProjectId}
+                onChange={e => onSelectedProjectIdChange(e.target.value)}
+                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white text-slate-800 font-medium"
+              >
+                <option value="ALL">
+                  🏗️ 全部工區案場 (本期共 {activeProjectsInDateRange.length} 個案場有進貨)
                 </option>
-              ))}
-            </select>
+                {activeProjectsInDateRange.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} {p.code ? `(${p.code})` : ''} ({p.count} 筆進貨)
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        </div>
 
         {/* 次行：自訂日期區間與狀態篩選 */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 text-xs">
@@ -378,6 +366,7 @@ export const InboundFilterToolbar: React.FC<InboundFilterToolbarProps> = ({
                 <FolderTree className="w-3.5 h-3.5 text-purple-600" />
                 <span>廠商階層目錄檢視</span>
               </button>
+            </div>
             </div>
           </div>
         </div>

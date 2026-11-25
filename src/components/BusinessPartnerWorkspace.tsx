@@ -17,11 +17,11 @@ import {
 } from '../types/erp';
 import { getBankByCode } from '../utils/taiwanBanks';
 import { ENGINEERING_CATEGORIES } from '../utils/engineeringCategories';
-import { TAIWAN_CITIES, getDistrictsByCity } from '../utils/taiwanPostalCodes';
 import { processUploadedMediaFiles } from '../utils/mediaUtils';
 import {
   getAllBusinessPartners,
   getBusinessPartnerById,
+  getAllCompanies,
   saveBusinessPartner,
   deleteBusinessPartner,
   convertVendorToClient,
@@ -33,8 +33,9 @@ import {
 } from '../db/sqlite';
 import { useAuth } from '../context/AuthContext';
 import { WorkspaceHeaderShell } from './widgets/WorkspaceHeaderShell';
-import { SearchFilterBar } from './widgets/SearchFilterBar';
+import { UniversalSearchBar } from './widgets/UniversalSearchBar';
 import { TagQuickFilterBar } from './widgets/TagQuickFilterBar';
+import { createSearchDatasetLookup } from '../utils/universalSearchEngine';
 import { ConfirmDialogModal } from './widgets/ConfirmDialogModal';
 import { HoverMediaPopover, HoverMediaPreviewData } from './widgets/HoverMediaPopover';
 import { MediaPreviewLightbox, MediaPreviewItem } from './widgets/MediaPreviewLightbox';
@@ -54,7 +55,6 @@ import { PartnerVendorToClientModal } from './partners/PartnerVendorToClientModa
 import {
   buildNewPartnerDraft,
   exportPartnersToCsv,
-  filterBusinessPartners,
   normalizePartnerForEditor
 } from './partners/partnerWorkspaceUtils';
 
@@ -90,13 +90,10 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
   const [pageSize, setPageSize] = useState<number>(25);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // 篩選條件
-  const [searchTerm, setSearchTerm] = useState('');
+  // 篩選條件（主分類標籤 + UniversalSearchBar 多欄位權限過濾結果）
   const [selectedMainCategory, setSelectedMainCategory] = useState<string>('ALL');
-  const [selectedSubCategory, setSelectedSubCategory] = useState<string>('ALL');
-  const [selectedCity, setSelectedCity] = useState<string>('ALL');
-  const [selectedDistrict, setSelectedDistrict] = useState<string>('ALL');
-  const [hasChequeFilter, setHasChequeFilter] = useState<'ALL' | 'HAS' | 'NONE'>('ALL');
+  const [searchFilteredPartners, setSearchFilteredPartners] = useState<BusinessPartner[] | null>(null);
+  const [searchActiveCount, setSearchActiveCount] = useState<number>(0);
 
   // 子彈窗狀態
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -143,32 +140,33 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
 
   const clientsCount = useMemo(() => partners.filter(p => p.isCustomer).length, [partners]);
   const vendorsCount = useMemo(() => partners.filter(p => p.isVendor).length, [partners]);
-  const currentDistricts = useMemo(
-    () => (!selectedCity || selectedCity === 'ALL' ? [] : getDistrictsByCity(selectedCity)),
-    [selectedCity]
-  );
+
+  const searchLookup = useMemo(() => {
+    return createSearchDatasetLookup({
+      companies: getAllCompanies(),
+      partners
+    });
+  }, [partners]);
+
+  const tabAndCategoryPartners = useMemo(() => {
+    return partners.filter(p => {
+      if (activeTab === 'CLIENTS' && !p.isCustomer) return false;
+      if (activeTab === 'VENDORS' && !p.isVendor) return false;
+      if (selectedMainCategory !== 'ALL') {
+        const hasMain =
+          (p.categoryTags || []).includes(selectedMainCategory) ||
+          p.categoryMain === selectedMainCategory ||
+          p.serviceCategoryMain === selectedMainCategory ||
+          (p.serviceCategories || []).some(c => c.main === selectedMainCategory);
+        if (!hasMain) return false;
+      }
+      return true;
+    });
+  }, [partners, activeTab, selectedMainCategory]);
 
   const filteredPartners = useMemo(
-    () =>
-      filterBusinessPartners(partners, {
-        activeTab,
-        selectedMainCategory,
-        selectedSubCategory,
-        selectedCity,
-        selectedDistrict,
-        hasChequeFilter,
-        searchTerm
-      }),
-    [
-      partners,
-      activeTab,
-      searchTerm,
-      selectedMainCategory,
-      selectedSubCategory,
-      selectedCity,
-      selectedDistrict,
-      hasChequeFilter
-    ]
+    () => searchFilteredPartners ?? tabAndCategoryPartners,
+    [searchFilteredPartners, tabAndCategoryPartners]
   );
 
   const totalPages = useMemo(
@@ -184,7 +182,7 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, searchTerm, selectedMainCategory, selectedSubCategory, selectedCity, selectedDistrict, hasChequeFilter]);
+  }, [activeTab, selectedMainCategory, filteredPartners.length]);
 
   const tagQuickItems = useMemo(() => {
     return categoryTree.map(cat => {
@@ -521,110 +519,80 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
         onTabChange={tab => {
           setActiveTab(tab as 'CLIENTS' | 'VENDORS');
           setSelectedMainCategory('ALL');
-          setSelectedSubCategory('ALL');
+          setSearchFilteredPartners(null);
         }}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
       >
-        <SearchFilterBar
-          searchTerm={searchTerm}
-          onSearchChange={setSearchTerm}
-          searchPlaceholder="搜尋名稱、統編、電話、地址、支票、名片..."
-          filteredCount={filteredPartners.length}
-          pageSize={pageSize}
-          onPageSizeChange={setPageSize}
-          activeFilterBadges={
-            <>
+        <div className="space-y-2.5 pt-1">
+          <UniversalSearchBar<BusinessPartner>
+            datasetKey="PARTNERS"
+            records={tabAndCategoryPartners}
+            lookup={searchLookup}
+            placeholder={
+              activeTab === 'CLIENTS'
+                ? '輸入關鍵字快速搜尋業主（名稱、統編、窗口、電話、地址／台臺別名、名片...）'
+                : '輸入關鍵字快速搜尋合作廠商（名稱、統編、工種分類、地區／台臺別名、名片...）'
+            }
+            onResultsChange={(results, meta) => {
+              setSearchFilteredPartners(results.map(r => r.record));
+              setSearchActiveCount(meta.activeConditionCount);
+            }}
+          />
+
+          {activeTab === 'VENDORS' && (
+            <TagQuickFilterBar
+              allLabel="全部廠商"
+              allCount={vendorsCount}
+              items={tagQuickItems}
+              selectedKey={selectedMainCategory}
+              onSelect={setSelectedMainCategory}
+            />
+          )}
+
+          <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>
+                符合條件：<strong className="text-slate-900 font-mono tabular-nums">{filteredPartners.length}</strong> 筆
+              </span>
               {selectedMainCategory !== 'ALL' && (
-                <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-[11px] font-bold">
-                  工項：{selectedMainCategory}
+                <button
+                  type="button"
+                  onClick={() => setSelectedMainCategory('ALL')}
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer"
+                  title="點擊取消分類標籤過濾"
+                >
+                  工項：{selectedMainCategory} ×
+                </button>
+              )}
+              {searchActiveCount > 0 && (
+                <span className="text-[11px] text-slate-500">
+                  （已啟用進階篩選 {searchActiveCount} 項）
                 </span>
               )}
-              {selectedCity !== 'ALL' && (
-                <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded text-[11px] font-bold">
-                  地區：{selectedCity} {selectedDistrict !== 'ALL' ? selectedDistrict : ''}
-                </span>
-              )}
-            </>
-          }
-          extraBars={
-            activeTab === 'VENDORS' ? (
-              <TagQuickFilterBar
-                allLabel="全部廠商"
-                allCount={vendorsCount}
-                items={tagQuickItems}
-                selectedKey={selectedMainCategory}
-                onSelect={setSelectedMainCategory}
-              />
-            ) : undefined
-          }
-        >
-          <div>
-            <select
-              value={selectedMainCategory}
-              onChange={e => {
-                setSelectedMainCategory(e.target.value);
-                setSelectedSubCategory('ALL');
-              }}
-              className="w-full text-xs py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700"
-            >
-              <option value="ALL">
-                {activeTab === 'VENDORS' ? '全部廠商分類 (不限)' : '全部工項 (不限)'}
-              </option>
-              {categoryTree.map(g => (
-                <option key={g.mainCategory} value={g.mainCategory}>
-                  {activeTab === 'VENDORS' ? `🏷️ ${g.mainCategory}` : g.mainCategory}
-                </option>
-              ))}
-            </select>
-          </div>
+            </div>
 
-          <div>
-            <select
-              value={selectedCity}
-              onChange={e => {
-                setSelectedCity(e.target.value);
-                setSelectedDistrict('ALL');
-              }}
-              className="w-full text-xs py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700"
-            >
-              <option value="ALL">全部縣市</option>
-              {TAIWAN_CITIES.map(c => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400">每頁顯示：</span>
+              <select
+                value={pageSize}
+                onChange={e => setPageSize(Number(e.target.value))}
+                className="text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1 font-mono font-bold"
+              >
+                {[
+                  { value: 25, label: '25 筆' },
+                  { value: 50, label: '50 筆' },
+                  { value: 100, label: '100 筆' },
+                  { value: 9999, label: '全部顯示' }
+                ].map(opt => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-
-          <div>
-            <select
-              value={selectedDistrict}
-              onChange={e => setSelectedDistrict(e.target.value)}
-              disabled={selectedCity === 'ALL'}
-              className="w-full text-xs py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700 disabled:opacity-50"
-            >
-              <option value="ALL">全部行政區</option>
-              {currentDistricts.map(d => (
-                <option key={d.district} value={d.district}>
-                  {d.district} ({d.postalCode})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <select
-              value={hasChequeFilter}
-              onChange={e => setHasChequeFilter(e.target.value as any)}
-              className="w-full text-xs py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-700"
-            >
-              <option value="ALL">全部票據狀態</option>
-              <option value="HAS">💳 有登記支票記錄</option>
-              <option value="NONE">無支票記錄</option>
-            </select>
-          </div>
-        </SearchFilterBar>
+        </div>
       </WorkspaceHeaderShell>
 
       {/* 主要展示區 */}
