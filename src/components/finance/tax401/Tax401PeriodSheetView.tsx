@@ -44,6 +44,7 @@ interface Tax401PeriodSheetViewProps {
   onOpenPromoteModal: (planned: PlannedInvoice) => void;
   onRefresh: () => void;
   onNotify: (msg: string, type?: 'success' | 'warn' | 'error') => void;
+  searchSlot?: React.ReactNode;
 }
 
 export const Tax401PeriodSheetView: React.FC<Tax401PeriodSheetViewProps> = ({
@@ -63,6 +64,7 @@ export const Tax401PeriodSheetView: React.FC<Tax401PeriodSheetViewProps> = ({
   onOpenPromoteModal,
   onRefresh,
   onNotify,
+  searchSlot,
 }) => {
   const renderSignedMoney = (val: number, forceColor?: string) => (
     <span className={forceColor || (val < 0 ? 'text-rose-600' : 'text-slate-800')}>
@@ -202,6 +204,8 @@ export const Tax401PeriodSheetView: React.FC<Tax401PeriodSheetViewProps> = ({
           </div>
         )}
       </div>
+
+      {searchSlot}
 
       {/* Official Vouchers Table */}
       <div className="overflow-x-auto border border-slate-200 rounded-xl">

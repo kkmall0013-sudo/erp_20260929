@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Quotation, QuotationItem, QuotationBillingMilestone, Company, BusinessPartner, Project } from '../../types/erp';
-import { Printer, Download, Eye, ShieldCheck, CheckCircle2, AlertTriangle, FileText } from 'lucide-react';
+import { PrintDocumentModal } from '../widgets/PrintDocumentModal';
 
 interface QuotationPrintPreviewModalProps {
   isOpen: boolean;
@@ -42,53 +42,25 @@ export const QuotationPrintPreviewModal: React.FC<QuotationPrintPreviewModalProp
   const taxAmount = Math.round(quotation.taxAmount);
   const totalAmount = Math.round(quotation.totalAmount);
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
-        {/* 頂部操作導航 */}
-        <div className="bg-slate-900 text-white px-6 py-3.5 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5">
-            <Printer className="w-5 h-5 text-indigo-400" />
-            <div>
-              <h2 className="text-sm font-bold tracking-wide">
-                工程報價單正式列印與簽署預覽 (PDF Print Preview)
-              </h2>
-              <div className="flex items-center gap-2 text-[11px] text-slate-300">
-                <span className="font-mono">{quotation.quoteNumber}</span>
-                <span>•</span>
-                <span className="text-amber-300 font-medium">
-                  {isHeaderDiscount && '軌道一：表頭折讓模式 (明細原價，印出協議折讓行)'}
-                  {isUnitPriceAdjust && '軌道二：單價微調模式 (明細單價已平滑，無折讓字眼)'}
-                  {isShadowAllocation && '軌道三：影子協議模式 (明細原價，附協議總價文字備註)'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handlePrint}
-              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Printer className="w-4 h-4" />
-              <span>列印 / 存為 PDF</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-lg transition-colors cursor-pointer"
-            >
-              關閉
-            </button>
-          </div>
-        </div>
-
-        {/* 預覽紙張本體 (A4 紙張排版風格) */}
-        <div className="flex-1 overflow-y-auto p-8 bg-slate-100 flex justify-center">
-          <div className="bg-white w-full max-w-[800px] p-8 rounded-lg shadow-sm border border-slate-300 text-slate-900 print:shadow-none print:border-none print:p-0">
+    <PrintDocumentModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="工程報價單正式列印與簽署預覽 (PDF Print Preview)"
+      subtitle={
+        <span className="inline-flex items-center gap-2">
+          <span className="font-mono">{quotation.quoteNumber}</span>
+          <span>•</span>
+          <span className="text-amber-300 font-medium">
+            {isHeaderDiscount && '軌道一：表頭折讓模式 (明細原價，印出協議折讓行)'}
+            {isUnitPriceAdjust && '軌道二：單價微調模式 (明細單價已平滑，無折讓字眼)'}
+            {isShadowAllocation && '軌道三：影子協議模式 (明細原價，附協議總價文字備註)'}
+          </span>
+        </span>
+      }
+      modalMaxWidthClass="max-w-4xl"
+      paperMaxWidthClass="max-w-[800px]"
+    >
             {/* 公司表頭資訊 */}
             <div className="border-b-2 border-slate-900 pb-4 mb-6">
               <div className="flex justify-between items-start">
@@ -328,9 +300,6 @@ export const QuotationPrintPreviewModal: React.FC<QuotationPrintPreviewModalProp
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    </PrintDocumentModal>
   );
 };

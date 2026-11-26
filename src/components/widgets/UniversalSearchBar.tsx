@@ -65,7 +65,10 @@ export interface UniversalSearchBarProps<T = any> {
   datasetKey: SearchDatasetKey;
   records: T[];
   lookup: SearchDatasetLookup;
-  onResultsChange: (results: SearchResultItem<T>[], meta: { totalPoolCount: number; activeConditionCount: number }) => void;
+  onResultsChange: (
+    results: SearchResultItem<T>[],
+    meta: { totalPoolCount: number; activeConditionCount: number; hasDatasetAccess: boolean }
+  ) => void;
   placeholder?: string;
   defaultExpanded?: boolean;
 }
@@ -176,9 +179,10 @@ export function UniversalSearchBar<T = any>({
   useEffect(() => {
     onResultsChangeRef.current(execution.results, {
       totalPoolCount: execution.totalAuthorizedPoolCount,
-      activeConditionCount
+      activeConditionCount,
+      hasDatasetAccess: execution.hasDatasetAccess
     });
-  }, [execution.results, execution.totalAuthorizedPoolCount, activeConditionCount]);
+  }, [execution.results, execution.totalAuthorizedPoolCount, activeConditionCount, execution.hasDatasetAccess]);
 
   if (!execution.hasDatasetAccess) {
     return null;

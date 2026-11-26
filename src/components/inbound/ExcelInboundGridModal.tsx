@@ -41,6 +41,8 @@ import {
 import { InboundDraftDrawer } from './InboundDraftDrawer';
 import { InboundGridDropdown, ActiveDropdownState } from './InboundGridDropdown';
 import { InboundQuickCreateModal, QuickCreateRequest } from './InboundQuickCreateModal';
+import { computeFloatingPopoverCoords } from '../../utils/floatingPopover';
+import { readFileAsText } from '../../utils/fileIO';
 import {
   getAllProjects,
   getAllBusinessPartners,
@@ -226,46 +228,20 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
     }
   }, [isOpen, gridRows.length]);
 
-  // 全局推薦下拉定位
+  // 全局推薦下拉定位（複用共用 computeFloatingPopoverCoords）
   const openDropdown = (target: HTMLElement, rowId: string, field: 'site' | 'vendor' | 'item' | 'spec') => {
-    const td = target.closest('td') || target;
-    const rect = td.getBoundingClientRect();
-    const dropdownHeight = 300;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-
+    const td = (target.closest('td') || target) as HTMLElement;
     setActiveDropdown({
       rowId,
       field,
-      rect: { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width, openUpward }
+      rect: computeFloatingPopoverCoords(td, {
+        estimatedHeight: 300,
+        minWidth: 360,
+        viewportMargin: 16,
+        gap: 4
+      })
     });
   };
-
-  useEffect(() => {
-    if (!activeDropdown) return;
-    const handleDocumentClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('[data-dropdown-container]') && !target.closest('[data-dropdown-trigger]')) {
-        setActiveDropdown(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setActiveDropdown(null);
-    };
-    const handleScroll = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target?.closest && target.closest('[data-dropdown-container]')) return;
-      setActiveDropdown(null);
-    };
-    window.addEventListener('mousedown', handleDocumentClick);
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('scroll', handleScroll, true);
-    return () => {
-      window.removeEventListener('mousedown', handleDocumentClick);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('scroll', handleScroll, true);
-    };
-  }, [activeDropdown]);
 
   // 儲存格操作
   const handleCellChange = (rowId: string, field: keyof ExcelGridRow, value: any) => {
@@ -518,12 +494,11 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = event => {
-      const text = event.target?.result as string;
+    try {
+      const text = await readFileAsText(file, 'utf-8');
       if (!text) return;
       const result = parseCsvRowsToGrid({ rawText: text, defaultDate, projects, vendors, internalAssets });
       if (result.errorMsg) {
@@ -533,9 +508,11 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
       setBatchMappingAlert(result.topUnmapped);
       setGridRows(result.rows);
       triggerToast(`🎉 成功匯入 ${result.rows.length} 筆進貨資料！案場車輛已自動智慧辨識對齊！`, 'success');
-    };
-    reader.readAsText(file, 'utf-8');
-    e.target.value = '';
+    } catch (err) {
+      triggerToast('❌ 讀取 CSV 失敗：' + (err as Error).message, 'error');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   // 解析歸屬 Helper（供暫存草稿與正式過帳共用）
@@ -1447,6 +1424,7 @@ export const ExcelInboundGridModal: React.FC<ExcelInboundGridModalProps> = ({
       {/* 全局浮動推薦下拉選單 */}
       <InboundGridDropdown
         activeDropdown={activeDropdown}
+        onCloseDropdown={() => setActiveDropdown(null)}
         gridRows={gridRows}
         vendors={vendors}
         projects={projects}

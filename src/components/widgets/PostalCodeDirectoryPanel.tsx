@@ -1,17 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import {
-  MapPin,
-  Search,
-  Plus,
-  Pencil,
-  Trash2,
-  RotateCcw,
-  Check,
-  X,
-  Info,
-  Archive,
-  Building2
-} from 'lucide-react';
+import { MapPin, Search, Plus, RotateCcw, X, Info } from 'lucide-react';
 import { TaiwanPostalCityRecord, TaiwanPostalCodeRecord } from '../../types/erp';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -28,44 +16,19 @@ import {
   matchesTaiwanRegion
 } from '../../utils/taiwanPostalCodes';
 import { ConfirmDialogModal } from './ConfirmDialogModal';
+import {
+  EMPTY_POSTAL_DISTRICT_FORM,
+  PostalCityEditorFormState,
+  PostalCodeCityEditorForm,
+  PostalCodeDistrictEditorForm,
+  PostalDistrictEditorFormState
+} from './postal/PostalCodeEditorForms';
+import { PostalCodeDirectoryGrid } from './postal/PostalCodeDirectoryGrid';
 
 export interface PostalCodeDirectoryPanelProps {
   onSelectDistrict?: (record: TaiwanPostalCodeRecord) => void;
   onNotify?: (msg: string) => void;
 }
-
-interface EditorFormState {
-  id?: string;
-  city: string;
-  district: string;
-  postalCode: string;
-  isActive: boolean;
-  aliasesText: string;
-  replacedByCity: string;
-  replacedByDistrict: string;
-  note: string;
-}
-
-interface CityEditorFormState {
-  cityId?: string;
-  oldCityName: string;
-  newCityName: string;
-  aliasesText: string;
-  keepOldNameAsAlias: boolean;
-  isActive: boolean;
-  note: string;
-}
-
-const EMPTY_FORM: EditorFormState = {
-  city: '',
-  district: '',
-  postalCode: '',
-  isActive: true,
-  aliasesText: '',
-  replacedByCity: '',
-  replacedByDistrict: '',
-  note: ''
-};
 
 /**
  * 📮 中華郵政「牆上分區一覽表」微型資料庫與管理面板
@@ -96,10 +59,12 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
   const [showInactive, setShowInactive] = useState<boolean>(true);
 
   const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
-  const [formState, setFormState] = useState<EditorFormState>(EMPTY_FORM);
+  const [formState, setFormState] = useState<PostalDistrictEditorFormState>(
+    EMPTY_POSTAL_DISTRICT_FORM
+  );
   const [formError, setFormError] = useState<string | null>(null);
 
-  const [cityEditorState, setCityEditorState] = useState<CityEditorFormState | null>(null);
+  const [cityEditorState, setCityEditorState] = useState<PostalCityEditorFormState | null>(null);
   const [cityEditorError, setCityEditorError] = useState<string | null>(null);
 
   const [inlineToast, setInlineToast] = useState<string | null>(null);
@@ -140,7 +105,9 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
       const prev = cityMinZip.get(r.city);
       if (prev === undefined || z < prev) cityMinZip.set(r.city, z);
     }
-    const names = Array.from(new Set([...records.map(r => r.city), ...cities.map(c => c.cityName)])).filter(Boolean);
+    const names = Array.from(
+      new Set([...records.map(r => r.city), ...cities.map(c => c.cityName)])
+    ).filter(Boolean);
     return names.sort((a, b) => {
       const minA = cityMinZip.get(a) ?? 999999;
       const minB = cityMinZip.get(b) ?? 999999;
@@ -194,7 +161,6 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
       groupedMap.get(item.city)!.push(item);
     }
 
-    // 每個縣市內部嚴格依郵遞區號由小到大排序，縣市卡片依該縣市最小郵遞區號排序
     const entries = Array.from(groupedMap.entries()).map(([cityName, items]) => {
       const sortedItems = [...items].sort(compareDistrictPostal);
       const minZip =
@@ -208,14 +174,14 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
     });
 
     return entries;
-  }, [records, cities, cityMetaByName, searchTerm, cityFilter, showInactive]);
+  }, [records, cityMetaByName, searchTerm, cityFilter, showInactive]);
 
   const handleOpenCreate = () => {
     if (!canManage) return;
     setCityEditorState(null);
     setFormError(null);
     setFormState({
-      ...EMPTY_FORM,
+      ...EMPTY_POSTAL_DISTRICT_FORM,
       city: cityFilter !== 'ALL' ? cityFilter : ''
     });
     setIsEditorOpen(true);
@@ -333,7 +299,7 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
         operatorName
       );
       setIsEditorOpen(false);
-      setFormState(EMPTY_FORM);
+      setFormState(EMPTY_POSTAL_DISTRICT_FORM);
       setFormError(null);
       notify(`✅ 已更新郵局郵遞區號表：【${saved.city} ${saved.district} ${saved.postalCode}】`);
     } catch (err: any) {
@@ -427,307 +393,31 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
         </div>
       </div>
 
-      {/* 內嵌縣市變數編修面板 (一鍵更名 + 縣市別名) */}
       {cityEditorState && canManage && (
-        <form
+        <PostalCodeCityEditorForm
+          state={cityEditorState}
+          error={cityEditorError}
+          onChange={setCityEditorState}
+          onCancel={() => {
+            setCityEditorState(null);
+            setCityEditorError(null);
+          }}
           onSubmit={handleSubmitCityForm}
-          className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-300 space-y-3"
-        >
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-              <Building2 className="w-4 h-4 text-emerald-700" />
-              <span>
-                縣市變數編修：【{cityEditorState.oldCityName}】（儲存後轄下所有鄉鎮市區自動連動更新）
-              </span>
-            </h4>
-            <button
-              type="button"
-              onClick={() => {
-                setCityEditorState(null);
-                setCityEditorError(null);
-              }}
-              className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {cityEditorError && (
-            <div className="px-3 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
-              ⚠️ {cityEditorError}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                現行縣市名稱（變數 a） <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={cityEditorState.newCityName}
-                onChange={e =>
-                  setCityEditorState(s => (s ? { ...s, newCityName: e.target.value } : s))
-                }
-                placeholder="例：台灣市 或 新北市"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white font-bold"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                舊名／搜尋別名（逗號分隔，支援雙向搜尋）
-              </label>
-              <input
-                type="text"
-                value={cityEditorState.aliasesText}
-                onChange={e =>
-                  setCityEditorState(s => (s ? { ...s, aliasesText: e.target.value } : s))
-                }
-                placeholder="例：臺北縣, 臺北市"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white"
-              />
-            </div>
-
-            <div className="flex items-end">
-              <label className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 bg-white cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={cityEditorState.isActive}
-                  onChange={e =>
-                    setCityEditorState(s => (s ? { ...s, isActive: e.target.checked } : s))
-                  }
-                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                />
-                <span className="text-xs font-bold text-slate-800">
-                  {cityEditorState.isActive ? '此縣市現行啟用' : '整縣市設為歷史停用'}
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-xs text-emerald-900 font-semibold cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={cityEditorState.keepOldNameAsAlias}
-                onChange={e =>
-                  setCityEditorState(s =>
-                    s ? { ...s, keepOldNameAsAlias: e.target.checked } : s
-                  )
-                }
-                className="rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500"
-              />
-              <span>
-                改名時自動將「{cityEditorState.oldCityName}」加入搜尋別名（確保舊名 ↔ 新名搜尋互通）
-              </span>
-            </label>
-
-            <div className="flex items-center justify-end gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setCityEditorState(null);
-                  setCityEditorError(null);
-                }}
-                className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>儲存縣市設定並連動子區</span>
-              </button>
-            </div>
-          </div>
-        </form>
+        />
       )}
 
-      {/* 內嵌單區新增 / 編輯精簡表單 */}
       {isEditorOpen && canManage && (
-        <form
+        <PostalCodeDistrictEditorForm
+          formState={formState}
+          formError={formError}
+          uniqueCities={uniqueCities}
+          onChange={setFormState}
+          onCancel={() => {
+            setIsEditorOpen(false);
+            setFormError(null);
+          }}
           onSubmit={handleSubmitForm}
-          className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-3"
-        >
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-indigo-950">
-              {formState.id ? '編修郵局郵遞區號項目' : '新增郵局郵遞區號項目（存檔後自動依郵遞區號由小到大排列）'}
-            </h4>
-            <button
-              type="button"
-              onClick={() => {
-                setIsEditorOpen(false);
-                setFormError(null);
-              }}
-              className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {formError && (
-            <div className="px-3 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
-              ⚠️ {formError}
-            </div>
-          )}
-
-          {/* 核心 3 欄位 */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                縣市名稱 <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={formState.city}
-                onChange={e => setFormState(s => ({ ...s, city: e.target.value }))}
-                placeholder="例：雲林縣 / 臺北市"
-                list="postal-city-datalist"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white font-semibold"
-                required
-              />
-              <datalist id="postal-city-datalist">
-                {uniqueCities.map(c => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                鄉鎮市區名稱 <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={formState.district}
-                onChange={e => setFormState(s => ({ ...s, district: e.target.value }))}
-                placeholder="例：中正區 / 斗南鎮"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white font-semibold"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                郵遞區號 (3 碼) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={formState.postalCode}
-                onChange={e =>
-                  setFormState(s => ({
-                    ...s,
-                    postalCode: e.target.value.replace(/[^\d-]/g, '')
-                  }))
-                }
-                maxLength={7}
-                placeholder="例：100"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white font-mono font-bold"
-                required
-              />
-            </div>
-
-            <div className="flex items-end">
-              <label className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 bg-white cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={formState.isActive}
-                  onChange={e =>
-                    setFormState(s => ({ ...s, isActive: e.target.checked }))
-                  }
-                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <span className="text-xs font-bold text-slate-800">
-                  {formState.isActive ? '現行啟用' : '歷史停用（僅供對照）'}
-                </span>
-              </label>
-            </div>
-          </div>
-
-          {/* 選填改制與別名欄位 */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-1">
-            <div className="sm:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                舊名／搜尋別名（選填，逗號分隔，支援雙向搜尋）
-              </label>
-              <input
-                type="text"
-                value={formState.aliasesText}
-                onChange={e =>
-                  setFormState(s => ({ ...s, aliasesText: e.target.value }))
-                }
-                placeholder="例：中壢市, 桃園縣"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                對應新制縣市（選填）
-              </label>
-              <input
-                type="text"
-                value={formState.replacedByCity}
-                onChange={e =>
-                  setFormState(s => ({ ...s, replacedByCity: e.target.value }))
-                }
-                placeholder="例：桃園市"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                對應新制鄉鎮（選填）
-              </label>
-              <input
-                type="text"
-                value={formState.replacedByDistrict}
-                onChange={e =>
-                  setFormState(s => ({
-                    ...s,
-                    replacedByDistrict: e.target.value
-                  }))
-                }
-                placeholder="例：中壢區"
-                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-            <input
-              type="text"
-              value={formState.note}
-              onChange={e => setFormState(s => ({ ...s, note: e.target.value }))}
-              placeholder="備註說明（選填，例：區界調整）"
-              className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-white"
-            />
-            <div className="flex items-center justify-end gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditorOpen(false);
-                  setFormError(null);
-                }}
-                className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>儲存此郵遞區號項目</span>
-              </button>
-            </div>
-          </div>
-        </form>
+        />
       )}
 
       {/* 篩選搜尋列 */}
@@ -776,158 +466,16 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
         </label>
       </div>
 
-      {/* 郵局牆上分區表格展示區 */}
-      {filteredGrouped.length === 0 ? (
-        <div className="p-8 text-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-300">
-          查無符合條件的縣市或鄉鎮市區資料
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 max-h-[540px] overflow-y-auto pr-1">
-          {filteredGrouped.map(({ cityName, items: cityItems }) => {
-            const cMeta = cityMetaByName.get(cityName);
-            const cityInactive = cMeta?.isActive === false;
-            return (
-              <div
-                key={cityName}
-                className="rounded-xl border border-slate-200 bg-white overflow-hidden flex flex-col shadow-2xs"
-              >
-                <div
-                  className={`px-3.5 py-2 text-white flex items-center justify-between gap-2 ${
-                    cityInactive ? 'bg-amber-800' : 'bg-slate-800'
-                  }`}
-                >
-                  <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs font-bold tracking-wide truncate">
-                      {cityName}
-                    </span>
-                    <span className="text-[10px] font-mono bg-white/15 text-slate-100 px-1.5 py-0.2 rounded">
-                      {cityItems.length} 區
-                    </span>
-                    {cityInactive && (
-                      <span className="text-[10px] font-bold bg-amber-200 text-amber-950 px-1.5 py-0.2 rounded">
-                        停用
-                      </span>
-                    )}
-                    {cMeta && cMeta.aliases.length > 0 && (
-                      <span
-                        title={`舊名／別名：${cMeta.aliases.join('、')}`}
-                        className="text-[10px] bg-indigo-500/40 text-indigo-100 px-1.5 py-0.2 rounded truncate max-w-[120px]"
-                      >
-                        別名: {cMeta.aliases.join('、')}
-                      </span>
-                    )}
-                  </div>
+      <PostalCodeDirectoryGrid
+        filteredGrouped={filteredGrouped}
+        cityMetaByName={cityMetaByName}
+        canManage={canManage}
+        onOpenCityEditor={handleOpenCityEditor}
+        onSelectDistrict={onSelectDistrict}
+        onEditDistrict={handleOpenEdit}
+        onRequestDeleteDistrict={setPendingDeleteRecord}
+      />
 
-                  {canManage && (
-                    <button
-                      type="button"
-                      onClick={() => handleOpenCityEditor(cityName)}
-                      title="一鍵修改此縣市名稱（自動連動全部轄下鄉鎮區）或管理縣市別名"
-                      className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/25 text-white text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
-                    >
-                      <Pencil className="w-3 h-3" />
-                      <span>更名/別名</span>
-                    </button>
-                  )}
-                </div>
-
-                <div className="divide-y divide-slate-100">
-                  {cityItems.map(item => {
-                    const isLegacy = item.isActive === false || cityInactive;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => onSelectDistrict?.(item)}
-                        className={`px-3 py-1.5 text-xs flex items-center justify-between gap-2 transition-colors ${
-                          onSelectDistrict ? 'cursor-pointer' : ''
-                        } ${
-                          isLegacy
-                            ? 'bg-amber-50/50 text-slate-500 hover:bg-amber-50'
-                            : 'hover:bg-indigo-50/50 text-slate-800'
-                        }`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-slate-400 select-none">-</span>
-                            <span
-                              className={`font-semibold ${
-                                isLegacy ? 'line-through text-slate-500' : 'text-slate-800'
-                              }`}
-                            >
-                              {item.district}
-                            </span>
-                            <span
-                              className={`font-mono font-bold text-[11px] px-1.5 py-0.2 rounded border ${
-                                isLegacy
-                                  ? 'bg-amber-100/70 text-amber-800 border-amber-200'
-                                  : 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                              }`}
-                            >
-                              {item.postalCode}
-                            </span>
-                            {item.isActive === false && (
-                              <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded inline-flex items-center gap-0.5">
-                                <Archive className="w-2.5 h-2.5" />
-                                歷史停用
-                              </span>
-                            )}
-                          </div>
-
-                          {((item.aliases && item.aliases.length > 0) ||
-                            item.replacedByCity ||
-                            item.replacedByDistrict ||
-                            item.note) && (
-                            <div className="text-[10px] text-slate-400 pl-3 mt-0.5 truncate">
-                              {(item.replacedByCity || item.replacedByDistrict) && (
-                                <span className="text-amber-700 font-semibold mr-1.5">
-                                  ➔ {item.replacedByCity || item.city}
-                                  {item.replacedByDistrict || ''}
-                                </span>
-                              )}
-                              {item.aliases && item.aliases.length > 0 && (
-                                <span className="mr-1.5">
-                                  別名: {item.aliases.join('、')}
-                                </span>
-                              )}
-                              {item.note && <span>({item.note})</span>}
-                            </div>
-                          )}
-                        </div>
-
-                        {canManage && (
-                          <div
-                            className="flex items-center gap-1 shrink-0"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEdit(item)}
-                              title="編修此項目"
-                              className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer transition-colors"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPendingDeleteRecord(item)}
-                              title="刪除此項目"
-                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 刪除項目確認 Modal */}
       <ConfirmDialogModal
         isOpen={Boolean(pendingDeleteRecord)}
         title="確認移除此郵遞區號項目？"
@@ -944,7 +492,6 @@ export const PostalCodeDirectoryPanel: React.FC<PostalCodeDirectoryPanelProps> =
         onCancel={() => setPendingDeleteRecord(null)}
       />
 
-      {/* 還原官方 368 區預設值確認 Modal */}
       <ConfirmDialogModal
         isOpen={isResetConfirmOpen}
         title="還原中華郵政預設 368 鄉鎮市區清冊？"

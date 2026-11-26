@@ -77,15 +77,15 @@ export const AppSettingsWorkspace: React.FC<AppSettingsWorkspaceProps> = ({
     setFormData(prev => ({ ...prev, [key]: value }));
   };
 
-  const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 1024 * 500) {
       triggerToast('⚠️ 建議 Logo 圖片小於 500KB，避免資料庫快照過大');
     }
-    const reader = new FileReader();
-    reader.onload = uploadEvent => {
-      const dataUrl = uploadEvent.target?.result as string;
+    try {
+      const { readFileAsDataUrl } = await import('../utils/mediaUtils');
+      const dataUrl = await readFileAsDataUrl(file);
       if (dataUrl) {
         setFormData(prev => ({
           ...prev,
@@ -94,8 +94,9 @@ export const AppSettingsWorkspace: React.FC<AppSettingsWorkspaceProps> = ({
         }));
         triggerToast('✅ 成功載入企業 Logo 圖檔！按下儲存後即刻全系統生效。');
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      triggerToast('❌ 讀取 Logo 圖檔失敗：' + (err as Error).message);
+    }
   };
 
   const handleToggleTestSandbox = () => {

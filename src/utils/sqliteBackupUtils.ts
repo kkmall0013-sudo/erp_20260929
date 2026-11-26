@@ -4,6 +4,9 @@ import {
   restoreFromSqlScript,
   restoreFromSqliteBinary
 } from '../db/sqlite';
+import { triggerBlobDownload } from './fileIO';
+
+export { triggerBlobDownload };
 
 export interface BackupFilePreview {
   name: string;
@@ -26,15 +29,6 @@ export function buildBackupFilePreview(file: File): BackupFilePreview {
     sizeFormatted,
     type
   };
-}
-
-export function triggerBlobDownload(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 export function downloadSqliteBinaryFile(filename?: string): string {

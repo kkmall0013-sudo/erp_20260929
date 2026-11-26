@@ -33,6 +33,8 @@ import {
   Tax401PromotePlannedModal,
   Tax401SettingsModal,
 } from './tax401/Tax401ForecastModals';
+import { UniversalSearchBar } from '../widgets/UniversalSearchBar';
+import { createSearchDatasetLookup } from '../../utils/universalSearchEngine';
 
 interface Tax401WorkbookPanelProps {
   companies: Company[];
@@ -79,6 +81,7 @@ export const Tax401WorkbookPanel: React.FC<Tax401WorkbookPanelProps> = ({
   const [isAddPlannedOpen, setIsAddPlannedOpen] = useState(false);
   const [promotingPlanned, setPromotingPlanned] = useState<PlannedInvoice | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [searchFilteredInvoices, setSearchFilteredInvoices] = useState<Invoice[] | null>(null);
 
   const taxRatePct = Number((taxRate * 100).toFixed(2));
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
@@ -132,7 +135,16 @@ export const Tax401WorkbookPanel: React.FC<Tax401WorkbookPanelProps> = ({
     [activeCompanyPeriods, activeSheet]
   );
 
-  const periodOfficialInvoices = useMemo(() => {
+  const searchLookup = useMemo(
+    () =>
+      createSearchDatasetLookup({
+        companies,
+        partners,
+      }),
+    [companies, partners]
+  );
+
+  const basePeriodOfficialInvoices = useMemo(() => {
     const list = invoices.filter(
       inv =>
         inv.taxReportingCompanyId === selectedCompanyId &&
@@ -141,6 +153,11 @@ export const Tax401WorkbookPanel: React.FC<Tax401WorkbookPanelProps> = ({
     if (voucherGroupFilter === 'ALL') return list;
     return list.filter(inv => CATEGORY_META[resolveInvoiceCategory(inv)].group === voucherGroupFilter);
   }, [invoices, selectedCompanyId, activePeriodKey, voucherGroupFilter]);
+
+  const periodOfficialInvoices = useMemo(
+    () => searchFilteredInvoices ?? basePeriodOfficialInvoices,
+    [searchFilteredInvoices, basePeriodOfficialInvoices]
+  );
 
   const periodPlannedList = useMemo(
     () =>
@@ -337,6 +354,21 @@ export const Tax401WorkbookPanel: React.FC<Tax401WorkbookPanelProps> = ({
           onOpenPromoteModal={(planned) => setPromotingPlanned(planned)}
           onRefresh={onRefresh}
           onNotify={onNotify}
+          searchSlot={
+            <UniversalSearchBar<Invoice>
+              datasetKey="TAX_401_INVOICES"
+              records={basePeriodOfficialInvoices}
+              lookup={searchLookup}
+              placeholder="搜尋本期發票字軌、買受／開立對象名稱、統編、稅額或自主留存模式..."
+              onResultsChange={(results, meta) => {
+                if (meta.hasDatasetAccess) {
+                  setSearchFilteredInvoices(results.map(r => r.record));
+                } else {
+                  setSearchFilteredInvoices(null);
+                }
+              }}
+            />
+          }
         />
       )}
 

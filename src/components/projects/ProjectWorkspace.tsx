@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   FolderGit2,
   Plus,
-  Search,
   Building2,
   DollarSign,
   Clock,
@@ -30,8 +29,9 @@ import {
   subscribeToDatabase,
 } from '../../db/sqlite';
 import { exportCsvFile } from '../../utils/csvExport';
-import { matchesTaiwanRegion } from '../../utils/taiwanPostalCodes';
+import { createSearchDatasetLookup } from '../../utils/universalSearchEngine';
 import { ConfirmDialogModal } from '../widgets/ConfirmDialogModal';
+import { UniversalSearchBar } from '../widgets/UniversalSearchBar';
 import { BuildingCategoryManagerModal } from './BuildingCategoryManagerModal';
 import { ProjectVendorInboundModal } from './ProjectVendorInboundModal';
 import { ProjectEditorModal } from './ProjectEditorModal';
@@ -95,8 +95,10 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
   const [sites, setSites] = useState<ProjectSite[]>([]);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
 
-  // 篩選與搜尋
-  const [searchTerm, setSearchTerm] = useState('');
+  // 篩選與搜尋（頁籤下拉 + UniversalSearchBar 多欄位權限過濾結果）
+  const [searchFilteredProjects, setSearchFilteredProjects] = useState<Project[] | null>(null);
+  const [searchActiveCount, setSearchActiveCount] = useState<number>(0);
+  const [searchResetTick, setSearchResetTick] = useState<number>(0);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'PLANNING' | 'COMPLETED' | 'LOCKED'>('ALL');
   const [buildingTypeFilter, setBuildingTypeFilter] = useState<string>('ALL');
   const [workScopeFilter, setWorkScopeFilter] = useState<string>('ALL');
@@ -180,55 +182,29 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
     return map;
   }, [sites]);
 
-  // 篩選後之專案清單
-  const filteredProjects = useMemo(() => {
+  const searchLookup = useMemo(() => {
+    return createSearchDatasetLookup({
+      companies,
+      sites,
+      partners,
+    });
+  }, [companies, sites, partners]);
+
+  // 狀態與分類先篩
+  const baseScopedProjects = useMemo(() => {
     return projects.filter(p => {
       if (statusFilter !== 'ALL' && p.status !== statusFilter) return false;
       if (buildingTypeFilter !== 'ALL' && p.buildingType !== buildingTypeFilter) return false;
       if (workScopeFilter !== 'ALL' && p.workScope !== workScopeFilter) return false;
-
-      if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        const site = siteMap.get(p.id);
-        const matchCode = p.projectCode?.toLowerCase().includes(term);
-        const matchName = p.name?.toLowerCase().includes(term);
-        const matchBuildingType = p.buildingType?.toLowerCase().includes(term);
-        const matchWorkScope = p.workScope?.toLowerCase().includes(term);
-        const matchOwner = p.ownerName?.toLowerCase().includes(term);
-        const matchDeveloper = site?.developerName?.toLowerCase().includes(term);
-        const matchArchitect = site?.architect?.toLowerCase().includes(term);
-        const matchConstructor = site?.constructor?.toLowerCase().includes(term);
-        const matchShopDrawing = site?.shopDrawingVendorName?.toLowerCase().includes(term);
-        const matchAddress =
-          site?.address?.toLowerCase().includes(term) ||
-          matchesTaiwanRegion(site?.address, searchTerm) ||
-          (site?.addressHistory || []).some(
-            h =>
-              (h.fullAddress || '').toLowerCase().includes(term) ||
-              matchesTaiwanRegion(h.fullAddress, searchTerm) ||
-              matchesTaiwanRegion(h.city, searchTerm) ||
-              matchesTaiwanRegion(h.district, searchTerm)
-          );
-        const matchPerson = site?.contactPerson?.toLowerCase().includes(term);
-        const matchPermit = site?.permitNumber?.toLowerCase().includes(term);
-        return (
-          matchCode ||
-          matchName ||
-          matchBuildingType ||
-          matchWorkScope ||
-          matchOwner ||
-          matchDeveloper ||
-          matchArchitect ||
-          matchConstructor ||
-          matchShopDrawing ||
-          matchAddress ||
-          matchPerson ||
-          matchPermit
-        );
-      }
       return true;
     });
-  }, [projects, statusFilter, buildingTypeFilter, workScopeFilter, searchTerm, siteMap]);
+  }, [projects, statusFilter, buildingTypeFilter, workScopeFilter]);
+
+  // 再由 UniversalSearchBar 依登入權限與條件過濾
+  const filteredProjects = useMemo(
+    () => searchFilteredProjects ?? baseScopedProjects,
+    [searchFilteredProjects, baseScopedProjects]
+  );
 
   // KPI 彙總指標
   const kpiStats = useMemo(() => {
@@ -399,118 +375,117 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
         </div>
       </div>
 
-      {/* 2. 工具列：搜尋、狀態過濾、新增案場、匯出 CSV */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
-          <div className="relative flex-1 min-w-[200px] max-w-md">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="搜尋案場代碼、工程全銜、起造人、監造建築師、拆圖廠商、現址..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs">
-            {(
-              [
-                { id: 'ALL', label: '全部' },
-                { id: 'ACTIVE', label: '施工中' },
-                { id: 'PLANNING', label: '規劃中' },
-                { id: 'COMPLETED', label: '已完工' },
-                { id: 'LOCKED', label: '已結算' },
-              ] as const
-            ).map(item => (
-              <button
-                key={item.id}
-                onClick={() => setStatusFilter(item.id)}
-                className={`px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  statusFilter === item.id
-                    ? 'bg-white text-indigo-700 shadow-2xs font-bold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
-            <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-            <select
-              value={buildingTypeFilter}
-              onChange={(e) => setBuildingTypeFilter(e.target.value)}
-              className="bg-transparent text-slate-700 font-bold outline-none text-xs cursor-pointer"
-              title="依建造建物類型篩選 (第二階小項)"
-            >
-              <option value="ALL">全部建物類型</option>
-              {categoryTree.map(grp => (
-                <optgroup key={grp.id} label={`【${grp.name}】`}>
-                  {grp.items.filter(i => i.isActive).map(item => (
-                    <option key={item.id} value={item.name}>
-                      {item.name}
-                    </option>
-                  ))}
-                </optgroup>
+      {/* 2. 工具列：狀態過濾、通用搜尋條、新增案場、匯出 CSV */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
+            <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs">
+              {(
+                [
+                  { id: 'ALL', label: '全部' },
+                  { id: 'ACTIVE', label: '施工中' },
+                  { id: 'PLANNING', label: '規劃中' },
+                  { id: 'COMPLETED', label: '已完工' },
+                  { id: 'LOCKED', label: '已結算' },
+                ] as const
+              ).map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => setStatusFilter(item.id)}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    statusFilter === item.id
+                      ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {item.label}
+                </button>
               ))}
-            </select>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+              <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <select
+                value={buildingTypeFilter}
+                onChange={(e) => setBuildingTypeFilter(e.target.value)}
+                className="bg-transparent text-slate-700 font-bold outline-none text-xs cursor-pointer"
+                title="依建造建物類型篩選 (第二階小項)"
+              >
+                <option value="ALL">全部建物類型</option>
+                {categoryTree.map(grp => (
+                  <optgroup key={grp.id} label={`【${grp.name}】`}>
+                    {grp.items.filter(i => i.isActive).map(item => (
+                      <option key={item.id} value={item.name}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+              <Briefcase className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+              <select
+                value={workScopeFilter}
+                onChange={(e) => setWorkScopeFilter(e.target.value)}
+                className="bg-transparent text-slate-700 font-bold outline-none text-xs cursor-pointer"
+                title="依工作內容/承攬性質篩選"
+              >
+                <option value="ALL">全部工作內容</option>
+                {WORK_SCOPES.map(s => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
-            <Briefcase className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-            <select
-              value={workScopeFilter}
-              onChange={(e) => setWorkScopeFilter(e.target.value)}
-              className="bg-transparent text-slate-700 font-bold outline-none text-xs cursor-pointer"
-              title="依工作內容/承攬性質篩選"
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsCategoryManagerOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              title="自訂管理建造物與業務項目階層字典 (新增大項與第二階小項)"
             >
-              <option value="ALL">全部工作內容</option>
-              {WORK_SCOPES.map(s => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              <Layers className="w-3.5 h-3.5 text-indigo-600" />
+              <span>自訂類型管理</span>
+            </button>
+
+            <button
+              onClick={handleExportCsv}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              title="匯出為 CSV 試算表"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-500" />
+              <span>匯出 CSV</span>
+            </button>
+
+            <button
+              onClick={handleOpenCreate}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-2xs transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>新增案場建檔</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsCategoryManagerOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            title="自訂管理建造物與業務項目階層字典 (新增大項與第二階小項)"
-          >
-            <Layers className="w-3.5 h-3.5 text-indigo-600" />
-            <span>自訂類型管理</span>
-          </button>
-
-          <button
-            onClick={handleExportCsv}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            title="匯出為 CSV 試算表"
-          >
-            <Download className="w-3.5 h-3.5 text-slate-500" />
-            <span>匯出 CSV</span>
-          </button>
-
-          <button
-            onClick={handleOpenCreate}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-2xs transition-colors cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <Plus className="w-4 h-4" />
-            <span>新增案場建檔</span>
-          </button>
-        </div>
+        <UniversalSearchBar<Project>
+          key={searchResetTick}
+          datasetKey="PROJECTS"
+          records={baseScopedProjects}
+          lookup={searchLookup}
+          placeholder="搜尋案場代碼、工程全銜、起造人、監造／承造／拆圖、建照或工地地區（支援台／臺別名）..."
+          onResultsChange={(results, meta) => {
+            if (meta.hasDatasetAccess) {
+              setSearchFilteredProjects(results.map(r => r.record));
+            } else {
+              setSearchFilteredProjects(null);
+            }
+            setSearchActiveCount(meta.activeConditionCount);
+          }}
+        />
       </div>
 
       {/* 3. 案場清冊資料表 (拆出子元件) */}
@@ -518,12 +493,23 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({
         filteredProjects={filteredProjects}
         siteMap={siteMap}
         companies={companies}
-        searchTerm={searchTerm}
+        searchTerm={
+          searchActiveCount > 0 ||
+          statusFilter !== 'ALL' ||
+          buildingTypeFilter !== 'ALL' ||
+          workScopeFilter !== 'ALL'
+            ? 'active'
+            : ''
+        }
         canWrite={canWrite}
         canOpenProjectStatement={canOpenProjectStatement}
         onResetFilters={() => {
-          setSearchTerm('');
           setStatusFilter('ALL');
+          setBuildingTypeFilter('ALL');
+          setWorkScopeFilter('ALL');
+          setSearchFilteredProjects(null);
+          setSearchActiveCount(0);
+          setSearchResetTick(t => t + 1);
         }}
         onViewProject={(p) => setViewingProject(p)}
         onOpenStatement={(p) => setStatementProject(p)}

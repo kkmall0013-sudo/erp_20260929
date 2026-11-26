@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search,
   Check,
@@ -16,6 +15,11 @@ import {
   getSubcontractorCategoryTree,
   addVendorToSubcontractorCategory
 } from '../../db/sqlite';
+import {
+  computeFloatingPopoverCoords,
+  FloatingPopoverCoords
+} from '../../utils/floatingPopover';
+import { FloatingPortalPopover } from './FloatingPortalPopover';
 
 interface FloatingSubcontractorSelectProps {
   value: string; // 廠商公司名稱
@@ -41,11 +45,12 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
   const [isAddingCat, setIsAddingCat] = useState(false);
 
   const triggerRef = useRef<HTMLDivElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number; width: number; placeAbove: boolean }>({
+  const [coords, setCoords] = useState<FloatingPopoverCoords>({
     top: 0,
+    bottom: 0,
     left: 0,
     width: 320,
-    placeAbove: false
+    openUpward: false
   });
 
   const refreshTree = () => {
@@ -79,28 +84,18 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
     }
   }, [isOpen]);
 
-  // 計算懸浮選單之精準螢幕絕對座標 (Fixed 座標系，依賴 document.body portal 徹底杜絕表格截斷)
-  const updateCoords = () => {
+  // 計算懸浮選單之精準螢幕絕對座標 (Fixed 座標系，依賴 FloatingPortalPopover 徹底杜絕表格截斷)
+  const updateCoords = useCallback(() => {
     if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const dropdownHeight = 360;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const placeAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-    const popoverWidth = Math.max(420, rect.width);
-
-    // 避免水平超出螢幕
-    let leftPos = rect.left;
-    if (leftPos + popoverWidth > window.innerWidth - 12) {
-      leftPos = Math.max(12, window.innerWidth - popoverWidth - 12);
-    }
-
-    setCoords({
-      top: placeAbove ? rect.top - 6 : rect.bottom + 6,
-      left: leftPos,
-      width: popoverWidth,
-      placeAbove
-    });
-  };
+    setCoords(
+      computeFloatingPopoverCoords(triggerRef.current, {
+        estimatedHeight: 360,
+        minWidth: 420,
+        viewportMargin: 12,
+        gap: 6
+      })
+    );
+  }, []);
 
   const handleOpen = () => {
     if (disabled) return;
@@ -108,40 +103,6 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
     setIsOpen(true);
     setSearchTerm('');
   };
-
-  // 監聽視窗捲動或縮放，維持浮動座標對齊
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleScrollOrResize = () => {
-      updateCoords();
-    };
-
-    window.addEventListener('resize', handleScrollOrResize);
-    window.addEventListener('scroll', handleScrollOrResize, true);
-
-    return () => {
-      window.removeEventListener('resize', handleScrollOrResize);
-      window.removeEventListener('scroll', handleScrollOrResize, true);
-    };
-  }, [isOpen]);
-
-  // 點擊彈窗外部自動關閉
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (
-        triggerRef.current &&
-        !triggerRef.current.contains(target) &&
-        !target.closest('#floating-subcontractor-popover')
-      ) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [isOpen]);
 
   // 當前選中的大項類別
   const currentCategory = tree.find(c => c.id === selectedCatId) || tree[0];
@@ -220,21 +181,17 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
         />
       </div>
 
-      {/* 🌟 懸浮式二階段選單 (透過 createPortal 掛載至 body，徹底擺脫 overflow 截斷) */}
-      {isOpen &&
-        createPortal(
-          <div
-            id="floating-subcontractor-popover"
-            style={{
-              position: 'fixed',
-              top: coords.placeAbove ? 'auto' : `${coords.top}px`,
-              bottom: coords.placeAbove ? `${window.innerHeight - coords.top}px` : 'auto',
-              left: `${coords.left}px`,
-              width: `${coords.width}px`,
-              zIndex: 99999
-            }}
-            className="bg-white rounded-xl shadow-2xl border border-indigo-200 flex flex-col overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100 text-xs"
-          >
+      {/* 🌟 懸浮式二階段選單 (透過共用 FloatingPortalPopover 掛載至 body，徹底擺脫 overflow 截斷) */}
+      <FloatingPortalPopover
+        id="floating-subcontractor-popover"
+        isOpen={isOpen}
+        coords={coords}
+        onClose={() => setIsOpen(false)}
+        triggerRef={triggerRef}
+        onScrollOutside="REPOSITION"
+        onReposition={updateCoords}
+        className="bg-white rounded-xl shadow-2xl border border-indigo-200 flex flex-col overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100 text-xs"
+      >
             {/* 1. 懸浮頂部：二階段指引與快速搜尋 */}
             <div className="p-2.5 bg-slate-50 border-b border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
@@ -480,9 +437,7 @@ export const FloatingSubcontractorSelect: React.FC<FloatingSubcontractorSelectPr
                 完成
               </button>
             </div>
-          </div>,
-          document.body
-        )}
+      </FloatingPortalPopover>
     </div>
   );
 };

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Layers, Clock, Download, Upload, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { exportModularBackup, getDatabaseModuleStats, restoreModularBackup } from '../../../db/sqlite';
 import { BackupTimeFilter, ModularBackupPackage, RestoreResult, RestoreStrategy } from '../../../types/erp';
-import { triggerBlobDownload } from '../../../utils/sqliteBackupUtils';
+import { downloadJsonFile, readFileAsText } from '../../../utils/fileIO';
 
 interface DatabaseModularPackageTabProps {
   moduleStats: ReturnType<typeof getDatabaseModuleStats>;
@@ -50,15 +50,14 @@ export const DatabaseModularPackageTab: React.FC<DatabaseModularPackageTabProps>
         endDate: backupTimeMode === 'RANGE' ? backupEndDate : undefined
       };
       const pkg = exportModularBackup(selectedModules, timeFilter);
-      const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
       const timeSuffix =
         backupTimeMode === 'ALL'
           ? 'all_time'
           : backupTimeMode === 'YEAR'
           ? `year_${backupYear}`
           : `range_${backupStartDate}_to_${backupEndDate}`;
-      triggerBlobDownload(
-        blob,
+      downloadJsonFile(
+        pkg,
         `erp_modular_backup_${selectedModules.join('_').toLowerCase()}_${timeSuffix}_${new Date().toISOString().slice(0, 10)}.json`
       );
       const timeDesc =
@@ -73,36 +72,33 @@ export const DatabaseModularPackageTab: React.FC<DatabaseModularPackageTabProps>
     }
   };
 
-  const handleUploadModularPackage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadModularPackage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const content = event.target?.result as string;
-        const pkg: ModularBackupPackage = JSON.parse(content);
-        if (!pkg.tables || !pkg.formatVersion) {
-          throw new Error('無效的 ERP 模組備份包格式');
-        }
-
-        const result = restoreModularBackup(pkg, restoreStrategy);
-        setRestoreResult(result);
-        if (result.success) {
-          showToast(
-            `✅ 模組還原成功: 新增 ${result.insertedCount} 筆, 更新 ${result.updatedCount} 筆, 略過 ${result.skippedCount} 筆`
-          );
-          onReloadLocal();
-          onDataChanged();
-        } else {
-          showToast(`❌ 還原失敗: ${result.message}`);
-        }
-      } catch (err) {
-        showToast('❌ 解析備份檔案失敗: ' + (err as Error).message);
+    try {
+      const content = await readFileAsText(file);
+      const pkg: ModularBackupPackage = JSON.parse(content);
+      if (!pkg.tables || !pkg.formatVersion) {
+        throw new Error('無效的 ERP 模組備份包格式');
       }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+
+      const result = restoreModularBackup(pkg, restoreStrategy);
+      setRestoreResult(result);
+      if (result.success) {
+        showToast(
+          `✅ 模組還原成功: 新增 ${result.insertedCount} 筆, 更新 ${result.updatedCount} 筆, 略過 ${result.skippedCount} 筆`
+        );
+        onReloadLocal();
+        onDataChanged();
+      } else {
+        showToast(`❌ 還原失敗: ${result.message}`);
+      }
+    } catch (err) {
+      showToast('❌ 解析備份檔案失敗: ' + (err as Error).message);
+    } finally {
+      e.target.value = '';
+    }
   };
 
   return (

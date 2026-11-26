@@ -14,11 +14,13 @@ import {
   getAllCompanies,
   getAllProjects,
   getAllAuditLogs,
-  exportSqlDump,
-  exportSqliteBinary,
   importSql,
   resetToSeedData
 } from './db/sqlite';
+import {
+  downloadSqlDumpFile,
+  downloadSqliteBinaryFile
+} from './utils/sqliteBackupUtils';
 
 import {
   Company,
@@ -88,14 +90,7 @@ export const App: React.FC = () => {
   // 快捷匯出純文字 SQL 指令檔
   const handleQuickBackupSql = () => {
     try {
-      const sqlContent = exportSqlDump();
-      const blob = new Blob([sqlContent], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `engineering_erp_dump_${new Date().toISOString().slice(0, 10)}.sql`;
-      link.click();
-      URL.revokeObjectURL(url);
+      downloadSqlDumpFile(`engineering_erp_dump_${new Date().toISOString().slice(0, 10)}.sql`);
       showToast('✅ 已成功匯出完整 SQLite SQL 備份指令檔');
     } catch (err) {
       console.error(err);
@@ -106,14 +101,7 @@ export const App: React.FC = () => {
   // 快捷備份 SQLite 二進位檔案
   const handleQuickBackupSqlite = () => {
     try {
-      const binaryData = exportSqliteBinary();
-      const blob = new Blob([binaryData.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `engineering_erp_database_${new Date().toISOString().slice(0, 10)}.sqlite`;
-      link.click();
-      URL.revokeObjectURL(url);
+      downloadSqliteBinaryFile(`engineering_erp_database_${new Date().toISOString().slice(0, 10)}.sqlite`);
       showToast('✅ 已成功下載 .sqlite 二進位資料庫備份檔案');
     } catch (err) {
       console.error(err);

@@ -16,6 +16,7 @@ import {
 import { BusinessPartner } from '../../types/erp';
 import { batchImportBusinessPartners } from '../../db/sqlite';
 import { exportCsvFile } from '../../utils/csvExport';
+import { readFileAsText } from '../../utils/fileIO';
 
 interface PartnerImportModalProps {
   isOpen: boolean;
@@ -183,7 +184,7 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
   };
 
   // 處理上傳檔案
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -191,85 +192,81 @@ export const PartnerImportModal: React.FC<PartnerImportModalProps> = ({
     setImportSummary(null);
     setErrorMessage(null);
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = event.target?.result as string;
-        const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
-        if (lines.length <= 1) {
-          setErrorMessage('CSV 檔案內無有效資料行');
-          return;
-        }
-
-        // 跳過第一行表頭
-        const rows: ParsedPartnerRow[] = [];
-        for (let i = 1; i < lines.length; i++) {
-          const cols = parseCsvLine(lines[i]);
-          const name = cols[0] || '';
-          if (!name.trim()) continue;
-
-          const typeStr = (cols[1] || '廠商').trim();
-          let type: 'CUSTOMER' | 'VENDOR' | 'SUBCONTRACTOR' | 'BOTH' = 'VENDOR';
-          if (typeStr.includes('業主') || typeStr.includes('客戶')) {
-            type = 'CUSTOMER';
-          } else if (typeStr.includes('工班')) {
-            type = 'SUBCONTRACTOR';
-          } else if (typeStr.includes('雙重')) {
-            type = 'BOTH';
-          }
-
-          const isIndStr = (cols[2] || '').trim();
-          const isIndividual = isIndStr === '是' || isIndStr.toLowerCase() === 'true' || isIndStr === '1';
-
-          const taxId = (cols[3] || '').trim();
-          const phone = (cols[4] || '').trim();
-          const contactPerson = (cols[5] || '').trim();
-          const email = (cols[6] || '').trim();
-          const address = (cols[7] || '').trim();
-          const categoryMain = (cols[8] || '').trim();
-          const categorySub = (cols[9] || '').trim();
-          const bankCode = (cols[10] || '').trim();
-          const bankName = (cols[11] || '').trim();
-          const bankAccount = (cols[12] || '').trim();
-          const bankAccountName = (cols[13] || '').trim() || name;
-          const paymentTermsDays = Number(cols[14]) || 30;
-
-          // 驗證檢查
-          let isValid = true;
-          let error = '';
-
-          // 合作廠商需有工料分類提示
-          if (type !== 'CUSTOMER' && !categoryMain) {
-            error = '建議填寫第一階工料分類';
-          }
-
-          rows.push({
-            name,
-            type,
-            isIndividual,
-            taxId,
-            phone,
-            contactPerson,
-            email,
-            address,
-            categoryMain,
-            categorySub,
-            bankName,
-            bankCode,
-            bankAccount,
-            bankAccountName,
-            paymentTermsDays,
-            isValid,
-            error
-          });
-        }
-
-        setParsedRows(rows);
-      } catch (err: any) {
-        setErrorMessage('解析 CSV 失敗：' + (err.message || '請確認檔案格式是否正確'));
+    try {
+      const text = await readFileAsText(file, 'utf-8');
+      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+      if (lines.length <= 1) {
+        setErrorMessage('CSV 檔案內無有效資料行');
+        return;
       }
-    };
-    reader.readAsText(file, 'utf-8');
+
+      // 跳過第一行表頭
+      const rows: ParsedPartnerRow[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseCsvLine(lines[i]);
+        const name = cols[0] || '';
+        if (!name.trim()) continue;
+
+        const typeStr = (cols[1] || '廠商').trim();
+        let type: 'CUSTOMER' | 'VENDOR' | 'SUBCONTRACTOR' | 'BOTH' = 'VENDOR';
+        if (typeStr.includes('業主') || typeStr.includes('客戶')) {
+          type = 'CUSTOMER';
+        } else if (typeStr.includes('工班')) {
+          type = 'SUBCONTRACTOR';
+        } else if (typeStr.includes('雙重')) {
+          type = 'BOTH';
+        }
+
+        const isIndStr = (cols[2] || '').trim();
+        const isIndividual = isIndStr === '是' || isIndStr.toLowerCase() === 'true' || isIndStr === '1';
+
+        const taxId = (cols[3] || '').trim();
+        const phone = (cols[4] || '').trim();
+        const contactPerson = (cols[5] || '').trim();
+        const email = (cols[6] || '').trim();
+        const address = (cols[7] || '').trim();
+        const categoryMain = (cols[8] || '').trim();
+        const categorySub = (cols[9] || '').trim();
+        const bankCode = (cols[10] || '').trim();
+        const bankName = (cols[11] || '').trim();
+        const bankAccount = (cols[12] || '').trim();
+        const bankAccountName = (cols[13] || '').trim() || name;
+        const paymentTermsDays = Number(cols[14]) || 30;
+
+        // 驗證檢查
+        let isValid = true;
+        let error = '';
+
+        // 合作廠商需有工料分類提示
+        if (type !== 'CUSTOMER' && !categoryMain) {
+          error = '建議填寫第一階工料分類';
+        }
+
+        rows.push({
+          name,
+          type,
+          isIndividual,
+          taxId,
+          phone,
+          contactPerson,
+          email,
+          address,
+          categoryMain,
+          categorySub,
+          bankName,
+          bankCode,
+          bankAccount,
+          bankAccountName,
+          paymentTermsDays,
+          isValid,
+          error
+        });
+      }
+
+      setParsedRows(rows);
+    } catch (err: any) {
+      setErrorMessage('解析 CSV 失敗：' + (err.message || '請確認檔案格式是否正確'));
+    }
   };
 
   // 執行批次匯入

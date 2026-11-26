@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Sparkles,
   MapPin,
@@ -7,109 +7,61 @@ import {
   CreditCard,
   FileCheck,
   Code2,
-  Copy,
-  Check,
-  ExternalLink,
-  Info,
-  Scale,
   Search,
   Users2,
-  Building2,
-  DraftingCompass,
   FlaskConical,
   ToggleLeft,
-  ToggleRight,
-  X
+  ToggleRight
 } from 'lucide-react';
-import { TaiwanAddressPicker, TaiwanAddressValue } from './widgets/TaiwanAddressPicker';
-import { PostalCodeDirectoryPanel } from './widgets/PostalCodeDirectoryPanel';
-import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget';
-import { TaiwanBankPickerWidget } from './widgets/TaiwanBankPickerWidget';
 import { MediaPreviewLightbox, MediaPreviewItem } from './widgets/MediaPreviewLightbox';
-import { PartnerSearchSelect } from './widgets/PartnerSearchSelect';
-import { UniversalSearchBar } from './widgets/UniversalSearchBar';
-import { BusinessPartner } from '../types/erp';
-import {
-  buildUnifiedFinanceRows,
-  SearchDatasetKey,
-  SearchDatasetLookup,
-  SearchResultItem,
-  UNIVERSAL_SEARCH_SCHEMAS
-} from '../utils/universalSearchEngine';
-import {
-  TAIWAN_BANKS,
-  BANK_CATEGORIES,
-  BankCategory,
-  searchTaiwanBanks
-} from '../utils/taiwanBanks';
+import { copyTextToClipboard } from '../utils/fileIO';
 import { useAuth } from '../context/AuthContext';
 import {
-  getAllAccountsReceivable,
-  getAllApReconciliations,
-  getAllArCollections,
-  getAllBankChecks,
-  getAllCompanies,
-  getAllCompanyBankAccounts,
-  getAllCompanyTaxSettings,
-  getAllInboundReceipts,
-  getAllInvoices,
-  getAllPaymentRecords,
-  getAllPlannedInvoices,
-  getAllBusinessPartners,
-  getAllProjectAdvances,
-  getAllProjects,
-  getAllProjectSites,
-  getAllSystemConfigs,
   getAppConfigMap,
   subscribeToDatabase,
   updateAppConfig
 } from '../db/sqlite';
-import { CustomerStatementMiniApp, CustomerBillingWorkflowMode } from './finance/CustomerStatementMiniApp';
-import { CheckRadarMiniApp } from './finance/CheckRadarMiniApp';
-import { Tax401WorkbookPanel } from './finance/Tax401WorkbookPanel';
+import { ErpMiniAppsDispatchTab } from './miniapps/ErpMiniAppsDispatchTab';
+import { UniversalSearchDemoTab } from './miniapps/UniversalSearchDemoTab';
+import {
+  TaiwanAddressDemoTab,
+  TaiwanTaxIdDemoTab
+} from './miniapps/TaiwanAddressAndTaxDemoTabs';
+import { TaiwanBanksDemoTab } from './miniapps/TaiwanBanksDemoTab';
+import {
+  ChequeCalculatorDemoTab,
+  MiniAppsDevDocsTab,
+  PartnerSearchDemoTab
+} from './miniapps/ChequePartnerAndDocsTabs';
 
 export interface MiniAppsWorkspaceProps {
   onNotify?: (msg: string) => void;
 }
 
+type MiniAppsTabId =
+  | 'ERP_MINI_APPS'
+  | 'UNIVERSAL_SEARCH'
+  | 'ADDRESS'
+  | 'TAX_ID'
+  | 'BANKS'
+  | 'CHEQUE_CALC'
+  | 'PARTNER_SEARCH'
+  | 'MEDIA'
+  | 'DEV_DOCS';
+
 export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }) => {
-  const { currentUser, can, isSuperadmin, isBoss, isAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState<'ERP_MINI_APPS' | 'UNIVERSAL_SEARCH' | 'ADDRESS' | 'TAX_ID' | 'BANKS' | 'CHEQUE_CALC' | 'PARTNER_SEARCH' | 'MEDIA' | 'DEV_DOCS'>('ERP_MINI_APPS');
+  const { currentUser, isSuperadmin } = useAuth();
+  const [activeTab, setActiveTab] = useState<MiniAppsTabId>('ERP_MINI_APPS');
   const [copiedCodeKey, setCopiedCodeKey] = useState<string | null>(null);
-  const [activeErpMiniApp, setActiveErpMiniApp] = useState<'CUSTOMER_STATEMENT' | 'CHECK_RADAR' | 'TAX_401'>('CUSTOMER_STATEMENT');
   const [erpRefreshTick, setErpRefreshTick] = useState(0);
-  const [selected401CompanyId, setSelected401CompanyId] = useState('COMP-01');
+  const [lightboxItem, setLightboxItem] = useState<MediaPreviewItem | null>(null);
 
-  // 正式版通用搜尋元件展示區狀態
-  const [searchDemoDataset, setSearchDemoDataset] = useState<SearchDatasetKey>('PARTNERS');
-  const [searchDemoResults, setSearchDemoResults] = useState<SearchResultItem[]>([]);
-  const [searchDemoMeta, setSearchDemoMeta] = useState<{ totalPoolCount: number; activeConditionCount: number }>({
-    totalPoolCount: 0,
-    activeConditionCount: 0
-  });
-  const [selectedDemoResult, setSelectedDemoResult] = useState<SearchResultItem | null>(null);
-
-  React.useEffect(() => {
+  useEffect(() => {
     const unsub = subscribeToDatabase(() => setErpRefreshTick(t => t + 1));
     return () => unsub();
   }, []);
 
-  React.useEffect(() => {
-    if (!selectedDemoResult) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setSelectedDemoResult(null);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedDemoResult]);
-
-  const canUseStatement = isSuperadmin || isBoss || isAdmin || can('PROJECTS', 'read') || can('FINANCE_AR', 'read');
-  const canUseCheckRadar = isSuperadmin || isBoss || isAdmin || can('BANK_CHECKS', 'read');
-  const canUse401 = isSuperadmin || isBoss || isAdmin || can('FINANCE_AR', 'read') || can('FINANCE_AP', 'read');
-
-  const isSandboxPublic = React.useMemo(() => {
+  const isSandboxPublic = useMemo(() => {
     void erpRefreshTick;
     try {
       return getAppConfigMap().APP_TEST_SANDBOX_PUBLIC === 'true';
@@ -132,99 +84,16 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
     );
   };
 
-  const universalSearchData = React.useMemo(() => {
-    void erpRefreshTick;
-    const companies = getAllCompanies();
-    const sites = getAllProjectSites();
-    const partners = getAllBusinessPartners();
-    const bankAccounts = getAllCompanyBankAccounts();
-
-    const lookup: SearchDatasetLookup = {
-      companiesById: new Map(companies.map(c => [c.id, c])),
-      sitesByProjectId: new Map(sites.map(s => [s.projectId, s])),
-      partnersById: new Map(partners.map(p => [p.id, p])),
-      bankAccountsById: new Map(bankAccounts.map(b => [b.id, b]))
-    };
-
-    const recordsByDataset: Record<SearchDatasetKey, any[]> = {
-      PARTNERS: partners,
-      PROJECTS: getAllProjects(),
-      INBOUND_RECEIPTS: getAllInboundReceipts(),
-      FINANCE_LEDGER: buildUnifiedFinanceRows({
-        reconciliations: getAllApReconciliations(),
-        payments: getAllPaymentRecords(),
-        arList: getAllAccountsReceivable(),
-        checks: getAllBankChecks(),
-        bankAccountsById: lookup.bankAccountsById
-      }),
-      TAX_401_INVOICES: getAllInvoices()
-    };
-
-    return { lookup, recordsByDataset };
-  }, [erpRefreshTick]);
-
-  // 0. 夥伴搜尋與另建小程式測試狀態
-  const [demoPartner, setDemoPartner] = useState<BusinessPartner | null>(null);
-  const [demoPartnerName, setDemoPartnerName] = useState<string>('');
-  const [demoPartnerFilter, setDemoPartnerFilter] = useState<'ALL' | 'CUSTOMER' | 'VENDOR' | 'SUBCONTRACTOR' | 'SHOP_DRAWING'>('ALL');
-
-  // 1. 地址小程式測試狀態
-  const [demoAddress, setDemoAddress] = useState<TaiwanAddressValue>({
-    postalCode: '100',
-    city: '臺北市',
-    district: '中正區',
-    streetAddress: '重慶南路一段122號',
-    fullAddress: '100 臺北市中正區重慶南路一段122號'
-  });
-
-  // 2. 統編/身分證小程式測試狀態
-  const [demoTaxId, setDemoTaxId] = useState<string>('24549210'); // 範例台積電統編
-  const [demoNationalId, setDemoNationalId] = useState<string>('A123456789');
-
-  // 3. 銀行代碼小程式測試狀態
-  const [demoBank, setDemoBank] = useState<{ bankCode: string; bankName: string }>({
-    bankCode: '004',
-    bankName: '臺灣銀行'
-  });
-  const [bankDirSearch, setBankDirSearch] = useState<string>('');
-  const [bankDirCategory, setBankDirCategory] = useState<'ALL' | BankCategory>('ALL');
-
-  // 4. 票據試算狀態
-  const [calcIssueDate, setCalcIssueDate] = useState<string>(new Date().toISOString().slice(0, 10));
-  const [calcTerms, setCalcTerms] = useState<number>(30);
-
-  // 5. 媒體燈箱預覽測試狀態
-  const [lightboxItem, setLightboxItem] = useState<MediaPreviewItem | null>(null);
-
-  const handleCopyCode = (key: string, code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCodeKey(key);
-    if (onNotify) onNotify('📋 已複製小程式調用代碼！');
-    setTimeout(() => setCopiedCodeKey(null), 2000);
-  };
-
-  // 票據法試算日
-  const calcResults = React.useMemo(() => {
-    try {
-      const issue = new Date(calcIssueDate);
-      if (isNaN(issue.getTime())) return { expiry: '', due: '' };
-
-      // 票據法第22條第1項：自發票日起算一年不行使因免除其責任
-      const expiry = new Date(issue);
-      expiry.setFullYear(expiry.getFullYear() + 1);
-
-      // 約定兌現日 (發票日 + N 天)
-      const due = new Date(issue);
-      due.setDate(due.getDate() + calcTerms);
-
-      return {
-        expiry: expiry.toISOString().slice(0, 10),
-        due: due.toISOString().slice(0, 10)
-      };
-    } catch (e) {
-      return { expiry: '', due: '' };
+  const handleCopyCode = async (key: string, code: string) => {
+    const ok = await copyTextToClipboard(code);
+    if (ok) {
+      setCopiedCodeKey(key);
+      if (onNotify) onNotify('📋 已複製小程式調用代碼！');
+      setTimeout(() => setCopiedCodeKey(null), 2000);
+    } else if (onNotify) {
+      onNotify('❌ 無法寫入剪貼簿，請手動選取複製');
     }
-  }, [calcIssueDate, calcTerms]);
+  };
 
   return (
     <div className="h-full flex flex-col bg-slate-100 overflow-hidden">
@@ -359,8 +228,6 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
 
       {/* 主體展示區 */}
       <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full space-y-6">
-
-        {/* Superadmin 專屬：左側「測試區」對外開放即時開關 */}
         {canControlTestSandbox && (
           <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -402,1166 +269,56 @@ export const MiniAppsWorkspace: React.FC<MiniAppsWorkspaceProps> = ({ onNotify }
           </div>
         )}
 
-        {/* ======================================================== */}
-        {/* 0. 獨立業務功能小程式調度區 (Modular ERP Micro-Apps) */}
-        {/* ======================================================== */}
-        {activeTab === 'ERP_MINI_APPS' && (() => {
-          void erpRefreshTick;
-          const projects = getAllProjects();
-          const arList = getAllAccountsReceivable();
-          const arCollections = getAllArCollections();
-          const projectAdvances = getAllProjectAdvances();
-          const checks = getAllBankChecks();
-          const reconciliations = getAllApReconciliations();
-          const companies = getAllCompanies().filter(c => c.entityType === 'CORPORATION');
-          const partners = getAllBusinessPartners();
-          const invoices = getAllInvoices();
-          const plannedInvoices = getAllPlannedInvoices();
-          const companyTaxSettings = getAllCompanyTaxSettings();
-          const sysCfgs = getAllSystemConfigs();
-          const taxCfg = sysCfgs.find(c => c.configKey === 'TAX_RATE');
-          const rawRate = taxCfg ? Number(String(taxCfg.configValue).replace('%', '').trim()) : 0.05;
-          const taxRate = Number.isFinite(rawRate) && rawRate >= 0 ? (rawRate > 1 ? rawRate / 100 : rawRate) : 0.05;
-          const appCfgMap = getAppConfigMap();
-          const wfRaw = appCfgMap.APP_CUSTOMER_BILLING_MODE;
-          const workflowMode: CustomerBillingWorkflowMode =
-            wfRaw === 'PROJECT_AND_FINANCE' || wfRaw === 'PROJECT_FIRST_HANDOFF' ? wfRaw : 'FINANCE_ONLY';
+        {activeTab === 'ERP_MINI_APPS' && (
+          <ErpMiniAppsDispatchTab
+            erpRefreshTick={erpRefreshTick}
+            onRefresh={() => setErpRefreshTick(t => t + 1)}
+            onNotify={onNotify}
+          />
+        )}
 
-          return (
-            <div className="space-y-4">
-              <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-black text-slate-900">
-                      模組化功能小程式架構 (獨立檔拆分 · 依權限即時調用)
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      各業務工具已拆分封裝為獨立小程式元件，維護時只需針對單一檔案調整；授權人員可直接於此或各模組頁籤調度開啟。
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setActiveErpMiniApp('CUSTOMER_STATEMENT')}
-                    disabled={!canUseStatement}
-                    className={`p-3.5 rounded-xl border-2 text-left transition-all cursor-pointer disabled:opacity-40 ${
-                      activeErpMiniApp === 'CUSTOMER_STATEMENT'
-                        ? 'bg-emerald-50/70 border-emerald-500 shadow-2xs'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="text-xs font-black text-slate-900">1. 對外客戶請款／對帳明細表</div>
-                    <div className="text-[11px] text-slate-500 mt-1">
-                      乾淨列印給業主，完全隔離私帳與 401；支援送交會計立帳（CustomerStatementMiniApp）。
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveErpMiniApp('CHECK_RADAR')}
-                    disabled={!canUseCheckRadar}
-                    className={`p-3.5 rounded-xl border-2 text-left transition-all cursor-pointer disabled:opacity-40 ${
-                      activeErpMiniApp === 'CHECK_RADAR'
-                        ? 'bg-indigo-50/70 border-indigo-500 shadow-2xs'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="text-xs font-black text-slate-900">2. 支票統計管理與資金雷達</div>
-                    <div className="text-[11px] text-slate-500 mt-1">
-                      兌現日區間、每日待付資金加總、三燈號兌現與退票回滾（CheckRadarMiniApp）。
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveErpMiniApp('TAX_401')}
-                    disabled={!canUse401}
-                    className={`p-3.5 rounded-xl border-2 text-left transition-all cursor-pointer disabled:opacity-40 ${
-                      activeErpMiniApp === 'TAX_401'
-                        ? 'bg-purple-50/70 border-purple-500 shadow-2xs'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="text-xs font-black text-slate-900">3. 401 營業稅雙月試算活頁簿</div>
-                    <div className="text-[11px] text-slate-500 mt-1">
-                      進銷項發票、留抵稅額滾存、預計請款模擬區與年度統整（Tax401WorkbookPanel）。
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {activeErpMiniApp === 'CUSTOMER_STATEMENT' && canUseStatement && (
-                <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
-                  <CustomerStatementMiniApp
-                    projects={projects}
-                    arList={arList}
-                    arCollections={arCollections}
-                    projectAdvances={projectAdvances}
-                    taxRate={taxRate}
-                    workflowMode={workflowMode}
-                    canSubmitToAccounting={can('PROJECTS', 'write') || can('FINANCE_AR', 'write') || isSuperadmin || isBoss}
-                    operatorName={currentUser?.fullName || '系統操作員'}
-                    onNotify={(msg) => onNotify && onNotify(msg)}
-                    onAfterSubmit={() => setErpRefreshTick(t => t + 1)}
-                  />
-                </div>
-              )}
-
-              {activeErpMiniApp === 'CHECK_RADAR' && canUseCheckRadar && (
-                <CheckRadarMiniApp
-                  checks={checks}
-                  reconciliations={reconciliations}
-                  arList={arList}
-                  canEditCashier={isSuperadmin || isBoss || isAdmin || can('BANK_CHECKS', 'write')}
-                  operatorName={currentUser?.fullName || '出納專員'}
-                  onNotify={(msg) => onNotify && onNotify(msg)}
-                  onRefresh={() => setErpRefreshTick(t => t + 1)}
-                />
-              )}
-
-              {activeErpMiniApp === 'TAX_401' && canUse401 && companies.length > 0 && (
-                <Tax401WorkbookPanel
-                  companies={companies}
-                  partners={partners}
-                  projects={projects}
-                  invoices={invoices}
-                  plannedInvoices={plannedInvoices}
-                  companyTaxSettings={companyTaxSettings}
-                  selectedCompanyId={companies.some(c => c.id === selected401CompanyId) ? selected401CompanyId : companies[0].id}
-                  onSelectCompanyId={setSelected401CompanyId}
-                  canEdit={isSuperadmin || isBoss || isAdmin || can('FINANCE_AR', 'write')}
-                  taxRate={taxRate}
-                  operatorName={currentUser?.fullName || '會計專員'}
-                  onNotify={(msg) => onNotify && onNotify(msg)}
-                  onRefresh={() => setErpRefreshTick(t => t + 1)}
-                />
-              )}
-            </div>
-          );
-        })()}
-
-        {/* ======================================================== */}
-        {/* 0-B. 正式版通用搜尋元件 (UniversalSearchBar) */}
-        {/* ======================================================== */}
         {activeTab === 'UNIVERSAL_SEARCH' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-8 space-y-4">
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      通用搜尋與多欄位過濾元件 (UniversalSearchBar)
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      預設維持單行關鍵字以保持工作區整潔；點擊「展開更多條件」即顯示目前權限可查詢的格狀欄位，並支援臺灣縣市別名與台／臺字形統一比對。
-                    </p>
-                  </div>
-                </div>
-
-                {/* 資料對象切換按鈕 */}
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {(Object.keys(UNIVERSAL_SEARCH_SCHEMAS) as SearchDatasetKey[]).map(key => {
-                    const schema = UNIVERSAL_SEARCH_SCHEMAS[key];
-                    const active = searchDemoDataset === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => {
-                          setSearchDemoDataset(key);
-                          setSelectedDemoResult(null);
-                        }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                          active
-                            ? 'bg-indigo-600 text-white border-indigo-600'
-                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        {schema.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* 正式版共用搜尋元件 */}
-                <UniversalSearchBar
-                  datasetKey={searchDemoDataset}
-                  records={universalSearchData.recordsByDataset[searchDemoDataset] || []}
-                  lookup={universalSearchData.lookup}
-                  onResultsChange={(results, meta) => {
-                    setSearchDemoResults(results);
-                    setSearchDemoMeta(meta);
-                  }}
-                />
-
-                {/* 查詢結果列表 */}
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
-                    <span className="font-semibold text-slate-700">
-                      查詢結果清冊（點擊任一列可開啟完整明細視窗）
-                    </span>
-                    <span className="font-mono tabular-nums text-slate-500">
-                      顯示 {Math.min(searchDemoResults.length, 30)} / 符合 {searchDemoResults.length} 筆
-                    </span>
-                  </div>
-
-                  {searchDemoResults.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-slate-500">
-                      {searchDemoMeta.totalPoolCount === 0
-                        ? '目前無可檢視資料列，或請切換至具該模組查詢權限的資料對象。'
-                        : '找不到符合目前篩選條件的資料列，請放寬關鍵字或清除條件後再試。'}
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100 max-h-[380px] overflow-y-auto">
-                      {searchDemoResults.slice(0, 30).map(item => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => setSelectedDemoResult(item)}
-                          className="w-full px-4 py-2.5 text-left hover:bg-slate-50 transition-colors flex items-center justify-between gap-4 cursor-pointer"
-                        >
-                          <div className="min-w-0 flex-1 space-y-0.5">
-                            <div className="text-xs font-bold text-slate-900 truncate">
-                              {item.title}
-                            </div>
-                            <div className="text-[11px] text-slate-500 truncate">
-                              {item.subtitle} · {item.companyLabel}
-                            </div>
-                          </div>
-                          <span className="text-[11px] font-medium text-indigo-700 shrink-0 whitespace-nowrap">
-                            檢視明細
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* 右側：開發者嵌入調用說明 */}
-            <div className="lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-4">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                    <Code2 className="w-4 h-4 text-indigo-600" />
-                    <span>如何嵌入各業務模組？</span>
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopyCode(
-                        'universal_search',
-                        `import { UniversalSearchBar } from './widgets/UniversalSearchBar';\n\n<UniversalSearchBar\n  datasetKey="INBOUND_RECEIPTS"\n  records={receipts}\n  lookup={lookup}\n  onResultsChange={(results) => setFilteredRows(results.map(r => r.record))}\n/>`
-                      )
-                    }
-                    className="text-xs text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                  >
-                    {copiedCodeKey === 'universal_search' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedCodeKey === 'universal_search' ? '已複製！' : '複製代碼'}</span>
-                  </button>
-                </div>
-
-                <div className="text-xs text-slate-600 leading-relaxed space-y-2">
-                  <p>
-                    <strong>正式版核心規範：</strong>
-                  </p>
-                  <ul className="list-disc pl-5 space-y-1.5 text-slate-500 text-[11px]">
-                    <li>
-                      <strong>無側漏靜默保護：</strong>正式版元件僅渲染當前帳號具權限之搜尋欄位，絕不顯示「已隱藏敏感欄位」提示或上鎖警告，避免低權限帳號推知機密欄位存在。
-                    </li>
-                    <li>
-                      <strong>預設單行收合：</strong>僅佔一列快速搜尋欄高度，點選「展開更多條件」始展開三欄式格狀條件表。
-                    </li>
-                    <li>
-                      <strong>共用權限與別名引擎：</strong>底層直連 <code>universalSearchEngine.ts</code>，自動完成私帳、401 稅務、法人權限矩陣裁切及臺灣縣市別名比對。
-                    </li>
-                  </ul>
-                </div>
-
-                <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-[11px] font-mono overflow-x-auto leading-relaxed">
-{`import { UniversalSearchBar } from './widgets/UniversalSearchBar';
-
-<UniversalSearchBar
-  datasetKey="PARTNERS"
-  records={partners}
-  lookup={lookup}
-  onResultsChange={(items) => {
-    setFilteredPartners(items.map(i => i.record));
-  }}
-/>`}
-                </pre>
-              </div>
-            </div>
-          </div>
+          <UniversalSearchDemoTab
+            erpRefreshTick={erpRefreshTick}
+            copiedCodeKey={copiedCodeKey}
+            onCopyCode={handleCopyCode}
+          />
         )}
 
-        {/* ======================================================== */}
-        {/* 1. 臺灣郵遞地址小程式 */}
-        {/* ======================================================== */}
         {activeTab === 'ADDRESS' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 space-y-5">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                      <MapPin className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        小程式：臺灣標準郵遞地址輸入元件
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        排列順序：【郵遞區號 ➔ 縣市 ➔ 鄉鎮 ➔ 住址】雙向自動連動，動態讀取下方 SQLite 郵局表
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 實體小程式互動預覽 */}
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                  <span className="text-xs font-bold text-slate-700">互動即時體驗區（可輸入 3 碼郵遞區號、下拉縣市鄉鎮，或點擊下方郵局表任一行政區帶入測試）</span>
-                  <TaiwanAddressPicker
-                    label="營業登記地址 / 施工工地地址"
-                    value={demoAddress}
-                    onChange={val => setDemoAddress(val)}
-                    required
-                  />
-                </div>
-
-                {/* 剖析資料結果展示 */}
-                <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-2 text-xs">
-                  <div className="font-bold text-indigo-950 flex items-center justify-between">
-                    <span>小程式輸出之 JSON 物件結構：</span>
-                    <span className="text-[11px] font-mono bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-700">
-                      SSoT 標準四段格式
-                    </span>
-                  </div>
-                  <pre className="p-3 bg-white rounded-lg border border-indigo-200 font-mono text-[11px] text-slate-800 overflow-x-auto">
-                    {JSON.stringify(demoAddress, null, 2)}
-                  </pre>
-                </div>
-              </div>
-
-              {/* 調用代碼指南 */}
-              <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-between">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <Code2 className="w-4 h-4 text-indigo-600" />
-                      <span>其他模組如何調用此小程式？</span>
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopyCode(
-                          'addr',
-                          `import { TaiwanAddressPicker } from './widgets/TaiwanAddressPicker';\n\n<TaiwanAddressPicker\n  label="通訊地址"\n  value={myAddress}\n  onChange={(val) => setMyAddress(val)}\n  required\n/>`
-                        )
-                      }
-                      className="text-xs text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
-                    >
-                      {copiedCodeKey === 'addr' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedCodeKey === 'addr' ? '已複製！' : '複製代碼'}</span>
-                    </button>
-                  </div>
-
-                  <div className="text-xs text-slate-600 leading-relaxed space-y-2">
-                    <p>
-                      <strong>適用模組：</strong>商業夥伴（業主/合作廠商）、公司法人、工程案場工地地址、進料快建彈窗。
-                    </p>
-                    <p>
-                      <strong>特性：</strong>
-                    </p>
-                    <ul className="list-disc pl-5 space-y-1 text-slate-500 text-[11px]">
-                      <li>排列順序固定為：<strong>郵遞區號 ➔ 縣市 ➔ 鄉鎮 ➔ 住址</strong>。</li>
-                      <li>動態訂閱 SQLite 郵局表 (<code>taiwan_postal_codes</code>)，支援未來行政區改制與「舊名 ↔ 新名」雙向搜尋。</li>
-                      <li>支援「留存舊址為靜態歷史參考並改填新址」，絕不自動覆寫歷史檔案。</li>
-                    </ul>
-                  </div>
-
-                  <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-[11px] font-mono overflow-x-auto leading-relaxed">
-{`// 1. 引入元件
-import { TaiwanAddressPicker } from './widgets/TaiwanAddressPicker';
-
-// 2. 於 JSX 中使用
-<TaiwanAddressPicker
-  label="通訊地址"
-  value={formData.address}
-  onChange={(val) => {
-    // val 包含 { postalCode, city, district, streetAddress, fullAddress }
-    setFormData(prev => ({ ...prev, address: val.fullAddress }));
-  }}
-  required
-/>`}
-                  </pre>
-                </div>
-
-                <div className="mt-4 p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-800">
-                  ✅ 動態 SQLite 郵遞區號微型資料庫，支援歷史別名雙向檢索與不覆寫舊檔機制。
-                </div>
-              </div>
-            </div>
-
-            {/* 下方：中華郵政「牆上分區一覽表」微型資料庫管理 */}
-            <PostalCodeDirectoryPanel
-              onSelectDistrict={rec => {
-                const street = demoAddress.streetAddress || '';
-                const full = `${rec.city}${rec.district}${street}`.trim();
-                setDemoAddress({
-                  postalCode: rec.postalCode,
-                  city: rec.city,
-                  district: rec.district,
-                  streetAddress: street,
-                  fullAddress: rec.postalCode ? `${rec.postalCode} ${full}` : full
-                });
-              }}
-              onNotify={onNotify}
-            />
-          </div>
+          <TaiwanAddressDemoTab
+            copiedCodeKey={copiedCodeKey}
+            onCopyCode={handleCopyCode}
+            onNotify={onNotify}
+          />
         )}
 
-        {/* ======================================================== */}
-        {/* 2. 臺灣統一編號 / 身分證字號檢核小程式 */}
-        {/* ======================================================== */}
         {activeTab === 'TAX_ID' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 space-y-5">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <ShieldCheck className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      小程式：臺灣統編與身分證字號即時檢核機
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      包含財政部營利事業 8 碼乘數校驗與內政部 10 碼國民身分證模數加權演算法
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* 實體測試區 */}
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                  <span className="text-xs font-bold text-slate-700">測試一：公司營利事業統一編號 (8 碼)</span>
-                  <TaiwanIdTaxValidatorWidget
-                    type="TAX_ID"
-                    value={demoTaxId}
-                    onChange={val => setDemoTaxId(val)}
-                    label="公司統一編號 (可試著修改任意一碼觀察報錯)"
-                    required
-                  />
-                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                    <span>快捷測試真實統編：</span>
-                    <button
-                      type="button"
-                      onClick={() => setDemoTaxId('24549210')}
-                      className="text-indigo-600 hover:underline font-mono font-bold"
-                    >
-                      24549210 (台積電)
-                    </button>
-                    <span>|</span>
-                    <button
-                      type="button"
-                      onClick={() => setDemoTaxId('03795505')}
-                      className="text-indigo-600 hover:underline font-mono font-bold"
-                    >
-                      03795505 (台塑)
-                    </button>
-                    <span>|</span>
-                    <button
-                      type="button"
-                      onClick={() => setDemoTaxId('12345678')}
-                      className="text-red-600 hover:underline font-mono font-bold"
-                    >
-                      12345678 (非法統編)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                  <span className="text-xs font-bold text-slate-700">測試二：個人/工班負責人國民身分證號 (10 碼)</span>
-                  <TaiwanIdTaxValidatorWidget
-                    type="NATIONAL_ID"
-                    value={demoNationalId}
-                    onChange={val => setDemoNationalId(val)}
-                    label="國民身分證字號"
-                    required
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* 調用代碼指南 */}
-            <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                    <Code2 className="w-4 h-4 text-emerald-600" />
-                    <span>其他模組調用方式</span>
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopyCode(
-                        'tax',
-                        `import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget';\n\n<TaiwanIdTaxValidatorWidget\n  type="TAX_ID"\n  value={taxId}\n  onChange={(val) => setTaxId(val)}\n  required\n/>`
-                      )
-                    }
-                    className="text-xs text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
-                  >
-                    {copiedCodeKey === 'tax' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedCodeKey === 'tax' ? '已複製！' : '複製代碼'}</span>
-                  </button>
-                </div>
-
-                <div className="text-xs text-slate-600 leading-relaxed space-y-2">
-                  <p>
-                    <strong>演算規則：</strong>
-                  </p>
-                  <ul className="list-disc pl-5 space-y-1 text-slate-500 text-[11px]">
-                    <li>統編加權數：[1, 2, 1, 2, 1, 2, 4, 1]。</li>
-                    <li>支援財政部 2023 最新修正案（第七位數為 7 之雙重模數校驗）。</li>
-                    <li>身分證字母依縣市轉二位數乘 [1, 9]，接續九位數乘 [8, 7, 6, 5, 4, 3, 2, 1, 1]。</li>
-                  </ul>
-                </div>
-
-                <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-[11px] font-mono overflow-x-auto leading-relaxed">
-{`// 1. 純函數校驗 (在 Save / Submit 前防呆)
-import { validateTaiwanTaxId } from '../utils/taiwanValidation';
-
-const res = validateTaiwanTaxId(taxId);
-if (!res.isValid) {
-  setErrorMsg('統編錯誤：' + res.message);
-  return;
-}
-
-// 2. 或直接嵌入 UI 元件
-import { TaiwanIdTaxValidatorWidget } from './widgets/TaiwanIdTaxValidatorWidget';
-
-<TaiwanIdTaxValidatorWidget
-  value={partner.taxId}
-  type="TAX_ID"
-  onChange={(val) => setPartner(p => ({ ...p, taxId: val }))}
-  required
-/>`}
-                </pre>
-              </div>
-
-              <div className="mt-4 p-3 bg-sky-50 rounded-xl border border-sky-200 text-xs text-sky-800">
-                🛡️ 營造工程內控鐵律：嚴禁未通過統編/身分證校驗之單據過帳！
-              </div>
-            </div>
-          </div>
+          <TaiwanTaxIdDemoTab
+            copiedCodeKey={copiedCodeKey}
+            onCopyCode={handleCopyCode}
+          />
         )}
 
-        {/* ======================================================== */}
-        {/* 3. 全國金融機構選單小程式 */}
-        {/* ======================================================== */}
         {activeTab === 'BANKS' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 space-y-5">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center">
-                    <Landmark className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      小程式：全國金融機構與農漁會速查選取元件（財金公司 FISC 官方資料庫）
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      同步財金資訊股份有限公司 (twd.txt) 官方清冊：完整涵蓋全國銀行、郵局、信合社及全臺 311 家農漁會信用部（如 616 雲林縣斗南鎮農會）
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* 實體測試區 */}
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <span className="text-xs font-bold text-slate-700">互動選取測試（支援左側輸入 3 碼/7 碼代號或右側搜尋篩選）</span>
-                  <div className="flex items-center gap-1.5 text-[11px]">
-                    <span className="text-slate-400">快速測試：</span>
-                    <button
-                      type="button"
-                      onClick={() => setDemoBank({ bankCode: '616', bankName: '雲林縣斗南鎮農會' })}
-                      className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono font-bold hover:bg-indigo-100"
-                    >
-                      616 斗南鎮農會
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDemoBank({ bankCode: '004', bankName: '臺灣銀行' })}
-                      className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 font-mono font-bold hover:bg-slate-200"
-                    >
-                      004 臺灣銀行
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDemoBank({ bankCode: '700', bankName: '中華郵政股份有限公司' })}
-                      className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 font-mono font-bold hover:bg-slate-200"
-                    >
-                      700 中華郵政
-                    </button>
-                  </div>
-                </div>
-                <TaiwanBankPickerWidget
-                  bankCode={demoBank.bankCode}
-                  bankName={demoBank.bankName}
-                  onChange={b => setDemoBank({ bankCode: b.bankCode, bankName: b.bankName })}
-                  label="匯款/支票付款銀行"
-                  required
-                />
-                <div className="pt-2 text-xs text-slate-600 flex items-center gap-2">
-                  <span>當前選定代碼：</span>
-                  <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-                    [{demoBank.bankCode}] {demoBank.bankName}
-                  </span>
-                </div>
-              </div>
-
-              {/* 全國金融機構清冊總覽與快速點選區 */}
-              <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900">
-                      財金公司 (FISC) 全國跨行通匯金融機構官方名錄（共 {TAIWAN_BANKS.length} 家）
-                    </h4>
-                    <p className="text-[11px] text-slate-500">
-                      點擊任一列即可直接帶入上方測試元件；包含 3 碼總機構代號與 7 碼總行/本會通匯代號（如斗南鎮農會 616 / 6160056）
-                    </p>
-                  </div>
-                  <div className="relative w-full sm:w-56">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={bankDirSearch}
-                      onChange={e => setBankDirSearch(e.target.value)}
-                      placeholder="搜尋代號(如 616)或名稱(斗南)..."
-                      className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:border-indigo-500 outline-hidden"
-                    />
-                  </div>
-                </div>
-
-                {/* 分類切換標籤與各類家數統計 */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {BANK_CATEGORIES.map(cat => {
-                    const count =
-                      cat.key === 'ALL'
-                        ? TAIWAN_BANKS.length
-                        : TAIWAN_BANKS.filter(b => b.category === cat.key).length;
-                    const active = bankDirCategory === cat.key;
-                    return (
-                      <button
-                        key={cat.key}
-                        type="button"
-                        onClick={() => setBankDirCategory(cat.key)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors ${
-                          active
-                            ? 'bg-indigo-600 text-white shadow-2xs'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        <span>{cat.label}</span>
-                        <span
-                          className={`text-[10px] font-mono px-1 rounded ${
-                            active ? 'bg-indigo-700 text-indigo-100' : 'bg-white text-slate-500'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* 機構資料表 */}
-                <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
-                  {searchTaiwanBanks(bankDirSearch, bankDirCategory).map(b => {
-                    const isSelected = demoBank.bankCode === b.code && demoBank.bankName === b.name;
-                    return (
-                      <div
-                        key={b.branchCode || `${b.code}-${b.name}`}
-                        onClick={() => setDemoBank({ bankCode: b.code, bankName: b.name })}
-                        className={`px-3 py-2 text-xs flex items-center justify-between cursor-pointer transition-colors ${
-                          isSelected ? 'bg-indigo-50 font-bold' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 text-[11px] w-11 text-center shrink-0">
-                            {b.code}
-                          </span>
-                          <span className="text-slate-900 font-semibold truncate">{b.name}</span>
-                          {b.shortName && b.shortName !== b.name && (
-                            <span className="text-[11px] text-slate-400 shrink-0">
-                              ({b.shortName})
-                            </span>
-                          )}
-                          {b.branchCode && (
-                            <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
-                              通匯 {b.branchCode}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0 ml-2">
-                          {b.centerName && (
-                            <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                              {b.centerName}
-                            </span>
-                          )}
-                          <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                            {b.category}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* 調用代碼指南 */}
-            <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                    <Code2 className="w-4 h-4 text-sky-600" />
-                    <span>其他模組調用方式</span>
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopyCode(
-                        'bank',
-                        `import { TaiwanBankPickerWidget } from './widgets/TaiwanBankPickerWidget';\n\n<TaiwanBankPickerWidget\n  bankCode={form.bankCode}\n  bankName={form.bankName}\n  onChange={(b) => setForm(prev => ({ ...prev, bankCode: b.bankCode, bankName: b.bankName }))}\n  required\n/>`
-                      )
-                    }
-                    className="text-xs text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
-                  >
-                    {copiedCodeKey === 'bank' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedCodeKey === 'bank' ? '已複製！' : '複製代碼'}</span>
-                  </button>
-                </div>
-
-                <div className="text-xs text-slate-600 leading-relaxed space-y-2">
-                  <p>
-                    <strong>適用範圍：</strong>商業夥伴銀行帳戶管理、支票收付款登記、出納匯款批次過帳、員工薪轉帳戶維護。
-                  </p>
-                </div>
-
-                <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-[11px] font-mono overflow-x-auto leading-relaxed">
-{`import { TaiwanBankPickerWidget } from './widgets/TaiwanBankPickerWidget';
-
-<TaiwanBankPickerWidget
-  bankCode={account.bankCode}
-  bankName={account.bankName}
-  onChange={({ bankCode, bankName }) => {
-    setAccount(prev => ({ ...prev, bankCode, bankName }));
-  }}
-  required
-/>`}
-                </pre>
-              </div>
-
-              <div className="mt-4 p-3 bg-sky-50 rounded-xl border border-sky-200 text-xs text-sky-800">
-                🏦 全國金融機構資料庫即時模糊搜尋，代碼 3 碼精準對齊跨行通匯規範。
-              </div>
-            </div>
-          </div>
+          <TaiwanBanksDemoTab
+            copiedCodeKey={copiedCodeKey}
+            onCopyCode={handleCopyCode}
+          />
         )}
 
-        {/* ======================================================== */}
-        {/* 4. 票據法規與支票票期試算 */}
-        {/* ======================================================== */}
-        {activeTab === 'CHEQUE_CALC' && (
-          <div className="bg-white p-6 rounded-2xl shadow-xs border border-slate-200 space-y-6">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-                <Scale className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">
-                  票據法第22條時效與遠期支票到期日工程實務試算機
-                </h3>
-                <p className="text-xs text-slate-500">
-                  釐清「收票日」、「發票日/開票日」、「約定兌現日」與「法定一年追索消滅時效」之法律與會計定義
-                </p>
-              </div>
-            </div>
+        {activeTab === 'CHEQUE_CALC' && <ChequeCalculatorDemoTab />}
 
-            {/* 試算輸入列 */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  票面開票日 / 發票日 (Issue Date)
-                </label>
-                <input
-                  type="date"
-                  value={calcIssueDate}
-                  onChange={e => setCalcIssueDate(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  工程約定票期 (天數)
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <select
-                    value={calcTerms}
-                    onChange={e => setCalcTerms(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white"
-                  >
-                    <option value={0}>0 天 (即期支票 / 見票即付)</option>
-                    <option value={30}>30 天期 (次月付款)</option>
-                    <option value={45}>45 天期</option>
-                    <option value={60}>60 天期 (常見工程包商票期)</option>
-                    <option value={90}>90 天期 (三個月期票)</option>
-                    <option value={365}>365 天 (法定一年追索時效)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-col justify-end">
-                <div className="text-xs text-slate-500">
-                  試算約定兌現日：
-                  <span className="font-mono font-bold text-indigo-700 ml-1">
-                    {calcResults.due}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* 法律解說與比較卡片 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2 text-xs">
-                <h4 className="font-bold text-amber-900 flex items-center gap-1.5">
-                  <Info className="w-4 h-4 text-amber-700" />
-                  <span>使用者常見疑問：支票到期日不是一年嗎？為什麼還要輸入？</span>
-                </h4>
-                <div className="text-amber-950 space-y-2 leading-relaxed">
-                  <p>
-                    <strong>1. 票據法第128條第2項規定：</strong>「支票限於見票即付，有相反之記載者，其記載無效。」
-                  </p>
-                  <p>
-                    <strong>2. 臺灣商業與工程實務（遠期支票 Post-dated Check）：</strong>
-                    商業習慣開立「遠期支票」，發票人簽發時記載將來之日期作為「發票日」，雙方約定在該日之前不提示。因此，工程會計出納所謂的「到期日/兌現日」，在法律與票面文字上即是該「約定發票日」。
-                  </p>
-                  <p>
-                    <strong>3. 票據法第22條第1項（法定一年消滅時效）：</strong>
-                    「票據上之權利，對支票發票人自發票日起算，<strong>一年間不行使，因免除其責任</strong>。」
-                    這一年指的是「執票人向發票人行使追索權的法定消滅時效」，並非可任由延後一年才兌換。
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-2 text-xs">
-                <h4 className="font-bold text-indigo-950 flex items-center gap-1.5">
-                  <CreditCard className="w-4 h-4 text-indigo-700" />
-                  <span>系統四種日期節點設計規範 (SSoT)</span>
-                </h4>
-                <div className="text-indigo-950 space-y-2 leading-relaxed">
-                  <p>
-                    <strong>📥 收到日期 (receivedDate)：</strong>
-                    出納人員拿到支票的當天（如：2026-10-08），用以登記保管箱在庫盤點。
-                  </p>
-                  <p>
-                    <strong>✍️ 發票日/開票日 (issueDate)：</strong>
-                    支票票面上載明的日期（票據法權利起算點）。
-                  </p>
-                  <p>
-                    <strong>🏦 約定兌現日 (dueDate / cashableDate)：</strong>
-                    資金可真正入帳之提示日。系統提供快捷鍵一鍵填入（即期、30天、60天等）。
-                  </p>
-                  <p>
-                    <strong>⚖️ 法定時效終期 (statutoryExpiryDate)：</strong>
-                    系統自動根據發票日 + 1 年進行法律警示：<span className="font-mono font-bold text-red-600">{calcResults.expiry}</span>。
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* 4. 商業夥伴即時搜尋與彈窗快建小程式 (PartnerSearchSelect) */}
-        {/* ======================================================== */}
         {activeTab === 'PARTNER_SEARCH' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 space-y-5">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                    <Users2 className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      小程式：商業夥伴即時搜尋與彈窗快建元件 (PartnerSearchSelect)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      打字即時動態過濾（打一個字即自動篩選出宏、大巨等），若查無夥伴可直接點擊「另建新客戶/廠商」彈窗即時新增！
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* 篩選模式切換 */}
-              <div className="flex items-center gap-2 text-xs flex-wrap">
-                <span className="font-bold text-slate-700">夥伴類型過濾：</span>
-                {(['ALL', 'CUSTOMER', 'VENDOR', 'SUBCONTRACTOR', 'SHOP_DRAWING'] as const).map(type => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setDemoPartnerFilter(type)}
-                    className={`px-2.5 py-1 rounded-lg font-bold border transition-all cursor-pointer ${
-                      demoPartnerFilter === type
-                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
-                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    {type === 'ALL' ? '全部夥伴' : type === 'CUSTOMER' ? '僅業主客戶' : type === 'VENDOR' ? '供料廠商' : type === 'SUBCONTRACTOR' ? '下包工班' : '拆圖協力廠'}
-                  </button>
-                ))}
-              </div>
-
-              {/* 實體小程式互動預覽 */}
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                <span className="text-xs font-bold text-slate-700">
-                  互動即時體驗區（可輸入「宏」、「大巨」、「台泥」、「結構」實測打字即時篩選，或輸入不存在名稱測試彈窗另建）：
-                </span>
-                <PartnerSearchSelect
-                  label="搜尋客戶、廠商或拆圖夥伴"
-                  partnerTypeFilter={demoPartnerFilter}
-                  placeholder="請輸入關鍵字搜尋夥伴 (如：宏、開發、營造、結構)..."
-                  value={demoPartnerName}
-                  onSelect={(partner, manualName) => {
-                    setDemoPartner(partner);
-                    setDemoPartnerName(partner ? partner.name : (manualName || ''));
-                  }}
-                  allowQuickCreate={true}
-                  quickCreateDefaultCategory={demoPartnerFilter === 'SHOP_DRAWING' ? '專業技術顧問 / 拆圖廠商' : undefined}
-                  helperText="打字即時篩選，可直接以鍵盤或滑鼠點選帶入，查無資料可彈窗另建！"
-                />
-              </div>
-
-              {/* 選取結果展示 */}
-              <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-2 text-xs">
-                <div className="font-bold text-indigo-950 flex items-center justify-between">
-                  <span>選定之商業夥伴物件 SSoT：</span>
-                  <span className="text-[11px] font-mono bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-700">
-                    {demoPartner ? `已綁定 (ID: ${demoPartner.id})` : '手動輸入名稱'}
-                  </span>
-                </div>
-                <pre className="p-3 bg-white rounded-lg border border-indigo-200 font-mono text-[11px] text-slate-800 overflow-x-auto max-h-56">
-                  {demoPartner ? JSON.stringify(demoPartner, null, 2) : JSON.stringify({ manualName: demoPartnerName || '(尚未選取或輸入)' }, null, 2)}
-                </pre>
-              </div>
-            </div>
-
-            {/* 調用代碼指南 */}
-            <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                    <Code2 className="w-4 h-4 text-indigo-600" />
-                    <span>其他模組如何調用此小程式？</span>
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopyCode(
-                        'partner_select',
-                        `import { PartnerSearchSelect } from './widgets/PartnerSearchSelect';\n\n<PartnerSearchSelect\n  label="廠商名稱"\n  partnerTypeFilter="VENDOR"\n  placeholder="輸入文字即時篩選..."\n  value={vendorName}\n  onSelect={(partner, manualName) => {\n    if (partner) {\n      setVendorId(partner.id);\n      setVendorName(partner.name);\n    } else {\n      setVendorName(manualName || '');\n    }\n  }}\n  allowQuickCreate={true}\n/>`
-                      )
-                    }
-                    className="text-xs text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedCodeKey === 'partner_select' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedCodeKey === 'partner_select' ? '已複製！' : '複製代碼'}</span>
-                  </button>
-                </div>
-
-                <div className="text-xs text-slate-600 leading-relaxed space-y-2">
-                  <p>
-                    <strong>適用模組：</strong>專案案場立項（甲方發票買受人 B / 起造人 A / 拆圖協力廠商）、採購發包單 PO、下包承攬約、進貨簽收單、應收應付憑單、支票受款人。
-                  </p>
-                  <p>
-                    <strong>三大核心特性：</strong>
-                  </p>
-                  <ul className="list-disc pl-5 space-y-1 text-slate-500 text-[11px]">
-                    <li><strong>即打即篩：</strong>打一個字立即過濾數百筆夥伴（支援名稱、統編、夥伴代號模糊比對），無須在超長下拉選單中肉眼尋找。</li>
-                    <li><strong>查無直接彈窗快建：</strong>若關鍵字找不到，下拉選單底部即時顯示「＋ 另建新客戶/廠商」按鈕，點擊彈出簡約建檔窗，儲存後立即自動選取並寫入資料庫。</li>
-                    <li><strong>分流過濾：</strong>支援 <code>partnerTypeFilter</code> (CUSTOMER, VENDOR, SUBCONTRACTOR, SHOP_DRAWING) 與 <code>categoryFilter</code> (如拆圖)，精準限定或加權推薦。</li>
-                  </ul>
-                </div>
-
-                <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-[11px] font-mono overflow-x-auto leading-relaxed">
-{`// 1. 引入通用元件
-import { PartnerSearchSelect } from './widgets/PartnerSearchSelect';
-
-// 2. 於 JSX 中調用
-<PartnerSearchSelect
-  label="合約甲方全銜"
-  required
-  partnerTypeFilter="CUSTOMER"
-  placeholder="輸入關鍵字篩選 (如: 富鼎、宏)..."
-  value={ownerName}
-  onSelect={(partner, manualName) => {
-    if (partner) {
-      setOwnerName(partner.name);
-      setOwnerTaxId(partner.taxId);
-    }
-  }}
-  allowQuickCreate={true}
-/>`}
-                </pre>
-              </div>
-            </div>
-          </div>
+          <PartnerSearchDemoTab
+            copiedCodeKey={copiedCodeKey}
+            onCopyCode={handleCopyCode}
+          />
         )}
 
-        {/* ======================================================== */}
-        {/* 5. 模組調用手冊與開發者指南 */}
-        {/* ======================================================== */}
-        {activeTab === 'DEV_DOCS' && (
-          <div className="bg-white p-6 rounded-2xl shadow-xs border border-slate-200 space-y-6">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <Code2 className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">
-                  小程式專區規範與調用手冊 (Developer Cheat Sheet)
-                </h3>
-                <p className="text-xs text-slate-500">
-                  供所有接手開發其他模組（報價、估驗、合約、發票、人事）之工程師與 AI 直接引入調用
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <h4 className="text-xs font-bold text-slate-900">
-                  📁 元件與工具函數檔案架構清單：
-                </h4>
-                <ul className="text-xs text-slate-700 font-mono space-y-1.5 pl-4 list-disc">
-                  <li>
-                    <code>src/components/widgets/PartnerSearchSelect.tsx</code> — 商業夥伴即時搜尋與彈窗快建小程式 (支援即打即篩、拆圖分類、甲方/起造人分流、無資料彈窗建檔)
-                  </li>
-                  <li>
-                    <code>src/components/widgets/TaiwanAddressPicker.tsx</code> — 臺灣郵遞地址選單小程式
-                  </li>
-                  <li>
-                    <code>src/components/widgets/TaiwanIdTaxValidatorWidget.tsx</code> — 統編與身分證檢核小程式
-                  </li>
-                  <li>
-                    <code>src/components/widgets/TaiwanBankPickerWidget.tsx</code> — 全國金融機構查詢小程式
-                  </li>
-                  <li>
-                    <code>src/components/widgets/MediaPreviewLightbox.tsx</code> — 高解析圖片/PDF燈箱小程式 (免受 Chrome iframe 封鎖)
-                  </li>
-                  <li>
-                    <code>src/components/widgets/ChequeDetailModal.tsx</code> — 支票完整資訊與備註檢視視窗
-                  </li>
-                  <li>
-                    <code>src/utils/taiwanPostalCodes.ts</code> — 全國 368 鄉鎮市區與郵遞區號資料庫
-                  </li>
-                  <li>
-                    <code>src/utils/taiwanValidation.ts</code> — 統編 (8碼) 與身分證 (10碼) 加權演算法
-                  </li>
-                  <li>
-                    <code>src/components/finance/CustomerStatementMiniApp.tsx</code> — 對外客戶請款／對帳明細表小程式 (與私帳/401隔離，支援送交會計立帳)
-                  </li>
-                  <li>
-                    <code>src/components/finance/CheckRadarMiniApp.tsx</code> — 應收付票據三燈號管理與資金雷達小程式
-                  </li>
-                  <li>
-                    <code>src/components/finance/SuspensePoolMiniApp.tsx</code> — 未知款項暫收池與分批認領小程式
-                  </li>
-                  <li>
-                    <code>src/components/finance/Tax401WorkbookPanel.tsx</code> — 各公司雙月 401 營業稅活頁簿與預計請款模擬小程式
-                  </li>
-                  <li>
-                    <code>src/components/finance/ProjectLedgerAndStatementModal.tsx</code> — 案場對內借貸總帳與補開發票小程式
-                  </li>
-                  <li>
-                    <code>src/components/widgets/UniversalSearchBar.tsx</code> — 正式版通用搜尋與多欄位條件過濾條（預設單行收合、依 PBAC/私帳/401 靜默裁切欄位、無側漏防護）
-                  </li>
-                  <li>
-                    <code>src/utils/universalSearchEngine.ts</code> — 通用搜尋引擎與五大資料 Schema 定義（支援臺灣縣市別名／郵遞區號標準化與四層權限隔離）
-                  </li>
-                  <li>
-                    <code>src/utils/taiwanBanks.ts</code> — 全國 400+ 金融機構代碼資料庫
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        )}
+        {activeTab === 'DEV_DOCS' && <MiniAppsDevDocsTab />}
       </div>
 
-      {/* 通用搜尋正式版展示之明細視窗 */}
-      {selectedDemoResult && (
-        <div
-          className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4"
-          onClick={() => setSelectedDemoResult(null)}
-        >
-          <div
-            className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-xl w-full overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h4 className="text-sm font-bold text-slate-900 truncate">
-                  {selectedDemoResult.title}
-                </h4>
-                <p className="text-xs text-slate-500 mt-0.5 truncate">
-                  {selectedDemoResult.subtitle} · {selectedDemoResult.companyLabel}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedDemoResult(null)}
-                aria-label="關閉明細視窗"
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-5 max-h-[65vh] overflow-y-auto">
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                {selectedDemoResult.displayColumns.map(col => (
-                  <div key={col.key} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-0.5">
-                    <dt className="text-[11px] font-medium text-slate-500">{col.label}</dt>
-                    <dd className="text-xs font-semibold text-slate-900 break-words font-mono tabular-nums">
-                      {col.value || '-'}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setSelectedDemoResult(null)}
-                className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold cursor-pointer"
-              >
-                關閉
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 燈箱視窗 (若有) */}
       {lightboxItem && (
         <MediaPreviewLightbox
           media={lightboxItem}

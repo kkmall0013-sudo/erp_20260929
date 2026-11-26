@@ -34,6 +34,7 @@ import {
   deleteExternalFolderLink
 } from '../../db/sqlite';
 import { MediaPreviewLightbox, MediaPreviewItem } from '../widgets/MediaPreviewLightbox';
+import { copyTextToClipboard } from '../../utils/fileIO';
 
 interface AttachmentUploaderProps {
   targetTable: string;
@@ -254,9 +255,9 @@ export const AttachmentUploader: React.FC<AttachmentUploaderProps> = ({
   };
 
   // 複製 NAS 路徑至剪貼簿
-  const copyNasPath = (path: string) => {
-    navigator.clipboard.writeText(path);
-    showToast(`📋 已複製 NAS 路徑至剪貼簿：${path}`);
+  const copyNasPath = async (path: string) => {
+    const ok = await copyTextToClipboard(path);
+    showToast(ok ? `📋 已複製 NAS 路徑至剪貼簿：${path}` : '❌ 無法寫入剪貼簿，請手動複製');
   };
 
   // 開啟圖紙資料夾 (呼叫或提示檔案總管開啟)

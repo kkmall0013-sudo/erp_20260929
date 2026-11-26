@@ -535,7 +535,11 @@ export const BusinessPartnerWorkspace: React.FC<BusinessPartnerWorkspaceProps> =
                 : '輸入關鍵字快速搜尋合作廠商（名稱、統編、工種分類、地區／台臺別名、名片...）'
             }
             onResultsChange={(results, meta) => {
-              setSearchFilteredPartners(results.map(r => r.record));
+              if (meta.hasDatasetAccess) {
+                setSearchFilteredPartners(results.map(r => r.record));
+              } else {
+                setSearchFilteredPartners(null);
+              }
               setSearchActiveCount(meta.activeConditionCount);
             }}
           />

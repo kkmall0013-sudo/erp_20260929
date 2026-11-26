@@ -670,8 +670,12 @@ export const InboundWorkspace: React.FC<InboundWorkspaceProps> = ({
             records={baseScopedReceipts}
             lookup={searchLookup}
             placeholder="輸入關鍵字快速搜尋進貨單號、送貨單號、品名規格、廠商、工地地區（支援台／臺別名）..."
-            onResultsChange={(results) => {
-              setSearchFilteredReceipts(results.map(r => r.record));
+            onResultsChange={(results, meta) => {
+              if (meta.hasDatasetAccess) {
+                setSearchFilteredReceipts(results.map(r => r.record));
+              } else {
+                setSearchFilteredReceipts(null);
+              }
             }}
           />
         }

@@ -75,6 +75,7 @@ import {
   QuickProjectAdvanceModal,
 } from './treasury/TreasuryAdvanceSuspenseModals';
 import { FinanceHeaderAndKpis, FinanceMainTab } from './FinanceHeaderAndKpis';
+import { FinanceLedgerSearchSection } from './FinanceLedgerSearchSection';
 
 interface FinanceCashierWorkspaceProps {
   onNotify?: (msg: string, type?: 'success' | 'warn' | 'error') => void;
@@ -409,6 +410,20 @@ export const FinanceCashierWorkspace: React.FC<FinanceCashierWorkspaceProps> = (
         onOpenCreateRecModal={() => handleOpenCreateRecModal()}
         onOpenCreateArModal={() => setArModalState({ isOpen: true, suspense: null })}
         onNavigateToInbound={onNavigateToInbound}
+      />
+
+      <FinanceLedgerSearchSection
+        reconciliations={reconciliations}
+        payments={payments}
+        arList={arList}
+        checks={checks}
+        companies={companies}
+        bankAccounts={bankAccounts}
+        matchesCompanyScope={matchesCompanyScope}
+        canViewAccounting={canViewAccounting}
+        canViewArAndInvoices={canViewArAndInvoices}
+        canViewCashier={canViewCashier}
+        onSelectTab={setActiveTab}
       />
 
       {/* TAB 1: 會計應付對帳大水池 */}

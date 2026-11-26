@@ -30,6 +30,7 @@ import { VaultFileRegistryTable } from './VaultFileRegistryTable';
 import { VaultNasBrowserPanel } from './VaultNasBrowserPanel';
 import { VaultTriageInboxPanel } from './VaultTriageInboxPanel';
 import { VaultModals, VaultTrashPanel } from './VaultModalsAndTrash';
+import { copyTextToClipboard } from '../../utils/fileIO';
 
 interface UniversalVaultWorkspaceProps {
   onNotify?: (msg: string) => void;
@@ -411,9 +412,9 @@ export const UniversalVaultWorkspace: React.FC<UniversalVaultWorkspaceProps> = (
             loadAllData();
             showToast('🗑️ 已移除 NAS 資料夾路徑');
           }}
-          onCopyPath={(path, message) => {
-            navigator.clipboard.writeText(path);
-            showToast(message);
+          onCopyPath={async (path, message) => {
+            const ok = await copyTextToClipboard(path);
+            showToast(ok ? message : '❌ 無法寫入剪貼簿，請手動複製');
           }}
         />
       )}

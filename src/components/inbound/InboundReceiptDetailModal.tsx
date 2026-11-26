@@ -12,6 +12,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { InboundReceipt } from '../../types/erp';
+import { PrintDocumentModal } from '../widgets/PrintDocumentModal';
 
 export interface InboundReceiptDetailModalProps {
   selectedReceipt: InboundReceipt | null;
@@ -259,17 +260,23 @@ export const InboundReceiptDetailModal: React.FC<InboundReceiptDetailModalProps>
         </div>
       )}
 
-      {/* 🖨️ 列印預覽 Modal */}
-      {isPrintOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-3xl my-8 overflow-hidden print:m-0 print:border-none print:shadow-none animate-in fade-in">
-            <div className="p-8 space-y-6">
-              <div className="text-center border-b pb-4">
-                <h2 className="text-xl font-bold tracking-wider text-slate-900">工程現場進貨簽收單</h2>
-                <div className="text-xs text-slate-500 font-mono mt-1">
-                  單號: {selectedReceipt.receiptNumber} | 送貨單號: {selectedReceipt.deliveryNoteNumber}
-                </div>
-              </div>
+      {/* 🖨️ 列印預覽 Modal（複用共用 PrintDocumentModal 外框） */}
+      <PrintDocumentModal
+        isOpen={isPrintOpen}
+        onClose={onClosePrint}
+        title="工程現場進貨簽收單列印預覽"
+        subtitle={`單號: ${selectedReceipt.receiptNumber} ｜ 送貨單號: ${selectedReceipt.deliveryNoteNumber || '未填寫'}`}
+        printButtonLabel="列印此頁"
+        modalMaxWidthClass="max-w-3xl"
+        paperMaxWidthClass="max-w-3xl"
+      >
+        <div className="space-y-6">
+          <div className="text-center border-b pb-4">
+            <h2 className="text-xl font-bold tracking-wider text-slate-900">工程現場進貨簽收單</h2>
+            <div className="text-xs text-slate-500 font-mono mt-1">
+              單號: {selectedReceipt.receiptNumber} | 送貨單號: {selectedReceipt.deliveryNoteNumber}
+            </div>
+          </div>
 
               <div className="grid grid-cols-2 gap-4 text-xs">
                 <div>
@@ -327,38 +334,19 @@ export const InboundReceiptDetailModal: React.FC<InboundReceiptDetailModalProps>
                 </tfoot>
               </table>
 
-              <div className="grid grid-cols-3 gap-4 pt-8 text-xs border-t">
-                <div className="border-t border-slate-400 pt-2 text-center text-slate-600">
-                  供料司機簽收：_______________
-                </div>
-                <div className="border-t border-slate-400 pt-2 text-center text-slate-600">
-                  現場點收人：_______________
-                </div>
-                <div className="border-t border-slate-400 pt-2 text-center text-slate-600">
-                  工務所主管：_______________
-                </div>
-              </div>
+          <div className="grid grid-cols-3 gap-4 pt-8 text-xs border-t">
+            <div className="border-t border-slate-400 pt-2 text-center text-slate-600">
+              供料司機簽收：_______________
             </div>
-
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2 print:hidden">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 cursor-pointer"
-              >
-                列印此頁
-              </button>
-              <button
-                type="button"
-                onClick={onClosePrint}
-                className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-300 cursor-pointer"
-              >
-                關閉
-              </button>
+            <div className="border-t border-slate-400 pt-2 text-center text-slate-600">
+              現場點收人：_______________
+            </div>
+            <div className="border-t border-slate-400 pt-2 text-center text-slate-600">
+              工務所主管：_______________
             </div>
           </div>
         </div>
-      )}
+      </PrintDocumentModal>
     </>
   );
 };

@@ -23,21 +23,18 @@ import {
   findCanonicalRule,
   findSimilarItems
 } from './excelInboundEngine';
+import { FloatingPopoverCoords } from '../../utils/floatingPopover';
+import { FloatingPortalPopover } from '../widgets/FloatingPortalPopover';
 
 export interface ActiveDropdownState {
   rowId: string;
   field: 'site' | 'vendor' | 'item' | 'spec';
-  rect: {
-    top: number;
-    bottom: number;
-    left: number;
-    width: number;
-    openUpward: boolean;
-  };
+  rect: FloatingPopoverCoords;
 }
 
 interface InboundGridDropdownProps {
   activeDropdown: ActiveDropdownState | null;
+  onCloseDropdown: () => void;
   gridRows: ExcelGridRow[];
   vendors: BusinessPartner[];
   projects: Project[];
@@ -59,6 +56,7 @@ interface InboundGridDropdownProps {
 
 export const InboundGridDropdown: React.FC<InboundGridDropdownProps> = ({
   activeDropdown,
+  onCloseDropdown,
   gridRows,
   vendors,
   projects,
@@ -83,21 +81,15 @@ export const InboundGridDropdown: React.FC<InboundGridDropdownProps> = ({
   if (!activeRow) return null;
 
   const { rect, field, rowId } = activeDropdown;
-  const dropdownWidth = Math.max(rect.width, 360);
-  const maxLeft = typeof window !== 'undefined' ? window.innerWidth - dropdownWidth - 16 : 400;
-  const left = Math.max(12, Math.min(rect.left, maxLeft));
 
   return (
-    <div
-      data-dropdown-container
-      style={{
-        position: 'fixed',
-        top: rect.openUpward ? undefined : rect.bottom + 4,
-        bottom: rect.openUpward ? window.innerHeight - rect.top + 4 : undefined,
-        left,
-        width: dropdownWidth,
-        zIndex: 9999
-      }}
+    <FloatingPortalPopover
+      isOpen={Boolean(activeDropdown)}
+      coords={rect}
+      onClose={onCloseDropdown}
+      ignoreOutsideSelector="[data-dropdown-trigger]"
+      onScrollOutside="CLOSE"
+      zIndex={9999}
       className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[320px] animate-in fade-in zoom-in-95 duration-100"
     >
       {/* 1. 廠商下拉選單 */}
@@ -718,6 +710,6 @@ export const InboundGridDropdown: React.FC<InboundGridDropdownProps> = ({
             </div>
           );
         })()}
-    </div>
+    </FloatingPortalPopover>
   );
 };
